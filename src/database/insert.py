@@ -2,123 +2,162 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from typing import List, Dict, Any
 import uuid
+import logging
+import os
+import numpy as np
+import threading
 from src.utils.config import QDRANT_LOCAL_URI, QDRANT_COLECTION_DEMO
 
+# Encoders
+from src.generator.encoder import (
+    DenseEncoder,
+    TfidfEncoder
+)
+
+logger = logging.getLogger(__name__)
+
 class QdrantOperations:
-    def __init__(self):
+    def __init__(self, dense_encoder=None, sparse_encoder=None):
         self.client = QdrantClient(url=QDRANT_LOCAL_URI)
         self.collection_name = QDRANT_COLECTION_DEMO
-        self.dense_vector_name = "dense"  # For your embeddings
-        self.sparse_vector_name = "sparse"  # For future sparse vectors
-    
-    def ensure_collection_exists(self, dense_vector_size: int = 768, sparse_vector_size: int = 10000):
-        """Create collection for hybrid search with both dense and sparse vectors"""
+        self.dense_vector_name = "dense"
+        self.sparse_vector_name = "sparse"
+        self.dense_encoder = dense_encoder or DenseEncoder()
+        
+        # Thread lock for TF-IDF training
+        self.tfidf_lock = threading.Lock()
+
+        # ✅ Auto-train handling for sparse encoder
+        if os.path.exists("tfidf_vectorizer.pkl"):
+            print("📂 Loading existing tfidf_vectorizer.pkl (insert.py)")
+            self.sparse_encoder = sparse_encoder or TfidfEncoder(vectorizer_path="tfidf_vectorizer.pkl")
+        else:
+            print("⚠️ tfidf_vectorizer.pkl not found (insert.py). Will start with empty TF-IDF encoder.")
+            self.sparse_encoder = sparse_encoder or TfidfEncoder()
+
+        self.default_dense_size = 768   # MiniLM default dim
+        self.default_sparse_size = 50000  # TF-IDF vocab size
+
+    def ensure_collection_exists(self, dense_size: int = 768, sparse_size: int = 50000):
+        """Create collection with dense + sparse vectors"""
         try:
             collections = self.client.get_collections()
             collection_names = [col.name for col in collections.collections]
-            
+
             if self.collection_name not in collection_names:
-                print(f"📦 Creating hybrid collection: {self.collection_name}")
+                logger.info(f"📦 Creating collection: {self.collection_name} "
+                            f"with dense={dense_size}, sparse={sparse_size}")
                 self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config={
                         self.dense_vector_name: models.VectorParams(
-                            size=dense_vector_size,
+                            size=dense_size,
                             distance=models.Distance.COSINE
                         ),
-                        # Comment out sparse if you're not using it yet
-                        # self.sparse_vector_name: models.VectorParams(
-                        #     size=sparse_vector_size,
-                        #     distance=models.Distance.DOT
-                        # )
+                        self.sparse_vector_name: models.VectorParams(
+                            size=sparse_size,
+                            distance=models.Distance.COSINE
+                        )
                     }
                 )
-                print(f"✅ Hybrid collection '{self.collection_name}' created successfully")
+                logger.info(f"✅ Collection '{self.collection_name}' created successfully")
             else:
-                print(f"📦 Collection '{self.collection_name}' already exists")
-                # Check collection configuration
-                collection_info = self.client.get_collection(self.collection_name)
-                print(f"Collection config: {collection_info.config.params}")
-                
+                logger.info(f"📦 Collection '{self.collection_name}' already exists")
+
             return True
-                
+
         except Exception as e:
-            print(f"❌ Failed to ensure collection exists: {str(e)}")
+            logger.error(f"❌ Failed to ensure collection exists: {str(e)}")
             return False
-    
+
     def insert_chunks(self, chunks: List[Dict[str, Any]]) -> bool:
         """
-        Insert embedded chunks into Qdrant with named dense vectors
+        Insert chunks with both dense + sparse vectors
         """
         try:
             if not chunks:
-                print("⚠️ No chunks to insert")
+                logger.warning("⚠️ No chunks to insert")
                 return False
-            
-            # Check embedding dimension
-            embedding_size = len(chunks[0]['embedding']) if chunks else 384
-            print(f"📏 Embedding dimension: {embedding_size}")
-            
-            # Ensure collection exists with correct vector size
-            if not self.ensure_collection_exists(dense_vector_size=embedding_size):
+
+            # Prepare text contents
+            texts = [chunk["content"] for chunk in chunks]
+
+            # Compute vectors
+            dense_vectors = self.dense_encoder.encode(texts)
+
+            # ⚡ If TF-IDF not yet trained, fit on current batch with thread safety
+            if not hasattr(self.sparse_encoder.vectorizer, "vocabulary_"):
+                with self.tfidf_lock:  # Thread-safe training
+                    # Check again inside the lock to avoid race condition
+                    if not hasattr(self.sparse_encoder.vectorizer, "vocabulary_"):
+                        print("⚡ Training TF-IDF (insert.py auto-train) on current chunks...")
+                        self.sparse_encoder.fit(texts, save_path="tfidf_vectorizer.pkl")
+
+            sparse_vectors = self.sparse_encoder.encode(texts)
+
+            # Ensure collection exists
+            if not self.ensure_collection_exists(
+                dense_size=len(dense_vectors[0]),
+                sparse_size=len(sparse_vectors[0])
+            ):
                 return False
-            
-            # Prepare points for insertion with named vectors
+
+            # Prepare points with metadata
             points = []
-            for chunk in chunks:
-                if 'embedding' not in chunk:
-                    print(f"⚠️ Skipping chunk {chunk.get('chunk_id', 'unknown')} - no embedding")
-                    continue
-                
+            for chunk, dv, sv in zip(chunks, dense_vectors, sparse_vectors):
                 point_id = str(uuid.uuid4())
-                
+
+                # ✅ Convert sparse vector to Qdrant format
+                sv_array = np.array(sv)
+                indices = np.nonzero(sv_array)[0].tolist()
+                values = sv_array[indices].tolist()
+                sparse_payload = {"indices": indices, "values": values}
+
                 point = models.PointStruct(
                     id=point_id,
                     vector={
-                        self.dense_vector_name: chunk['embedding']  # Named dense vector
-                        # Add sparse vectors here when you have them:
-                        # self.sparse_vector_name: chunk.get('sparse_embedding', [])
+                        self.dense_vector_name: dv,
+                        self.sparse_vector_name: models.SparseVector(
+                            indices=indices,
+                            values=values
+                        )
                     },
                     payload={
-                        "content": chunk['content'],
-                        "chunk_id": chunk.get('chunk_id', ''),
-                        "token_count": chunk.get('token_count', 0),
-                        "char_count": chunk.get('char_count', 0),
-                        "metadata": chunk.get('metadata', {}),
-                        "type": chunk.get('metadata', {}).get('type', 'unknown'),
-                        "original_document": "uploaded_pdf"
+                        "content": chunk["content"],
+                        "chunk_id": chunk.get("chunk_id", ""),
+                        "form_id": chunk.get("metadata", {}).get("form_id", "unknown_id"),
+                        "form_title": chunk.get("metadata", {}).get("form_title", "Unknown Title"),
+                        "form_type": chunk.get("metadata", {}).get("form_type", "Unknown Type"),
+                        "date_of_insertion": chunk.get("metadata", {}).get("date_of_insertion", "unknown_date"),
+                        "token_count": chunk.get("token_count", 0),
+                        "char_count": chunk.get("char_count", 0)
                     }
                 )
+
                 points.append(point)
-            
+
             if not points:
-                print("⚠️ No valid points to insert")
+                logger.warning("⚠️ No valid points to insert")
                 return False
-            
-            # Insert points in batch
-            print(f"🚀 Inserting {len(points)} points into Qdrant...")
+
+            # Insert points
+            logger.info(f"🚀 Inserting {len(points)} points into Qdrant...")
             operation_info = self.client.upsert(
                 collection_name=self.collection_name,
                 points=points,
                 wait=True
             )
-            
-            print(f"✅ Successfully inserted {len(points)} chunks into Qdrant")
-            print(f"📊 Operation status: {operation_info.status}")
-            
-            # Verify insertion
-            count_result = self.client.count(
-                collection_name=self.collection_name,
-                exact=True
-            )
-            print(f"📈 Total points in collection: {count_result.count}")
-            
+
+            logger.info(f"✅ Successfully inserted {len(points)} chunks into Qdrant")
+            logger.info(f"📊 Operation status: {operation_info.status}")
             return True
-            
+
         except Exception as e:
-            print(f"❌ Failed to insert chunks into Qdrant: {str(e)}")
+            logger.error(f"❌ Failed to insert chunks into Qdrant: {str(e)}")
             import traceback
             traceback.print_exc()
             return False
 
+
+# Global instance
 qdrant_client = QdrantOperations()

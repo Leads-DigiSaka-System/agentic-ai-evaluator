@@ -3,8 +3,15 @@ from typing import Optional
 from google import genai
 from google.genai import types
 from src.utils.config import GOOGLE_API_KEY, GEMINI_MODEL
+from langchain.document_loaders import PyMuPDFLoader
 from src.utils.prompt_template import formatting_template
+from typing import Dict, Any
+import os
+import logging
 
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 def extract_pdf_with_gemini(pdf_path: str) -> Optional[str]:
     """
     Extract and process PDF using Gemini API with dynamic formatting
@@ -64,3 +71,15 @@ def extract_pdf_with_gemini(pdf_path: str) -> Optional[str]:
         import traceback
         traceback.print_exc()
         return None
+
+
+
+def extract_pdf_metadata(pdf_path: str) -> Dict[str, Any]:
+    """Extract metadata from PDF using PyMuPDFLoader"""
+    try:
+        loader = PyMuPDFLoader(pdf_path)
+        document = loader.load([0])[0]  # First page only for metadata
+        return document.metadata
+    except Exception as e:
+        # Return minimal metadata on error
+        return {"error": str(e), "source": pdf_path}

@@ -1,77 +1,69 @@
-# file: pdf_extract_router.py (updated)
+# file: src/router/upload.py
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import PlainTextResponse
 from src.Upload.form_extractor import extract_pdf_with_gemini
 from src.formatter.chunking import chunk_markdown_safe
-from src.generator.embedding import embed_chunks
-from src.database.insert import qdrant_client  # NEW IMPORT
+from src.formatter.formatter import extract_form_type_from_content
+from src.database.insert import qdrant_client
 import os
 import tempfile
+import uuid
+from datetime import datetime
 
 router = APIRouter()
 
 @router.post("/upload-file-product-demo", response_class=PlainTextResponse)
 async def upload_file(file: UploadFile = File(...)) -> str:
-    """
-    Extract content from uploaded PDF using Gemini API, run hybrid chunking,
-    embed the chunks, upload to Qdrant, and return the extracted markdown.
-    """
-    if not file.filename.lower().endswith('.pdf'):
-        raise HTTPException(
-            status_code=400,
-            detail="Only PDF files are allowed for extraction."
-        )
-
     tmp_path = None
     try:
-        # Save uploaded PDF to temp file
+        # Step 0: Save uploaded PDF
         content = await file.read()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
             tmp_file.write(content)
             tmp_path = tmp_file.name
 
-        # Step 1: Extract Markdown
+        # Step 1: Extract Markdown content
         extracted_content = extract_pdf_with_gemini(tmp_path)
         if not extracted_content:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to extract content from PDF"
-            )
+            raise HTTPException(status_code=500, detail="Failed to extract content from PDF")
 
-        # Step 2: Hybrid chunking
+        # Step 2: Extract Form Type (first header only)
+        form_type = extract_form_type_from_content(extracted_content)
+        print(f"📋 Extracted form type: {form_type}")
+
+        # Step 3: Chunking
         chunks = chunk_markdown_safe(extracted_content)
+        if not chunks:
+            raise HTTPException(status_code=500, detail="No chunks extracted from PDF")
 
-        # Step 3: Embedding (batch mode)
-        embedded_chunks = embed_chunks(chunks)
+        # Step 4: Attach metadata only (vectors will be handled in insert.py)
+        form_id = str(uuid.uuid4())
+        insertion_date = datetime.now().isoformat()
 
-        # 🔍 Print chunk + embedding info
-        if embedded_chunks:
-            print("\n📊 CHUNKING & EMBEDDING SUMMARY")
-            print("-" * 80)
-            print(f"Total chunks created: {len(embedded_chunks)}")
-            avg_tokens = sum(c['token_count'] for c in embedded_chunks) / len(embedded_chunks)
-            print(f"Average chunk size: {avg_tokens:.1f} tokens")
+        for ch in chunks:
+            ch["metadata"] = {
+                "form_id": form_id,
+                "form_title": file.filename,
+                "form_type": form_type,
+                "date_of_insertion": insertion_date
+            }
 
-            # Step 4: NEW - Insert into Qdrant
-            print("\n📦 Inserting into Qdrant...")
-            insert_success = qdrant_client.insert_chunks(embedded_chunks)
-            
+        # Debug info
+        print(f"📊 Total chunks: {len(chunks)}")
+        print(f"🆔 Form ID: {form_id}")
+        print(f"📝 Form Title: {file.filename}")
+        print(f"📑 Form Type: {form_type}")
+
+        # Step 5: Insert into Qdrant
+        if chunks:
+            insert_success = qdrant_client.insert_chunks(chunks)
             if insert_success:
                 print("✅ Successfully stored in vector database")
-            else:
-                print("❌ Failed to store in vector database")
 
-        else:
-            print("⚠️ No chunks were generated/embedded from this document.")
-
-        # Return the extracted markdown
         return extracted_content
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error processing PDF: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:

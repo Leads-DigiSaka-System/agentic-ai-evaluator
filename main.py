@@ -2,6 +2,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.router.upload import router as upload_router 
+from src.router.search import router as search_router
+from src.router.synthesizer import router as synthesize_router
 
 
 import logging
@@ -18,6 +20,8 @@ app.add_middleware(
 
 # Include routers
 app.include_router(upload_router, prefix="/api", tags=["Upload"])
+app.include_router(search_router, prefix="/api", tags=["search"])
+app.include_router(synthesize_router,prefix="/api", tags=["synthesize"])
 
 
 # Health check endpoint
