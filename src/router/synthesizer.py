@@ -1,46 +1,58 @@
+# file: src/router/synthesizer.py
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Dict, Any
-from src.database.hybrid_search import create_hybrid_search
-from src.utils.prompt_template import synthesizer_template
-from langchain_core.prompts import PromptTemplate
-from src.utils.llm_helper import invoke_llm
+import uuid
+from langchain_core.runnables import RunnableLambda
+from src.workflow.agent_workflow import rag_graph
 
 router = APIRouter()
-
-# Initialize hybrid search once
-hybrid_search = create_hybrid_search()
 
 class PipelineRequest(BaseModel):
     query: str
     top_k: int = 5
+    thread_id: str = None  # Optional thread ID for conversation continuity
 
 @router.post("/full_pipeline")   
 def full_pipeline(request: PipelineRequest) -> Dict[str, Any]:
     """
-    Perform search + retrieve + synthesize using LLM.
+    Perform search + retrieve + synthesize using LangGraph pipeline.
     """
-    query = request.query
-    top_k = request.top_k
-
-    # 1. Retrieve
-    results = hybrid_search.search(query=query, top_k=top_k)
-
-    # 2. Build synthesizer prompt
-    retrieved_context = "\n\n".join([r["content"] for r in results])
-    chunk_count = len(results)
-
-    template: PromptTemplate = synthesizer_template()
-    final_prompt = template.format(
-        retrieved_context=retrieved_context,
-        user_query=query,
-        chunk_count=chunk_count
-    )
-
-    # 3. Call LLM
-    llm_response = invoke_llm(final_prompt)
-
-    # 4. Return results + AI output
-    return {
-        "synthesized_output": llm_response  # already a string
+    # Initialize state
+    initial_state = {
+        "query": request.query,
+        "top_k": request.top_k,
+        "rewritten_query": None,
+        "search_results": None,
+        "retrieved_context": None,
+        "chunk_count": None,
+        "final_prompt": None,
+        "synthesized_output": None,
+        "error": None,
+        "error_step": None,
+        "decision": None
     }
+    
+    # Generate thread_id if not provided
+    thread_id = request.thread_id or str(uuid.uuid4())
+    
+    # Configuration for checkpointer
+    config = {"configurable": {"thread_id": thread_id}}
+    
+    # Execute the graph with config
+    final_state = rag_graph.invoke(initial_state, config=config)
+    
+    # Prepare response
+    response = {
+        "synthesized_output": final_state["synthesized_output"],
+        "thread_id": thread_id  # Return thread_id for future requests
+    }
+    
+    # Include debug information if needed (optional)
+    if final_state.get("error"):
+        response["error_info"] = {
+            "step": final_state.get("error_step"),
+            "message": final_state.get("error")
+        }
+    
+    return response
