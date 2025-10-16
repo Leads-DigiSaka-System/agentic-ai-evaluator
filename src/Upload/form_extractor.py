@@ -4,7 +4,7 @@ from google import genai
 from google.genai import types
 from src.utils.config import GOOGLE_API_KEY, GEMINI_MODEL
 from langchain.document_loaders import PyMuPDFLoader
-from src.utils.prompt_template import formatting_template
+from src.prompt.prompt_template import formatting_template
 from typing import Dict, Any
 import os
 import logging

@@ -3,7 +3,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.router.upload import router as upload_router 
 from src.router.search import router as search_router
-from src.router.synthesizer import router as synthesize_router
+from src.router.delete_extract import router as delete_router
+from src.router.agent import router as agent_router
 
 
 import logging
@@ -20,8 +21,10 @@ app.add_middleware(
 
 # Include routers
 app.include_router(upload_router, prefix="/api", tags=["Upload"])
+app.include_router(agent_router, prefix="/api", tags=["agent"])
 app.include_router(search_router, prefix="/api", tags=["search"])
-app.include_router(synthesize_router,prefix="/api", tags=["synthesize"])
+app.include_router(delete_router, prefix="/api", tags=["delete"])
+
 
 
 # Health check endpoint
