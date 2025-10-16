@@ -8,11 +8,19 @@ import uuid
 from datetime import datetime
 
 def extraction_node(state: ProcessingState) -> ProcessingState:
-    """Node 1: Extract content from PDF"""
+    """Node 1: Extract content from PDF or use pre-extracted content"""
     try:
         state["current_step"] = "extraction"
         
-        # Extract markdown content
+        # If markdown is already provided (from multi-report handler), skip extraction
+        if state.get("extracted_markdown"):
+            print("✅ Using pre-extracted markdown, skipping PDF extraction")
+            # Still extract metadata if not already present
+            if not state.get("metadata"):
+                state["metadata"] = extract_pdf_metadata(state["file_path"])
+            return state
+            
+        # Original logic for single reports (backward compatibility)
         extracted_content = extract_pdf_with_gemini(state["file_path"])
         if not extracted_content:
             state["errors"].append("Failed to extract content from PDF")

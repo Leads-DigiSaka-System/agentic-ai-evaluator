@@ -3,75 +3,40 @@ from langchain.prompts import PromptTemplate
 # Extractor Template
 def formatting_template():
     return PromptTemplate.from_template(
-"""Extract and format the document content into valid Markdown. 
-Follow this exact structure strictly.
+"""This PDF may contain MULTIPLE SEPARATE REPORTS. Each page or section is a DISTINCT report.
 
-# [Document Title]
+EXTRACTION RULES FOR MULTIPLE REPORTS:
+1. PROCESS EACH REPORT AS A SEPARATE ENTITY
+2. For each report, create a SEPARATE Markdown section
+3. Use exactly '### REPORT_END ###' as a separator between reports
+4. Each report must follow the structure below
+
+FOR EACH INDIVIDUAL REPORT:
+
+# [Document Title - for THIS report only]
 
 ## Fields
-- **Field Name**: Value
-- **Field Name**: Value
+- **Field Name**: Value (from this report only)
 - **Field Name**: Value
 
 ## [Table Name if applicable]
 | Column 1 | Column 2 | Column 3 |
 |----------|----------|----------|
 | Data     | Data     | Data     |
-| Data     | Data     | Data     |
 
 ## Notes
-- Use "# Title" at the start
-- Always use "##" for section headings
-- Represent fields as bullet list with **bold field name**
-- Represent all tables as valid Markdown tables
-- Preserve order of appearance from the document
+- Extract each report COMPLETELY SEPARATELY
+- Do not mix data between pages/reports
 - If a field has no value, write "N/A"
-- Keep one blank line between sections
-- Do not add extra commentary, only structured Markdown
+- Use exactly '### REPORT_END ###' to separate each complete report
+
+If there is only one report, then do not use any separators.
+
+CRITICAL: Only use '### REPORT_END ###' between complete reports, never within a report.
 """
 )
 
 
-# DATA ANALYST 
-# file: src/utils/prompt_template.py (alternative structured approach)
-def analysis_prompt_template_structured():
-    return PromptTemplate.from_template(
-"""EXTRACT AGRICULTURAL TRIAL DATA AND RETURN AS JSON
-
-DATA EXTRACTION FIELDS:
-- cooperator: Find "Name of Cooperator" 
-- product: Find "Leads Agri Product" or from treatment table
-- location: Find "Form Location"
-- application_date: Find "Date of Product Demo Showcase/s" 
-- participants: Find "No of Participants"
-
-CALCULATIONS FROM % CONTROL TABLE:
-- Identify Treatment 1 (FP/Untreated) and Treatment 2 (Leads Agri)
-- Calculate average of 3 DAA, 7 DAA, 14 DAA for each treatment
-- improvement_percent = ((avg_leads - avg_fp) / avg_fp) * 100
-
-SUMMARY FORMAT:
-"Leads Agri product showed X% improvement over Farmer's Practice in [Location]"
-
-RETURN THIS EXACT JSON STRUCTURE:
-{{
-  "status": "success",
-  "cooperator": "",
-  "product": "", 
-  "crop": "",
-  "location": "",
-  "application_date": "",
-  "avg_fp": 0,
-  "avg_leads": 0,
-  "improvement_percent": 0,
-  "participants": 0,
-  "summary": ""
-}}
-
-INPUT DATA:
-{markdown_data}
-"""
-)
 
 # For Synthesizer 
 def synthesizer_template():
