@@ -1,4 +1,4 @@
-# file: src/workflow/state.py (NEW - move state here)
+# file: src/workflow/state.py
 from typing import Dict, Any, List, Optional, TypedDict
 
 class ProcessingState(TypedDict):
@@ -12,6 +12,7 @@ class ProcessingState(TypedDict):
     form_type: Optional[str]
     chunks: List[Dict[str, Any]]
     analysis_result: Optional[Dict[str, Any]]
+    graph_suggestions: Optional[Dict[str, Any]]
     
     # Metadata
     form_id: str
@@ -21,3 +22,8 @@ class ProcessingState(TypedDict):
     # Status
     current_step: str
     errors: List[str]
+    
+    # NEW FIELDS FOR AGENTIC REASONING
+    output_evaluation: Optional[Dict[str, Any]]  # For output evaluator
+    needs_reanalysis: Optional[bool]  # Flag for re-analysis
+    goal_reasoning: Optional[Dict[str, Any]]  # For storing reasoner results
