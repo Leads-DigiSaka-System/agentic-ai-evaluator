@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 from src.workflow.state import ProcessingState
 from src.workflow.graph import processing_workflow
 from src.Upload.form_extractor import extract_pdf_with_gemini, extract_pdf_metadata
-
+from src.database.insert_analysis import analysis_storage 
 class MultiReportHandler:
     """Handler for processing PDFs with multiple reports including graph suggestions"""
     
@@ -31,9 +31,11 @@ class MultiReportHandler:
             pdf_metadata = extract_pdf_metadata(tmp_path)
 
             # Split and process reports
-            return await MultiReportHandler._process_reports(
+            result = await MultiReportHandler._process_reports(
                 extracted_markdown, file_content, original_filename, tmp_path, pdf_metadata
             )
+
+            return result
 
         except Exception as e:
             raise e
@@ -64,12 +66,19 @@ class MultiReportHandler:
                 tmp_path, file_content, original_filename, pdf_metadata
             )
             
-            return {
+            result = {
                 "status": "success",
                 "total_reports": 1,
                 "reports": [report_response],
                 "cross_report_analysis": {"cross_report_suggestions": []}  # No cross-report for single
             }
+            
+            # ✅ STORE ANALYSIS RESULTS
+            storage_success = analysis_storage.insert_multi_report_response(result)
+            result["analysis_storage_status"] = "success" if storage_success else "failed"
+            print(f"📊 Analysis storage: {result['analysis_storage_status']}")
+            
+            return result
         
         # For MULTIPLE REPORTS, use the pre-extracted markdown approach
         all_reports_response = []
@@ -82,12 +91,19 @@ class MultiReportHandler:
         # Generate cross-report graph suggestions
         cross_report_suggestions = MultiReportHandler._generate_cross_report_suggestions(all_reports_response)
 
-        return {
+        result = {
             "status": "success",
             "total_reports": len(all_reports_response),
             "reports": all_reports_response,
             "cross_report_analysis": cross_report_suggestions
         }
+        
+        # ✅ STORE ANALYSIS RESULTS
+        storage_success = analysis_storage.insert_multi_report_response(result)
+        result["analysis_storage_status"] = "success" if storage_success else "failed"
+        print(f"📊 Analysis storage: {result['analysis_storage_status']}")
+        
+        return result
 
     @staticmethod
     async def _process_single_report_direct(tmp_path: str, file_content: bytes, 
