@@ -83,3 +83,34 @@ You are working with retrieved chunks from a vector database search. Each chunk 
 
 #For Evaluator Meticts and Insight Summary of the Output
 
+def content_validation_template():
+    """
+    Optimized LLM validator - checks if content is a product demo/trial report
+    Token-efficient version with same accuracy
+    """
+    return PromptTemplate.from_template(
+"""Validate if this is a PRODUCT DEMO or TRIAL REPORT.
+
+VALID indicators: product names, trial data, performance metrics, comparison data, location/cooperator, crop/pest info
+INVALID: invoices, letters, brochures (no data), blank/garbled text, non-agricultural
+
+CONTENT:
+{extracted_content}
+
+Return JSON:
+{{
+  "is_valid_demo": true/false,
+  "confidence": 0.0-1.0,
+  "content_type": "product_demo"|"trial_report"|"invoice"|"letter"|"blank"|"unknown",
+  "reasoning": "brief explanation",
+  "detected_elements": {{"has_product_info": bool, "has_trial_data": bool, "has_numeric_results": bool, "has_location_info": bool}},
+  "feedback": "user-friendly message"
+}}
+
+Examples:
+Valid demo: {{"is_valid_demo": true, "confidence": 0.95, "content_type": "product_demo", "reasoning": "Contains trial data with control/treatment comparison", "detected_elements": {{"has_product_info": true, "has_trial_data": true, "has_numeric_results": true, "has_location_info": true}}, "feedback": "Valid product demo detected. Proceeding."}}
+
+Invalid invoice: {{"is_valid_demo": false, "confidence": 0.90, "content_type": "invoice", "reasoning": "Financial document, no trial data", "detected_elements": {{"has_product_info": false, "has_trial_data": false, "has_numeric_results": true, "has_location_info": false}}, "feedback": "This is an invoice. Upload a trial report with product performance data."}}
+
+Return only valid JSON, no extra text."""
+)

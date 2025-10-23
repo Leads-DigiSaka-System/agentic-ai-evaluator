@@ -6,28 +6,49 @@ from src.workflow.state import ProcessingState
 from src.workflow.graph import processing_workflow
 from src.Upload.form_extractor import extract_pdf_with_gemini, extract_pdf_metadata
 from src.database.insert_analysis import analysis_storage 
+
 class MultiReportHandler:
     """Handler for processing PDFs with multiple reports including graph suggestions"""
     
     @staticmethod
     async def process_multi_report_pdf(file_content: bytes, original_filename: str) -> Dict[str, Any]:
         """
-        Process a PDF that may contain multiple reports
+        Process a file that may contain multiple reports
+        
+        SUPPORTS: PDF (single/multi-report), PNG, JPG, JPEG
+        
+        NOW WITH VALIDATION:
+        - File format validation happens during extraction
+        - Content validation happens in workflow
+        - Auto-detects file type from extension
         """
         tmp_path = None
         try:
-            # Save uploaded PDF to temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+            # ✅ FIX: Detect file type from original filename
+            file_ext = original_filename.lower().split('.')[-1] if '.' in original_filename else 'pdf'
+            suffix = f".{file_ext}"
+            
+            print(f"📁 File type detected: {file_ext.upper()}")
+            
+            # ✅ FIX: Save with correct extension
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, mode='wb') as tmp_file:
                 tmp_file.write(file_content)
+                tmp_file.flush()  # Ensure written to disk
                 tmp_path = tmp_file.name
+            
+            print(f"💾 Saved to temporary file: {tmp_path}")
 
-            # Extract the entire PDF to markdown (with multiple reports)
-            print("🚀 Extracting PDF with multiple reports...")
+            # Extract content (supports both PDF and images via Gemini)
+            print(f"🚀 Extracting {file_ext.upper()} with validation...")
             extracted_markdown = extract_pdf_with_gemini(tmp_path)
+            
             if not extracted_markdown:
-                raise Exception("Failed to extract content from PDF")
+                raise Exception(
+                    f"Failed to extract content from {file_ext.upper()}. "
+                    "File may be corrupted, encrypted, or not a valid file."
+                )
 
-            # Extract metadata for the entire PDF
+            # Extract metadata (handles both PDF and images)
             pdf_metadata = extract_pdf_metadata(tmp_path)
 
             # Split and process reports
@@ -52,6 +73,10 @@ class MultiReportHandler:
                              original_filename: str, tmp_path: str, pdf_metadata: Dict[str, Any]) -> Dict[str, Any]:
         """
         Split markdown into individual reports using intelligent detection
+        
+        WORKS WITH VALIDATION:
+        - Single reports: Full validation in workflow (extract → validate → analyze)
+        - Multiple reports: Pre-extracted markdown, content validated in workflow
         """
         # Use the unique separator for splitting
         reports_markdown = MultiReportHandler._split_reports_intelligently(extracted_markdown)
@@ -60,27 +85,34 @@ class MultiReportHandler:
 
         # CRITICAL FIX: Handle single vs multiple reports differently
         if len(reports_markdown) == 1:
-            # For SINGLE REPORT, use simpler processing without pre-extracted markdown
-            print("📋 Processing as SINGLE REPORT (letting workflow handle extraction)")
+            # For SINGLE REPORT, use full workflow with validation
+            print("📋 Processing as SINGLE REPORT (full validation enabled)")
             report_response = await MultiReportHandler._process_single_report_direct(
                 tmp_path, file_content, original_filename, pdf_metadata
             )
             
+            # Check if content validation failed
+            if report_response.get("errors"):
+                validation_errors = [e for e in report_response["errors"] if "validation" in e.lower()]
+                if validation_errors:
+                    print(f"❌ Validation failed: {validation_errors[0]}")
+            
             result = {
-                "status": "success",
+                "status": "success" if not report_response.get("errors") else "failed",
                 "total_reports": 1,
                 "reports": [report_response],
-                "cross_report_analysis": {"cross_report_suggestions": []}  # No cross-report for single
+                "cross_report_analysis": {"cross_report_suggestions": []}
             }
             
-            # ✅ STORE ANALYSIS RESULTS
+            # Store analysis results
             storage_success = analysis_storage.insert_multi_report_response(result)
             result["analysis_storage_status"] = "success" if storage_success else "failed"
             print(f"📊 Analysis storage: {result['analysis_storage_status']}")
             
             return result
         
-        # For MULTIPLE REPORTS, use the pre-extracted markdown approach
+        # For MULTIPLE REPORTS, use pre-extracted markdown approach
+        # Note: Content validation still happens in workflow for each report
         all_reports_response = []
         for i, report_md in enumerate(reports_markdown):
             report_response = await MultiReportHandler._process_single_report(
@@ -98,7 +130,7 @@ class MultiReportHandler:
             "cross_report_analysis": cross_report_suggestions
         }
         
-        # ✅ STORE ANALYSIS RESULTS
+        # Store analysis results
         storage_success = analysis_storage.insert_multi_report_response(result)
         result["analysis_storage_status"] = "success" if storage_success else "failed"
         print(f"📊 Analysis storage: {result['analysis_storage_status']}")
@@ -109,34 +141,43 @@ class MultiReportHandler:
     async def _process_single_report_direct(tmp_path: str, file_content: bytes, 
                                            original_filename: str, pdf_metadata: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Process a SINGLE report PDF by letting the workflow handle extraction
-        This fixes the issue where single reports weren't being analyzed correctly
+        Process a SINGLE report PDF with FULL VALIDATION
+        
+        NEW BEHAVIOR:
+        - Workflow now includes content validation step
+        - Better error messages from validation
+        - File format already validated during extraction
         """
         try:
-            print("📄 Processing SINGLE REPORT with full workflow...")
+            print("📄 Processing SINGLE REPORT with full validation...")
 
             # Initialize state WITHOUT pre-extracted markdown
-            # Let the workflow extract it properly
+            # Workflow will: extract → validate file → validate content → analyze
             initial_state: ProcessingState = {
                 "file_path": tmp_path,
                 "file_name": original_filename,
                 "file_content": file_content,
-                "extracted_markdown": None,  # CRITICAL: Let workflow extract this
+                "extracted_markdown": None,  # Let workflow extract and validate
                 "form_type": None,
                 "chunks": [],
                 "analysis_result": None,
                 "graph_suggestions": None,
                 "form_id": "",
-                "metadata": {},  # Will be populated by extraction node
+                "metadata": {},
                 "insertion_date": "",
                 "current_step": "start",
-                "errors": []
+                "errors": [],
+                
+                # NEW: Validation fields (populated by workflow)
+                "file_validation": None,
+                "is_valid_content": None,
+                "content_validation": None
             }
 
-            # Execute the workflow (extraction -> analysis -> graphs -> chunking -> storage)
+            # Execute the workflow (now includes validation)
             final_state = processing_workflow.invoke(initial_state)
 
-            # Build response
+            # Build response with validation info
             report_response = {
                 "report_number": 1,
                 "file_name": original_filename,
@@ -150,7 +191,13 @@ class MultiReportHandler:
                     "processing_steps": final_state.get("current_step", ""),
                     "insertion_date": final_state.get("insertion_date", "")
                 },
-                "errors": final_state.get("errors", [])
+                "errors": final_state.get("errors", []),
+                
+                # NEW: Include validation results in response
+                "validation": {
+                    "file_validation": final_state.get("file_validation"),
+                    "content_validation": final_state.get("content_validation")
+                }
             }
 
             if final_state["errors"]:
@@ -174,13 +221,15 @@ class MultiReportHandler:
                 "analysis": {},
                 "graph_suggestions": {},
                 "processing_metrics": {},
-                "errors": [f"Single report processing failed: {str(e)}"]
+                "errors": [f"Single report processing failed: {str(e)}"],
+                "validation": {"file_validation": None, "content_validation": None}
             }
 
     @staticmethod
     def _split_reports_intelligently(markdown_content: str) -> List[str]:
         """
         Intelligently split markdown into individual reports
+        UNCHANGED - Works as before
         """
         # First, try splitting by the unique separator
         unique_separator = "### REPORT_END ###"
@@ -188,14 +237,13 @@ class MultiReportHandler:
             reports = markdown_content.split(unique_separator)
             reports = [report.strip() for report in reports if report.strip()]
             if len(reports) > 1:
-                print(f"📑 Using unique separator, found {len(reports)} reports")
+                print(f"🔑 Using unique separator, found {len(reports)} reports")
                 return reports
 
-        # If no unique separator found, check for multiple # headings (potential reports)
+        # If no unique separator found, check for multiple # headings
         headings = re.findall(r'^#\s+.+$', markdown_content, re.MULTILINE)
         if len(headings) > 1:
-            print(f"📑 Found {len(headings)} potential reports by heading detection")
-            # Split by main headings (# )
+            print(f"🔑 Found {len(headings)} potential reports by heading detection")
             reports = re.split(r'^(?=#\s+)', markdown_content, flags=re.MULTILINE)
             reports = [report.strip() for report in reports if report.strip() and report.startswith('#')]
             if len(reports) > 1:
@@ -210,12 +258,18 @@ class MultiReportHandler:
                                    tmp_path: str, pdf_metadata: Dict[str, Any], 
                                    report_index: int, total_reports: int) -> Dict[str, Any]:
         """
-        Process a single report from a MULTI-REPORT PDF (with pre-extracted markdown)
+        Process a single report from a MULTI-REPORT PDF
+        
+        WORKS WITH VALIDATION:
+        - Pre-extracted markdown provided
+        - Content validation still runs in workflow
+        - If content is invalid, workflow will error out gracefully
         """
         try:
             print(f"📄 Processing report {report_index + 1}/{total_reports}...")
 
-            # Initialize state for the workflow with pre-extracted markdown
+            # Initialize state with pre-extracted markdown
+            # Workflow will: validate content → analyze → graphs → chunk → store
             initial_state: ProcessingState = {
                 "file_path": tmp_path,
                 "file_name": f"{original_filename}_report_{report_index + 1}",
@@ -229,13 +283,18 @@ class MultiReportHandler:
                 "metadata": pdf_metadata,
                 "insertion_date": "",
                 "current_step": "start",
-                "errors": []
+                "errors": [],
+                
+                # Validation fields (content validation will still run)
+                "file_validation": {"is_valid": True, "validation_skipped": True},
+                "is_valid_content": None,
+                "content_validation": None
             }
 
             # Execute the workflow
             final_state = processing_workflow.invoke(initial_state)
 
-            # Build response for this report
+            # Build response
             report_response = {
                 "report_number": report_index + 1,
                 "file_name": original_filename,
@@ -249,7 +308,10 @@ class MultiReportHandler:
                     "processing_steps": final_state.get("current_step", ""),
                     "insertion_date": final_state.get("insertion_date", "")
                 },
-                "errors": final_state.get("errors", [])
+                "errors": final_state.get("errors", []),
+                "validation": {
+                    "content_validation": final_state.get("content_validation")
+                }
             }
 
             if final_state["errors"]:
@@ -273,13 +335,15 @@ class MultiReportHandler:
                 "analysis": {},
                 "graph_suggestions": {},
                 "processing_metrics": {},
-                "errors": [f"Report processing failed: {str(e)}"]
+                "errors": [f"Report processing failed: {str(e)}"],
+                "validation": {"content_validation": None}
             }
 
     @staticmethod
     def _generate_cross_report_suggestions(all_reports: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Generate graph suggestions that compare multiple reports
+        UNCHANGED - Works as before
         """
         try:
             if len(all_reports) <= 1:
@@ -360,7 +424,7 @@ class MultiReportHandler:
             }
         })
         
-        # Additional charts only for multiple product types...
+        # Additional charts only for multiple product types
         if len(product_types) > 1:
             categories = {}
             for data in performance_data:

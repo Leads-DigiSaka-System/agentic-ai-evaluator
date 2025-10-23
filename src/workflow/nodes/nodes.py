@@ -1,43 +1,141 @@
 from src.workflow.state import ProcessingState
-from src.Upload.form_extractor import extract_pdf_with_gemini, extract_pdf_metadata
+from src.Upload.form_extractor import extract_with_gemini, extract_pdf_metadata
 from src.formatter.chunking import chunk_markdown_safe
 from src.formatter.formatter import extract_form_type_from_content
 from src.workflow.nodes.analysis import analyze_demo_trial
 from src.database.insert import qdrant_client
 import uuid
 from datetime import datetime
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def extraction_node(state: ProcessingState) -> ProcessingState:
-    """Node 1: Extract content from PDF or use pre-extracted content"""
+    """
+    Node 1: Extract content from PDF/Image with validation
+    
+    NEW BEHAVIOR:
+    - Validates file format before extraction
+    - Supports both PDF and images
+    - Stores validation results in state
+    - Sets file_validation flag for routing
+    - FIXED: Proper metadata handling for images
+    
+    Backward compatible: Still skips if markdown is pre-extracted
+    """
     try:
         state["current_step"] = "extraction"
         
-        # If markdown is already provided (from multi-report handler), skip extraction
+        # Check if markdown is already provided (from multi-report handler)
         if state.get("extracted_markdown"):
-            print("✅ Using pre-extracted markdown, skipping PDF extraction")
+            logger.info("✅ Using pre-extracted markdown, skipping extraction")
+            
             # Still extract metadata if not already present
             if not state.get("metadata"):
+                # Try to extract PDF metadata, fallback to basic metadata
+                try:
+                    state["metadata"] = extract_pdf_metadata(state["file_path"])
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not extract PDF metadata: {e}")
+                    state["metadata"] = {
+                        "source": state["file_path"],
+                        "file_name": state["file_name"],
+                        "extraction_method": "pre-extracted"
+                    }
+            
+            # Mark file validation as passed (since it was pre-extracted)
+            state["file_validation"] = {
+                "is_valid": True,
+                "file_type": "pdf",  # Assume PDF for pre-extracted content
+                "format": "PDF",
+                "validation_skipped": True
+            }
+            
+            return state
+        
+        # NEW: Extract with validation
+        logger.info(f"🔍 Extracting and validating file: {state['file_name']}")
+        extraction_result = extract_with_gemini(
+            state["file_path"], 
+            validate_format=True  # Enable format validation
+        )
+        
+        # Store validation results in state
+        state["file_validation"] = extraction_result.get("validation_result", {})
+        
+        # Check extraction success
+        if not extraction_result["success"]:
+            error_msg = extraction_result.get("error", "Unknown extraction error")
+            logger.error(f"❌ Extraction failed: {error_msg}")
+            state["errors"].append(f"File extraction failed: {error_msg}")
+            return state
+        
+        # Store extracted content
+        state["extracted_markdown"] = extraction_result["extracted_text"]
+        
+        # FIXED: Handle metadata based on file type
+        file_type = extraction_result.get("file_type")
+        
+        if file_type == "pdf":
+            # Extract rich metadata from PDF
+            try:
                 state["metadata"] = extract_pdf_metadata(state["file_path"])
-            return state
-            
-        # Original logic for single reports (backward compatibility)
-        extracted_content = extract_pdf_with_gemini(state["file_path"])
-        if not extracted_content:
-            state["errors"].append("Failed to extract content from PDF")
-            return state
-            
-        state["extracted_markdown"] = extracted_content
+            except Exception as e:
+                logger.warning(f"⚠️ Could not extract PDF metadata: {e}")
+                state["metadata"] = {
+                    "source": state["file_path"],
+                    "file_name": state["file_name"],
+                    "file_type": "pdf",
+                    "error": str(e)
+                }
         
-        # Extract metadata
-        state["metadata"] = extract_pdf_metadata(state["file_path"])
+        elif file_type == "image":
+            # FIXED: Create proper metadata for images
+            validation_meta = extraction_result.get("validation_result", {}).get("metadata", {})
+            state["metadata"] = {
+                "source": state["file_path"],
+                "file_name": state["file_name"],
+                "file_type": "image",
+                "format": extraction_result.get("validation_result", {}).get("format", "Unknown"),
+                "width": validation_meta.get("width", 0),
+                "height": validation_meta.get("height", 0),
+                "file_size_mb": validation_meta.get("file_size_mb", 0),
+                "mode": validation_meta.get("mode", "RGB"),
+                "extraction_method": "gemini_ocr"
+            }
         
-        print("✅ Extraction completed successfully")
+        else:
+            # Fallback for unknown file types (should not happen with validation)
+            logger.warning(f"⚠️ Unknown file type: {file_type}")
+            state["metadata"] = {
+                "source": state["file_path"],
+                "file_name": state["file_name"],
+                "file_type": file_type or "unknown",
+                "extraction_method": "gemini_api"
+            }
+        
+        logger.info("✅ Extraction completed successfully")
+        logger.info(f"📊 Metadata: {state['metadata'].get('file_type', 'unknown')} - {state['metadata'].get('format', 'N/A')}")
+        
         return state
         
     except Exception as e:
-        state["errors"].append(f"Extraction failed: {str(e)}")
+        error_msg = f"Extraction failed: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        state["errors"].append(error_msg)
+        
+        # Ensure metadata exists even on error
+        if not state.get("metadata"):
+            state["metadata"] = {
+                "source": state.get("file_path", "unknown"),
+                "file_name": state.get("file_name", "unknown"),
+                "error": str(e)
+            }
+        
+        import traceback
+        traceback.print_exc()
         return state
-
 def analysis_node(state: ProcessingState) -> ProcessingState:
     """Node 2: Analyze extracted content and determine form type"""
     try:

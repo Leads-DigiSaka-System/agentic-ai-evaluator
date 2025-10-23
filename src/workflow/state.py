@@ -1,4 +1,3 @@
-# file: src/workflow/state.py
 from typing import Dict, Any, List, Optional, TypedDict
 
 class ProcessingState(TypedDict):
@@ -41,9 +40,50 @@ class ProcessingState(TypedDict):
     errors: List[str]  # Accumulated errors
     
     # ============================================
-    # INTELLIGENT EVALUATION RESULTS
-    # These flags are set by LLM-based quality assessment
-    # The router respects these flags for retry logic
+    # NEW: VALIDATION RESULTS
+    # ============================================
+    
+    file_validation: Optional[Dict[str, Any]]
+    """
+    File format validation results from FileValidator
+    {
+        "is_valid": bool,
+        "file_type": str ("pdf" | "image"),
+        "format": str (e.g., "PDF", "PNG"),
+        "errors": List[str],
+        "warnings": List[str],
+        "metadata": Dict (file-specific info like pages, dimensions)
+    }
+    """
+    
+    is_valid_content: Optional[bool]
+    """
+    Flag set by content_validation_node
+    True if content is a valid product demo/trial report
+    False if content is not a demo (invoice, letter, etc.)
+    Router uses this to decide: proceed to analysis OR error out
+    """
+    
+    content_validation: Optional[Dict[str, Any]]
+    """
+    LLM content validation result
+    {
+        "is_valid_demo": bool,
+        "confidence": float (0.0-1.0),
+        "content_type": str ("product_demo" | "trial_report" | "invoice" | etc.),
+        "reasoning": str,
+        "detected_elements": {
+            "has_product_info": bool,
+            "has_trial_data": bool,
+            "has_numeric_results": bool,
+            "has_location_info": bool
+        },
+        "feedback": str (user-friendly message)
+    }
+    """
+    
+    # ============================================
+    # INTELLIGENT EVALUATION RESULTS (existing)
     # ============================================
     
     output_evaluation: Optional[Dict[str, Any]]
@@ -78,9 +118,3 @@ class ProcessingState(TypedDict):
     Quick reference for last evaluation decision
     Useful for debugging and monitoring
     """
-    
-    # ============================================
-    # DEPRECATED / UNUSED
-    # ============================================
-    # goal_reasoning: Optional[Dict[str, Any]]  
-    # ☝️ No longer used - we don't use LLM for routing decisions

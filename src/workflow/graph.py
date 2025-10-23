@@ -3,23 +3,34 @@ from src.workflow.state import ProcessingState
 from src.workflow.nodes.nodes import extraction_node, analysis_node, chunking_node, storage_node, error_node
 from src.workflow.nodes.graph_suggestion_node import graph_suggestion_node
 from src.workflow.nodes.evaluation_node import evaluation_node
+from src.workflow.nodes.validation_node import content_validation_node
+
 
 def create_advanced_processing_workflow():
     """
-    Create workflow with INTELLIGENT EVALUATION + FIXED FLOW
+    Create workflow with CONTENT VALIDATION + INTELLIGENT EVALUATION
     
-    Philosophy:
-    - Intelligence in: Quality decisions (is output good enough?)
-    - Deterministic: Workflow progression (what comes after what?)
+    NEW: Added content_validation node after extraction
+    
+    Flow:
+    1. Extract (with file format validation)
+    2. Validate Content (LLM checks if it's a product demo)
+    3. Analyze (existing)
+    4. Evaluate Analysis (existing)
+    5. Suggest Graphs (existing)
+    6. Evaluate Graphs (existing)
+    7. Chunk (existing)
+    8. Store (existing)
     """
     workflow = StateGraph(ProcessingState)
     
     # Add all nodes
     workflow.add_node("extract", extraction_node)
+    workflow.add_node("validate_content", content_validation_node)  # NEW
     workflow.add_node("analyze", analysis_node)
-    workflow.add_node("evaluate_analysis", evaluation_node)  # Renamed for clarity
+    workflow.add_node("evaluate_analysis", evaluation_node)
     workflow.add_node("suggest_graphs", graph_suggestion_node)
-    workflow.add_node("evaluate_graphs", evaluation_node)    # Same node, different context
+    workflow.add_node("evaluate_graphs", evaluation_node)
     workflow.add_node("chunk", chunking_node)
     workflow.add_node("store", storage_node)
     workflow.add_node("handle_errors", error_node)
@@ -28,15 +39,45 @@ def create_advanced_processing_workflow():
     workflow.set_entry_point("extract")
     
     # ============================================
-    # DETERMINISTIC ROUTERS - Simple, Predictable
+    # ROUTERS WITH NEW VALIDATION LOGIC
     # ============================================
     
     def route_after_extract(state: ProcessingState) -> str:
-        """After extraction, always check for errors then proceed to analysis"""
+        """
+        After extraction, check for errors then validate content
+        
+        NEW: Routes to content validation instead of directly to analysis
+        """
         if state.get("errors") and not state.get("extracted_markdown"):
             print("❌ Extraction failed critically")
             return "handle_errors"
-        print("✅ Extract → Analyze")
+        
+        # Check file validation results (if available)
+        file_validation = state.get("file_validation", {})
+        if file_validation and not file_validation.get("is_valid", True):
+            print("❌ File format validation failed")
+            return "handle_errors"
+        
+        print("✅ Extract → Validate Content")
+        return "validate_content"
+    
+    def route_after_content_validation(state: ProcessingState) -> str:
+        """
+        NEW ROUTER: After content validation, proceed to analysis or error
+        
+        Checks if content is a valid product demo
+        """
+        is_valid = state.get("is_valid_content", False)
+        validation_result = state.get("content_validation", {})
+        
+        if not is_valid:
+            confidence = validation_result.get("confidence", 0.0)
+            content_type = validation_result.get("content_type", "unknown")
+            print(f"❌ Content validation failed: {content_type} (confidence: {confidence:.2f})")
+            print(f"📝 Feedback: {validation_result.get('feedback', 'No feedback')}")
+            return "handle_errors"
+        
+        print(f"✅ Content validated as product demo → Analyze")
         return "analyze"
     
     def route_after_analysis(state: ProcessingState) -> str:
@@ -50,7 +91,6 @@ def create_advanced_processing_workflow():
     def route_after_analysis_evaluation(state: ProcessingState) -> str:
         """
         INTELLIGENT ROUTING based on evaluation results
-        This is where we respect the LLM's quality decision
         """
         needs_reanalysis = state.get("needs_reanalysis", False)
         evaluation = state.get("output_evaluation", {})
@@ -92,7 +132,6 @@ def create_advanced_processing_workflow():
     def route_after_graph_evaluation(state: ProcessingState) -> str:
         """
         INTELLIGENT ROUTING based on graph evaluation
-        This respects the LLM's graph quality decision
         """
         needs_regraph = state.get("needs_regraph", False)
         evaluation = state.get("output_evaluation", {})
@@ -137,20 +176,30 @@ def create_advanced_processing_workflow():
             return "handle_errors"
     
     # ============================================
-    # WORKFLOW EDGES - Fixed Sequence
+    # WORKFLOW EDGES - Updated with Validation
     # ============================================
     
-    # Extract → Analyze (deterministic)
+    # Extract → Validate Content (NEW)
     workflow.add_conditional_edges(
         "extract",
         route_after_extract,
+        {
+            "validate_content": "validate_content",
+            "handle_errors": "handle_errors"
+        }
+    )
+    
+    # Validate Content → Analyze (NEW)
+    workflow.add_conditional_edges(
+        "validate_content",
+        route_after_content_validation,
         {
             "analyze": "analyze",
             "handle_errors": "handle_errors"
         }
     )
     
-    # Analyze → Evaluate Analysis (deterministic)
+    # Analyze → Evaluate Analysis
     workflow.add_conditional_edges(
         "analyze",
         route_after_analysis,
@@ -160,18 +209,18 @@ def create_advanced_processing_workflow():
         }
     )
     
-    # Evaluate Analysis → Suggest Graphs OR Retry Analysis (intelligent)
+    # Evaluate Analysis → Suggest Graphs OR Retry Analysis
     workflow.add_conditional_edges(
         "evaluate_analysis",
         route_after_analysis_evaluation,
         {
             "suggest_graphs": "suggest_graphs",
-            "analyze": "analyze",  # Intelligent retry
+            "analyze": "analyze",
             "handle_errors": "handle_errors"
         }
     )
     
-    # Suggest Graphs → Evaluate Graphs (deterministic)
+    # Suggest Graphs → Evaluate Graphs
     workflow.add_conditional_edges(
         "suggest_graphs",
         route_after_graph_suggestion,
@@ -181,18 +230,18 @@ def create_advanced_processing_workflow():
         }
     )
     
-    # Evaluate Graphs → Chunk OR Retry Graphs (intelligent)
+    # Evaluate Graphs → Chunk OR Retry Graphs
     workflow.add_conditional_edges(
         "evaluate_graphs",
         route_after_graph_evaluation,
         {
             "chunk": "chunk",
-            "suggest_graphs": "suggest_graphs",  # Intelligent retry
+            "suggest_graphs": "suggest_graphs",
             "handle_errors": "handle_errors"
         }
     )
     
-    # Chunk → Store (deterministic)
+    # Chunk → Store
     workflow.add_conditional_edges(
         "chunk",
         route_after_chunk,
@@ -202,7 +251,7 @@ def create_advanced_processing_workflow():
         }
     )
     
-    # Store → END (deterministic)
+    # Store → END
     workflow.add_conditional_edges(
         "store",
         route_after_store,
