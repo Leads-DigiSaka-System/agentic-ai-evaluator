@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from src.database.hybrid_search import LangChainHybridSearch
+from src.database.analysis_search import analysis_searcher 
 
 router = APIRouter()
 search_engine = LangChainHybridSearch()
@@ -38,3 +39,42 @@ async def balanced_search(request: SimpleSearchRequest):
         return {"results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class AnalysisSearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+
+@router.post("/analysis-search")
+async def analysis_search(request: AnalysisSearchRequest):
+    """
+    Search through agricultural analysis data using semantic search.
+    
+    Args:
+        query: Search query (e.g., "corn yield improvement", "rice fertilizer demo")
+        top_k: Number of results to return (default: 5)
+    
+    Returns:
+        List of analysis results with performance metrics and summaries
+    """
+    try:
+        results = analysis_searcher.search(
+            query=request.query,
+            top_k=request.top_k
+        )
+        
+        if not results:
+            return {
+                "message": "No analysis results found",
+                "query": request.query,
+                "results": []
+            }
+        
+        return {
+            "query": request.query,
+            "total_results": len(results),
+            "results": results
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Analysis search failed: {str(e)}")

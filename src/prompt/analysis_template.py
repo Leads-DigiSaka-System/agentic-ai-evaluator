@@ -233,10 +233,10 @@ Make it specific to the product type:
 - Others: Adapt to primary benefit
 
 ═══════════════════════════════════════════════════════════════
-RETURN FLEXIBLE JSON STRUCTURE
+RETURN FLEXIBLE JSON STRUCTURE (ONLY JSON, NO OTHER TEXT)
 ═══════════════════════════════════════════════════════════════
 
-Return a JSON structure that ADAPTS to the data present:
+**CRITICAL: RETURN ONLY THE JSON STRUCTURE BELOW, NO EXPLANATIONS, NO ADDITIONAL TEXT**
 
 {{
   "status": "success",
@@ -367,15 +367,8 @@ INPUT DATA TO ANALYZE:
 {markdown_data}
 
 ═══════════════════════════════════════════════════════════════
-CRITICAL REMINDERS:
+FINAL INSTRUCTION: RETURN ONLY THE JSON STRUCTURE. NO OTHER TEXT.
 ═══════════════════════════════════════════════════════════════
-
-1. BE ADAPTIVE: Don't force data into a predefined structure
-2. BE INTELLIGENT: Recognize what metrics are present and analyze accordingly
-3. BE CLEAR: When rating scales are used, clarify they're not percentages
-4. BE SPECIFIC: Tailor insights to the actual product type detected
-5. BE HONEST: Flag missing data and data quality issues
-6. BE ACTIONABLE: Recommendations must be specific and data-driven
 """
 )
 
@@ -400,7 +393,8 @@ BENCHMARKING:
 - Evaluate against farmer practice baseline
 - Assess if results meet product claims
 
-RETURN:
+**RETURN ONLY JSON, NO OTHER TEXT:**
+
 {{
   "performance_rating": "excellent/good/moderate/poor",
   "key_strengths": ["strength1", "strength2"],
@@ -433,7 +427,8 @@ BUSINESS RECOMMENDATIONS:
 - Sales strategy adjustments
 - Future demo improvements
 
-RETURN:
+**RETURN ONLY JSON, NO OTHER TEXT:**
+
 {{
   "commercial_potential": "high/medium/low",
   "conversion_likelihood": 0-100,

@@ -2,18 +2,24 @@ from langgraph.graph import StateGraph, END
 from src.workflow.state import ProcessingState
 from src.workflow.nodes.nodes import extraction_node, analysis_node, chunking_node, storage_node, error_node
 from src.workflow.nodes.graph_suggestion_node import graph_suggestion_node
-from src.Agents.goal_reasoner import goal_reasoner
-from src.workflow.nodes.evaluation_node import evaluation_node  # ADD THIS IMPORT
+from src.workflow.nodes.evaluation_node import evaluation_node
 
 def create_advanced_processing_workflow():
-    """Create advanced workflow with goal reasoning and evaluation"""
+    """
+    Create workflow with INTELLIGENT EVALUATION + FIXED FLOW
+    
+    Philosophy:
+    - Intelligence in: Quality decisions (is output good enough?)
+    - Deterministic: Workflow progression (what comes after what?)
+    """
     workflow = StateGraph(ProcessingState)
     
-    # Add all nodes INCLUDING evaluation node
+    # Add all nodes
     workflow.add_node("extract", extraction_node)
     workflow.add_node("analyze", analysis_node)
+    workflow.add_node("evaluate_analysis", evaluation_node)  # Renamed for clarity
     workflow.add_node("suggest_graphs", graph_suggestion_node)
-    workflow.add_node("evaluate", evaluation_node)  # ADD THIS NODE
+    workflow.add_node("evaluate_graphs", evaluation_node)    # Same node, different context
     workflow.add_node("chunk", chunking_node)
     workflow.add_node("store", storage_node)
     workflow.add_node("handle_errors", error_node)
@@ -21,107 +27,195 @@ def create_advanced_processing_workflow():
     # Set entry point
     workflow.set_entry_point("extract")
     
-    def dynamic_router(state: ProcessingState) -> str:
-        """Use goal reasoner to dynamically route to next step"""
-        try:
-            # Get next action from goal reasoner
-            reasoner_result = goal_reasoner(state)
-            next_action = reasoner_result.get("next_action", "handle_errors")
-            reason = reasoner_result.get("reason", "No reason provided")
-            
-            print(f"🎯 Goal Reasoner: {next_action} - {reason}")
-            
-            # Map actions to nodes - INCLUDING EVALUATE
-            action_to_node = {
-                "extract": "extract",
-                "analyze": "analyze", 
-                "suggest_graphs": "suggest_graphs",
-                "evaluate": "evaluate",  # ADD THIS MAPPING
-                "store": "store",
-                "retry": "handle_errors"
-            }
-            
-            return action_to_node.get(next_action, "handle_errors")
-            
-        except Exception as e:
-            print(f"❌ Goal reasoner failed: {str(e)}")
+    # ============================================
+    # DETERMINISTIC ROUTERS - Simple, Predictable
+    # ============================================
+    
+    def route_after_extract(state: ProcessingState) -> str:
+        """After extraction, always check for errors then proceed to analysis"""
+        if state.get("errors") and not state.get("extracted_markdown"):
+            print("❌ Extraction failed critically")
+            return "handle_errors"
+        print("✅ Extract → Analyze")
+        return "analyze"
+    
+    def route_after_analysis(state: ProcessingState) -> str:
+        """After analysis, check for errors then proceed to evaluation"""
+        if state.get("errors") and not state.get("analysis_result"):
+            print("❌ Analysis failed critically")
+            return "handle_errors"
+        print("✅ Analyze → Evaluate Analysis")
+        return "evaluate_analysis"
+    
+    def route_after_analysis_evaluation(state: ProcessingState) -> str:
+        """
+        INTELLIGENT ROUTING based on evaluation results
+        This is where we respect the LLM's quality decision
+        """
+        needs_reanalysis = state.get("needs_reanalysis", False)
+        evaluation = state.get("output_evaluation", {})
+        attempts = state.get("evaluation_attempts", 0)
+        
+        # Handle list returns from LLM
+        if isinstance(evaluation, list):
+            evaluation = evaluation[0] if evaluation else {}
+        
+        issue_type = evaluation.get("issue_type", "no_issue")
+        confidence = evaluation.get("confidence", 0.5)
+        
+        # INTELLIGENT DECISION LOGIC
+        if needs_reanalysis and attempts < 2:
+            print(f"🔄 Analysis quality low (confidence: {confidence:.2f}) - Retrying analysis (attempt {attempts + 1})")
+            return "analyze"
+        
+        if issue_type == "source_limitation":
+            print("✅ Source limitations identified (expected) - Proceeding to graphs")
+            return "suggest_graphs"
+        
+        if confidence < 0.3 and attempts < 2:
+            print(f"⚠️ Very low confidence ({confidence:.2f}) - Forcing reanalysis")
+            state["needs_reanalysis"] = True
+            return "analyze"
+        
+        # Default: proceed to next step
+        print(f"✅ Analysis acceptable (confidence: {confidence:.2f}) → Suggest Graphs")
+        return "suggest_graphs"
+    
+    def route_after_graph_suggestion(state: ProcessingState) -> str:
+        """After graph generation, always evaluate graphs"""
+        if state.get("errors") and not state.get("graph_suggestions"):
+            print("❌ Graph generation failed critically")
+            return "handle_errors"
+        print("✅ Suggest Graphs → Evaluate Graphs")
+        return "evaluate_graphs"
+    
+    def route_after_graph_evaluation(state: ProcessingState) -> str:
+        """
+        INTELLIGENT ROUTING based on graph evaluation
+        This respects the LLM's graph quality decision
+        """
+        needs_regraph = state.get("needs_regraph", False)
+        evaluation = state.get("output_evaluation", {})
+        attempts = state.get("evaluation_attempts", 0)
+        
+        # Handle list returns
+        if isinstance(evaluation, list):
+            evaluation = evaluation[0] if evaluation else {}
+        
+        issue_type = evaluation.get("issue_type", "no_issue")
+        confidence = evaluation.get("confidence", 0.5)
+        
+        # INTELLIGENT DECISION LOGIC
+        if needs_regraph and attempts < 2:
+            print(f"🔄 Graph quality low (confidence: {confidence:.2f}) - Regenerating graphs (attempt {attempts + 1})")
+            return "suggest_graphs"
+        
+        if issue_type == "graph_issue" and confidence < 0.5 and attempts < 2:
+            print(f"⚠️ Graph issues detected (confidence: {confidence:.2f}) - Forcing regeneration")
+            state["needs_regraph"] = True
+            return "suggest_graphs"
+        
+        # Default: proceed to chunking
+        print(f"✅ Graphs acceptable (confidence: {confidence:.2f}) → Chunk")
+        return "chunk"
+    
+    def route_after_chunk(state: ProcessingState) -> str:
+        """After chunking, always proceed to storage"""
+        if not state.get("chunks"):
+            print("❌ Chunking produced no chunks")
+            return "handle_errors"
+        print(f"✅ Chunk ({len(state.get('chunks', []))} chunks) → Store")
+        return "store"
+    
+    def route_after_store(state: ProcessingState) -> str:
+        """After storage, check success then END"""
+        if state.get("form_id"):
+            print("✅ Storage successful → END")
+            return END
+        else:
+            print("❌ Storage failed")
             return "handle_errors"
     
-    # Use goal reasoner for ALL transitions
+    # ============================================
+    # WORKFLOW EDGES - Fixed Sequence
+    # ============================================
+    
+    # Extract → Analyze (deterministic)
     workflow.add_conditional_edges(
         "extract",
-        dynamic_router,
+        route_after_extract,
         {
             "analyze": "analyze",
-            "suggest_graphs": "suggest_graphs", 
-            "evaluate": "evaluate",  # ADD THIS
-            "store": "store",
-            "handle_errors": "handle_errors",
-            "extract": "extract"
+            "handle_errors": "handle_errors"
         }
     )
     
+    # Analyze → Evaluate Analysis (deterministic)
     workflow.add_conditional_edges(
         "analyze",
-        dynamic_router,
+        route_after_analysis,
         {
-            "suggest_graphs": "suggest_graphs",
-            "evaluate": "evaluate",  # ADD THIS
-            "store": "store",
-            "handle_errors": "handle_errors",
-            "analyze": "analyze",
-            "extract": "extract"
+            "evaluate_analysis": "evaluate_analysis",
+            "handle_errors": "handle_errors"
         }
     )
     
+    # Evaluate Analysis → Suggest Graphs OR Retry Analysis (intelligent)
+    workflow.add_conditional_edges(
+        "evaluate_analysis",
+        route_after_analysis_evaluation,
+        {
+            "suggest_graphs": "suggest_graphs",
+            "analyze": "analyze",  # Intelligent retry
+            "handle_errors": "handle_errors"
+        }
+    )
+    
+    # Suggest Graphs → Evaluate Graphs (deterministic)
     workflow.add_conditional_edges(
         "suggest_graphs",
-        dynamic_router, 
+        route_after_graph_suggestion,
         {
-            "evaluate": "evaluate",  # ADD THIS (most common path)
-            "chunk": "chunk",
-            "store": "store",
-            "handle_errors": "handle_errors",
-            "suggest_graphs": "suggest_graphs",
-            "analyze": "analyze"
+            "evaluate_graphs": "evaluate_graphs",
+            "handle_errors": "handle_errors"
         }
     )
     
+    # Evaluate Graphs → Chunk OR Retry Graphs (intelligent)
     workflow.add_conditional_edges(
-        "evaluate",  # ADD THIS NEW NODE'S CONDITIONAL EDGES
-        dynamic_router,
+        "evaluate_graphs",
+        route_after_graph_evaluation,
         {
             "chunk": "chunk",
-            "store": "store", 
-            "handle_errors": "handle_errors",
-            "analyze": "analyze",  # If evaluation says re-analyze
-            "suggest_graphs": "suggest_graphs",  # If need better graphs
-            "evaluate": "evaluate"  # For retries
+            "suggest_graphs": "suggest_graphs",  # Intelligent retry
+            "handle_errors": "handle_errors"
         }
     )
     
+    # Chunk → Store (deterministic)
     workflow.add_conditional_edges(
         "chunk",
-        dynamic_router,
+        route_after_chunk,
         {
             "store": "store",
-            "handle_errors": "handle_errors",
-            "chunk": "chunk"
+            "handle_errors": "handle_errors"
         }
     )
     
+    # Store → END (deterministic)
     workflow.add_conditional_edges(
         "store",
-        dynamic_router,
+        route_after_store,
         {
-            "handle_errors": "handle_errors",
-            END: END
+            END: END,
+            "handle_errors": "handle_errors"
         }
     )
     
+    # Handle errors always ends
     workflow.add_edge("handle_errors", END)
     
     return workflow.compile()
 
-# Advanced workflow instance
+# Create workflow instance
 processing_workflow = create_advanced_processing_workflow()

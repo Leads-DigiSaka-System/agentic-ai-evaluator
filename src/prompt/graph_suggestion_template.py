@@ -155,6 +155,8 @@ If cooperator feedback is 80% positive:
 - Include actual percentages, ratings, and values in titles and labels
 - Focus on the most significant findings from the analysis
 
+**CRITICAL: RETURN ONLY THE JSON STRUCTURE SPECIFIED ABOVE. NO EXPLANATIONS, NO ADDITIONAL TEXT, NO MARKDOWN, NO CODE BLOCKS. ONLY VALID JSON.**
+
 Now analyze the provided agricultural demo data and generate SPECIFIC, DATA-DRIVEN chart suggestions:
 """
 )
