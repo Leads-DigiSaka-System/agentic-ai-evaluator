@@ -2,8 +2,7 @@ from langchain.prompts import PromptTemplate
 
 def analysis_prompt_template_structured():
     """
-    Universal adaptive template that works for ALL agricultural demo forms
-    Automatically detects and adapts to different product types and metrics
+    Universal adaptive template with CORRECTED metric calculations
     """
     return PromptTemplate.from_template(
 """You are a SENIOR AGRICULTURAL DATA ANALYST with expertise across all crop protection and enhancement products.
@@ -24,6 +23,7 @@ First, determine what type of product is being tested:
 - Foliar/Biostimulant: Look for "tillers", "LCC", "crop vigor", "leaf color"
 - Fungicide: Look for "disease severity", "infection rate", "disease incidence"
 - Insecticide: Look for "pest count", "damage rating", "mortality rate"
+- Molluscicide: Look for "snail control", "% control"
 - Growth Regulator: Look for "plant height", "stem diameter", "growth rate"
 - Fertilizer: Look for "NPK", "nutrient levels", "leaf analysis"
 - Other: Describe what metrics are present
@@ -90,48 +90,126 @@ Protocol Assessment:
 - Note any protocol differences or concerns
 
 ═══════════════════════════════════════════════════════════════
-SECTION 3: PERFORMANCE ANALYSIS (HIGHLY ADAPTIVE)
+SECTION 3: PERFORMANCE ANALYSIS (CORRECTED CALCULATIONS)
 ═══════════════════════════════════════════════════════════════
 
-CRITICAL: Adapt to whatever metrics are present in the data!
+CRITICAL: Use the CORRECT calculation method for each metric type!
 
-A) IF RATING SCALE DATA (e.g., 1-4 scale):
-   - Extract ratings for both treatments at all time points
-   - Calculate average rating for each treatment
-   - Calculate improvement percentage: ((avg_leads - avg_fp) / avg_fp) × 100
-   - Note what the ratings mean (1=poor, 4=excellent, etc.)
-   - IMPORTANT: Clarify these are RATING improvements, not actual percentages
+A) IF RATING SCALE DATA (e.g., 1-4 scale where 1=No Control, 4=Excellent):
+   
+   EXTRACT:
+   - All ratings for Control at each time point (3 DAA, 7 DAA, 14 DAA)
+   - All ratings for Leads Agri at each time point
+   
+   CALCULATE:
+   - Average rating for Control: (sum of all ratings) / (number of time points)
+   - Average rating for Leads Agri: (sum of all ratings) / (number of time points)
+   
+   RATING DIFFERENCE (absolute):
+   - difference = avg_leads - avg_control
+   - Example: If Control avg = 3.0 and Leads avg = 3.67
+     Then difference = 3.67 - 3.0 = 0.67 points higher
+   
+   RATING IMPROVEMENT (relative to scale):
+   - improvement_on_scale = (difference / max_rating) × 100
+   - Example: With 1-4 scale and difference of 0.67
+     improvement_on_scale = (0.67 / 4) × 100 = 16.75%
+   - This means "16.75% improvement relative to the rating scale"
+   
+   PERCENTILE IMPROVEMENT (if needed):
+   - percentile_improvement = ((avg_leads - avg_control) / avg_control) × 100
+   - Example: (3.67 - 3.0) / 3.0 × 100 = 22.33%
+   - This means "22.33% higher rating than control"
+   
+   INTERPRETATION:
+   - Focus on ABSOLUTE difference first (e.g., "0.67 points higher")
+   - Use scale improvement for context (e.g., "16.75% of scale range")
+   - Avoid saying "22% improvement" without clarifying it's relative to control rating
 
-B) IF PERCENTAGE DATA (e.g., % Control):
-   - Extract percentages for both treatments at all time points
-   - Calculate average % for each treatment
-   - Calculate absolute difference: (avg_leads - avg_fp)
-   - Calculate relative improvement if appropriate
+B) IF PERCENTAGE DATA (e.g., "% Control" as actual percentage 0-100):
+   
+   EXTRACT:
+   - All % values for Control at each time point
+   - All % values for Leads Agri at each time point
+   
+   CALCULATE:
+   - Average % for Control
+   - Average % for Leads Agri
+   
+   ABSOLUTE DIFFERENCE (in percentage points):
+   - difference = avg_leads - avg_control
+   - Example: If Control = 75% and Leads = 85%
+     Then difference = 85 - 75 = 10 percentage points
+   
+   RELATIVE IMPROVEMENT:
+   - relative_improvement = (difference / avg_control) × 100
+   - Example: (10 / 75) × 100 = 13.33%
+   - This means "13.33% better than control"
+   
+   INTERPRETATION:
+   - Always state BOTH: absolute (10 pp) AND relative (13.33%)
+   - Example: "Leads Agri achieved 85% control vs 75% control (10 percentage points higher, representing 13.33% improvement)"
 
-C) IF COUNT DATA (e.g., tillers, pests):
-   - Extract counts for both treatments at all time points
-   - Calculate averages
-   - Calculate percentage change: ((leads - fp) / fp) × 100
-   - Assess if higher or lower is better (tillers=higher, pests=lower)
+C) IF COUNT DATA (e.g., number of tillers, pests, stems):
+   
+   EXTRACT:
+   - All counts for Control at each time point
+   - All counts for Leads Agri at each time point
+   
+   CALCULATE:
+   - Average count for Control
+   - Average count for Leads Agri
+   
+   ABSOLUTE DIFFERENCE:
+   - difference = avg_leads - avg_control
+   - State units (e.g., "5 more tillers")
+   
+   PERCENTAGE CHANGE:
+   - For "more is better" (tillers, stems):
+     improvement = ((avg_leads - avg_control) / avg_control) × 100
+   - For "less is better" (pests, disease count):
+     reduction = ((avg_control - avg_leads) / avg_control) × 100
+   
+   INTERPRETATION:
+   - Always clarify direction (increase/decrease)
+   - State absolute number first, then percentage
 
-D) IF MEASUREMENT DATA (e.g., height, yield):
-   - Extract measurements for both treatments
-   - Calculate differences and improvement percentages
-   - Include units (cm, kg, MT/Ha, etc.)
+D) IF MEASUREMENT DATA (e.g., height in cm, yield in MT/Ha):
+   
+   EXTRACT:
+   - Measurements for Control
+   - Measurements for Leads Agri
+   
+   CALCULATE:
+   - Absolute difference (with units)
+   - Percentage improvement: ((leads - control) / control) × 100
+   
+   INTERPRETATION:
+   - Always include units
+   - Example: "Yield increased from 5.2 MT/Ha to 6.0 MT/Ha (0.8 MT/Ha increase, 15.38% improvement)"
 
 E) IF MULTIPLE METRICS:
-   - Analyze each metric separately
+   - Analyze each metric separately using appropriate method
    - Identify which metric shows strongest improvement
    - Look for correlations between metrics
+   - Use consistent terminology for each type
 
-STATISTICAL ASSESSMENT (regardless of metric type):
-- Improvement significance: 
-  * >25% = Highly significant
-  * 15-25% = Significant
-  * 5-15% = Moderate
-  * <5% = Marginal
+STATISTICAL ASSESSMENT:
+- Improvement significance (adapt to metric type):
+  * For ratings (1-4 scale):
+    - >0.75 points = Highly significant
+    - 0.5-0.75 points = Significant  
+    - 0.25-0.5 points = Moderate
+    - <0.25 points = Marginal
+  
+  * For percentages and measurements:
+    - >25% = Highly significant
+    - 15-25% = Significant
+    - 5-15% = Moderate
+    - <5% = Marginal
+
 - Performance consistency: Check variance across time points
-- Confidence level: High/Medium/Low based on data quality and sample size
+- Confidence level: High/Medium/Low based on data quality
 
 TREND ANALYSIS:
 - Early vs Late performance (first vs last measurement)
@@ -146,7 +224,9 @@ SECTION 4: YIELD ANALYSIS (if available)
 Extract yield data if present:
 - Farmer's Practice yield (with units)
 - Leads Agri yield (with units)
-- Calculate yield improvement percentage
+- Calculate yield improvement:
+  * Absolute: (leads_yield - control_yield) with units
+  * Percentage: ((leads_yield - control_yield) / control_yield) × 100
 - Convert to MT/Ha if in different units
 - Note if yield data is pending/N/A
 
@@ -173,8 +253,8 @@ SECTION 6: COMMERCIAL PERFORMANCE (if available)
 Extract commercial data if present:
 - Demo showcase date
 - Number of participants
-- Total sales/move-out value
-- Sales per participant (calculate if possible)
+- Total sales/move-out value (in Php)
+- Sales per participant: (total_sales / participants)
 - Market reception indicators
 
 If data is N/A, note as "Demo not yet conducted"
@@ -186,16 +266,16 @@ SECTION 7: RISK & OPPORTUNITY ASSESSMENT
 Risk Factors (flag if present):
 - Small plot size (<100 sqm for field crops)
 - Small sample size (<20 participants for demos)
-- Marginal performance improvement (<5%)
+- Marginal performance (use appropriate threshold for metric type)
 - Missing critical data (yield, efficacy metrics)
 - Single location/limited scope
 - Negative cooperator feedback
 
 Opportunities (highlight if present):
-- Strong performance improvement (>25%)
+- Strong performance (use appropriate threshold for metric type)
 - Highly positive cooperator feedback
 - Quick visible results (<7 days)
-- Good commercial metrics (high sales per participant)
+- Good commercial metrics (>Php 1,500 per participant)
 - Multiple metrics showing improvement
 - High data quality and completeness
 
@@ -223,14 +303,14 @@ SECTION 9: EXECUTIVE SUMMARY
 
 Write a compelling 2-3 sentence summary that adapts to the data:
 
-Template structure (adapt as needed):
-"[Product] demonstrated [key metric with value] compared to [control], achieving [specific performance data]. [Cooperator feedback highlight if available]. [Overall assessment: strong/moderate/weak performance] [Note on data status if relevant]."
+For RATING SCALE data, use this format:
+"[Product] achieved an average rating of [X] compared to [Y] for control ([difference] points higher on [scale] scale). [Cooperator feedback if available]. [Commercial results if available]."
 
-Make it specific to the product type:
-- Herbicides: Focus on weed control efficacy
-- Biostimulants: Focus on vigor, tillers, growth
-- Yield products: Focus on yield improvement
-- Others: Adapt to primary benefit
+For PERCENTAGE data, use this format:
+"[Product] achieved [X]% control compared to [Y]% for control ([difference] percentage points higher, representing [relative]% improvement). [Cooperator feedback if available]. [Commercial results if available]."
+
+For COUNT/MEASUREMENT data, use this format:
+"[Product] produced [X] compared to [Y] for control ([absolute difference] [units], [percentage]% improvement). [Cooperator feedback if available]. [Commercial results if available]."
 
 ═══════════════════════════════════════════════════════════════
 RETURN FLEXIBLE JSON STRUCTURE (ONLY JSON, NO OTHER TEXT)
@@ -240,7 +320,7 @@ RETURN FLEXIBLE JSON STRUCTURE (ONLY JSON, NO OTHER TEXT)
 
 {{
   "status": "success",
-  "product_category": "herbicide/foliar/fungicide/insecticide/fertilizer/other",
+  "product_category": "herbicide/foliar/fungicide/insecticide/molluscicide/fertilizer/other",
   "metrics_detected": ["metric1", "metric2", ...],
   "measurement_intervals": ["3 DAA", "7 DAA", ...],
   
@@ -286,23 +366,33 @@ RETURN FLEXIBLE JSON STRUCTURE (ONLY JSON, NO OTHER TEXT)
   
   "performance_analysis": {{
     "metric_type": "rating_scale/percentage/count/measurement",
-    "rating_scale_info": "1-4 scale where 1=poor, 4=excellent (only if rating scale)",
+    "scale_info": "Description of scale (e.g., 1-4 where 1=No Control, 4=Excellent)",
     
     "raw_data": {{
-      "control": {{}},
-      "leads_agri": {{}}
+      "control": {{
+        "interval_1": 0,
+        "interval_2": 0,
+        "interval_3": 0
+      }},
+      "leads_agri": {{
+        "interval_1": 0,
+        "interval_2": 0,
+        "interval_3": 0
+      }}
     }},
     
     "calculated_metrics": {{
       "control_average": 0,
       "leads_average": 0,
-      "improvement_value": 0,
-      "improvement_percent": 0,
-      "improvement_interpretation": ""
+      "absolute_difference": 0,
+      "absolute_difference_unit": "points/percentage_points/count/measurement_unit",
+      "relative_improvement_percent": 0,
+      "improvement_interpretation": "Clear explanation of what the numbers mean"
     }},
     
     "statistical_assessment": {{
       "improvement_significance": "highly_significant/significant/moderate/marginal",
+      "significance_basis": "Explanation based on metric type and thresholds",
       "performance_consistency": "high/medium/low",
       "confidence_level": "high/medium/low",
       "notes": ""
@@ -311,6 +401,8 @@ RETURN FLEXIBLE JSON STRUCTURE (ONLY JSON, NO OTHER TEXT)
     "trend_analysis": {{
       "control_trend": "improving/stable/declining",
       "leads_trend": "improving/stable/declining",
+      "early_performance": "Description of performance at first interval",
+      "late_performance": "Description of performance at last interval",
       "key_observation": "",
       "speed_of_action": "fast/moderate/slow"
     }}
@@ -319,7 +411,8 @@ RETURN FLEXIBLE JSON STRUCTURE (ONLY JSON, NO OTHER TEXT)
   "yield_analysis": {{
     "control_yield": "",
     "leads_yield": "",
-    "yield_improvement": 0,
+    "yield_difference_absolute": "",
+    "yield_improvement_percent": 0,
     "yield_status": "available/pending/not_measured"
   }},
   
@@ -341,11 +434,19 @@ RETURN FLEXIBLE JSON STRUCTURE (ONLY JSON, NO OTHER TEXT)
   }},
   
   "risk_factors": [
-    "risk description with data basis"
+    {{
+      "risk": "description",
+      "data_basis": "specific data that indicates this risk",
+      "severity": "high/medium/low"
+    }}
   ],
   
   "opportunities": [
-    "opportunity description with data basis"
+    {{
+      "opportunity": "description",
+      "data_basis": "specific data that indicates this opportunity",
+      "potential": "high/medium/low"
+    }}
   ],
   
   "recommendations": [
@@ -366,9 +467,7 @@ INPUT DATA TO ANALYZE:
 
 {markdown_data}
 
-═══════════════════════════════════════════════════════════════
-FINAL INSTRUCTION: RETURN ONLY THE JSON STRUCTURE. NO OTHER TEXT.
-═══════════════════════════════════════════════════════════════
+**CRITICAL: RETURN ONLY THE JSON STRUCTURE SPECIFIED ABOVE. NO EXPLANATIONS, NO ADDITIONAL TEXT, NO MARKDOWN, NO CODE BLOCKS. ONLY VALID JSON.**
 """
 )
 
