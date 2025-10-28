@@ -8,6 +8,7 @@ import uuid
 import logging
 from datetime import datetime, date
 import json
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,26 @@ class AnalysisStorage:
             else:
                 return default
         return result if result != {} else default
+    
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        """Safely convert value to float, handling non-numeric strings"""
+        try:
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                # Remove common non-numeric prefixes/suffixes
+                cleaned = value.strip().replace(',', '')
+                if cleaned.lower() in ['n/a', 'na', 'none', '']:
+                    return default
+                # Try to extract number from strings like "N/A (qualitative)"
+                numbers = re.findall(r'-?\d+\.?\d*', cleaned)
+                if numbers:
+                    return float(numbers[0])
+                return default
+            return float(value) if value else default
+        except (ValueError, TypeError, AttributeError):
+            return default
     
     def _safe_json_dumps(self, obj: Any) -> str:
 
@@ -272,11 +293,11 @@ class AnalysisStorage:
             "plot_size": basic_info.get("plot_size", ""),
             "contact": basic_info.get("contact", ""),
             
-            # Performance Metrics
-            "improvement_percent": float(calculated.get("improvement_percent", 0)),
-            "control_average": float(calculated.get("control_average", 0)),
-            "leads_average": float(calculated.get("leads_average", 0)),
-            "improvement_value": float(calculated.get("improvement_value", 0)),
+            # Performance Metrics (safe float conversion)
+            "improvement_percent": self._safe_float(calculated.get("improvement_percent", 0)),
+            "control_average": self._safe_float(calculated.get("control_average", 0)),
+            "leads_average": self._safe_float(calculated.get("leads_average", 0)),
+            "improvement_value": self._safe_float(calculated.get("improvement_value", 0)),
             "performance_significance": statistical_assessment.get(
                 "improvement_significance", ""
             ),
@@ -288,11 +309,11 @@ class AnalysisStorage:
             "measurement_intervals": analysis.get("measurement_intervals", []),
             "metric_type": performance.get("metric_type", ""),
             
-            # Commercial Metrics
+            # Commercial Metrics (safe conversion)
             "demo_date": commercial.get("demo_date", ""),
             "demo_participants": int(commercial.get("participants", 0)),
-            "total_sales": float(commercial.get("total_sales", 0)),
-            "sales_per_participant": float(commercial.get("sales_per_participant", 0)),
+            "total_sales": self._safe_float(commercial.get("total_sales", 0)),
+            "sales_per_participant": self._safe_float(commercial.get("sales_per_participant", 0)),
             "demo_conducted": bool(commercial.get("demo_conducted", False)),
             
             # Treatment Info
@@ -303,8 +324,8 @@ class AnalysisStorage:
             "cooperator_feedback": cooperator_feedback.get("raw_feedback", ""),
             "feedback_sentiment": cooperator_feedback.get("sentiment", ""),
             
-            # Quality Indicators
-            "data_quality_score": float(
+            # Quality Indicators (safe conversion)
+            "data_quality_score": self._safe_float(
                 analysis.get("data_quality", {}).get("completeness_score", 0)
             ),
             "missing_fields": analysis.get("data_quality", {}).get("missing_fields", []),

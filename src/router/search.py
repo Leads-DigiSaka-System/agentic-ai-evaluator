@@ -1,21 +1,30 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, validator  # ← ADD "validator" here
 from src.database.hybrid_search import LangChainHybridSearch
 from src.database.analysis_search import analysis_searcher 
+from src.utils.limiter_config import limiter 
+from src.utils import constants 
 
 router = APIRouter()
 search_engine = LangChainHybridSearch()
 
 class HybridSearchRequest(BaseModel):
     query: str
-    top_k: int = 5
-    dense_weight: float = 0.7
-    sparse_weight: float = 0.3
+    top_k: int = constants.DEFAULT_SEARCH_TOP_K  # ← Changed from 5
+    dense_weight: float = constants.DENSE_WEIGHT_DEFAULT
+    sparse_weight: float = constants.SPARSE_WEIGHT_DEFAULT
+    
+    @validator('top_k')  # ← Now this will work
+    def validate_top_k(cls, v):
+        if v > constants.MAX_SEARCH_TOP_K:
+            raise ValueError(f"top_k cannot exceed {constants.MAX_SEARCH_TOP_K}")
+        if v < 1:
+            raise ValueError("top_k must be at least 1")
+        return v
 
 @router.post("/hybrid-search")
 async def hybrid_search_endpoint(request: HybridSearchRequest):
     try:
-        # Use the correct method that accepts custom weights
         results = search_engine.search_with_custom_weights(
             query=request.query,
             top_k=request.top_k,
@@ -30,7 +39,15 @@ async def hybrid_search_endpoint(request: HybridSearchRequest):
 
 class SimpleSearchRequest(BaseModel):
     query: str
-    top_k: int = 5
+    top_k: int = constants.DEFAULT_SEARCH_TOP_K
+    
+    @validator('top_k')
+    def validate_top_k(cls, v):
+        if v > constants.MAX_SEARCH_TOP_K:
+            raise ValueError(f"top_k cannot exceed {constants.MAX_SEARCH_TOP_K}")
+        if v < 1:
+            raise ValueError("top_k must be at least 1")
+        return v
 
 @router.post("/hybrid-search/balanced")
 async def balanced_search(request: SimpleSearchRequest):
@@ -43,20 +60,19 @@ async def balanced_search(request: SimpleSearchRequest):
 
 class AnalysisSearchRequest(BaseModel):
     query: str
-    top_k: int = 5
+    top_k: int = constants.DEFAULT_SEARCH_TOP_K
+    
+    @validator('top_k')
+    def validate_top_k(cls, v):
+        if v > constants.MAX_SEARCH_TOP_K:
+            raise ValueError(f"top_k cannot exceed {constants.MAX_SEARCH_TOP_K}")
+        if v < 1:
+            raise ValueError("top_k must be at least 1")
+        return v
 
 @router.post("/analysis-search")
+@limiter.limit("60/minute")
 async def analysis_search(request: AnalysisSearchRequest):
-    """
-    Search through agricultural analysis data using semantic search.
-    
-    Args:
-        query: Search query (e.g., "corn yield improvement", "rice fertilizer demo")
-        top_k: Number of results to return (default: 5)
-    
-    Returns:
-        List of analysis results with performance metrics and summaries
-    """
     try:
         results = analysis_searcher.search(
             query=request.query,

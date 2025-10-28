@@ -11,3 +11,6 @@ QDRANT_COLECTION_DEMO = os.getenv("Qdrant_Form")
 QDRANT_COLLECTION_ANALYSIS= os.getenv("Qdrant_Analysis_Report")
 
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
+
+CONNECTION_WEB = os.getenv("CONNECTION_WEB","http://localhost:8501").split(",")
+CONNECTION_MOBILE = os.getenv("CONNECTION_MOBILE")
