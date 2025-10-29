@@ -1,0 +1,50 @@
+# Qdrant Dockerfile
+# 
+# This Dockerfile builds a customized Qdrant image with healthchecks.
+# For quick testing, you can use the official image directly (see README).
+#
+# BUILD INSTRUCTIONS:
+#   docker build -f Dockerfile.qdrant -t qdrant-custom:latest .
+#
+# RUN INSTRUCTIONS:
+#   docker run -d \
+#     --name qdrant \
+#     -p 6333:6333 \
+#     -p 6334:6334 \
+#     -v qdrant_data:/qdrant/storage \
+#     qdrant-custom:latest
+#
+# Or using named volume:
+#   docker run -d \
+#     --name qdrant \
+#     -p 6333:6333 \
+#     -p 6334:6334 \
+#     -v qdrant_storage:/qdrant/storage \
+#     qdrant-custom:latest
+#
+# Verify it's running:
+#   curl http://localhost:6333/
+#
+# Access Web UI:
+#   http://localhost:6333/dashboard
+#
+# Stop and remove:
+#   docker stop qdrant
+#   docker rm qdrant
+
+FROM qdrant/qdrant:v1.11.0
+
+# Optional: copy a custom config into the image
+# Uncomment the next two lines and provide a config file at ./qdrant.config.yaml
+# COPY qdrant.config.yaml /qdrant/config/production.yaml
+# ENV QDRANT__CONFIG=/qdrant/config/production.yaml
+
+# Expose HTTP (6333) and gRPC (6334)
+EXPOSE 6333 6334
+
+# Healthcheck against HTTP API
+HEALTHCHECK --interval=30s --timeout=5s --retries=5 --start-period=10s \
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:6333/ || exit 1
+
+# Default command
+CMD ["/qdrant"]

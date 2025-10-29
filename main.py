@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.router.upload import router as upload_router 
 from src.router.search import router as search_router
-from src.router.delete_extract import router as delete_router
+#from src.router.delete_extract import router as delete_router
 from src.router.agent import router as agent_router
 from src.router.storage import router as storage_router
 import os
@@ -11,8 +11,8 @@ import atexit
 from dotenv import load_dotenv
 from datetime import datetime
 from src.utils.config import CONNECTION_WEB
-from slowapi.errors import RateLimitExceeded              # ← Keep this
-from slowapi import _rate_limit_exceeded_handler          # ← Keep this
+from slowapi.errors import RateLimitExceeded              
+from slowapi import _rate_limit_exceeded_handler          
 from src.utils.safe_logger import SafeLogger
 from src.utils.simple_clean_logging import setup_clean_logging, get_clean_logger
 from slowapi.middleware import SlowAPIMiddleware
@@ -64,7 +64,7 @@ app.add_middleware(
 app.include_router(upload_router, prefix="/api", tags=["Upload"])
 app.include_router(agent_router, prefix="/api", tags=["agent"])
 app.include_router(search_router, prefix="/api", tags=["search"])
-app.include_router(delete_router, prefix="/api", tags=["delete"])
+#app.include_router(delete_router, prefix="/api", tags=["delete"])
 app.include_router(storage_router, prefix="/api", tags=["storage"])
 
 # Health check endpoint
