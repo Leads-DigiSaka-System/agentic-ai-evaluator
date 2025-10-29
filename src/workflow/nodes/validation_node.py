@@ -1,10 +1,7 @@
 from src.workflow.state import ProcessingState
 from src.prompt.prompt_template import content_validation_template
 from src.utils.llm_helper import invoke_llm  # ← Use existing helper
-import logging
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from src.utils.clean_logger import CleanLogger
 
 
 def content_validation_node(state: ProcessingState) -> ProcessingState:
@@ -26,14 +23,16 @@ def content_validation_node(state: ProcessingState) -> ProcessingState:
     Returns:
         Updated state with validation results
     """
+    logger = CleanLogger("workflow.nodes.validation")
+    
     try:
         state["current_step"] = "content_validation"
-        logger.info("🔍 Starting content validation...")
+        logger.validation_start("content_validation")
         
         # Check if extracted content exists
         if not state.get("extracted_markdown"):
             error_msg = "No extracted content available for validation"
-            logger.error(f"❌ {error_msg}")
+            logger.validation_error("content_validation", error_msg)
             state["errors"].append(error_msg)
             state["is_valid_content"] = False
             state["content_validation"] = {
@@ -53,7 +52,7 @@ def content_validation_node(state: ProcessingState) -> ProcessingState:
         validation_prompt = prompt_template.format(extracted_content=text_preview)
         
         # 🔧 FIX: Use existing invoke_llm helper
-        logger.info("📤 Sending content to LLM for validation...")
+        logger.llm_request("gemini", "content_validation")
         validation_result = invoke_llm(validation_prompt, as_json=True)
         
         # Parse validation result
@@ -63,16 +62,14 @@ def content_validation_node(state: ProcessingState) -> ProcessingState:
             
             # Log validation result
             if validation_result["is_valid_demo"]:
-                logger.info(
-                    f"✅ Content validated as {validation_result.get('content_type', 'demo')} "
-                    f"(confidence: {validation_result.get('confidence', 0):.2f})"
-                )
+                confidence = validation_result.get('confidence', 0)
+                content_type = validation_result.get('content_type', 'demo')
+                logger.validation_result("content_validation", f"Valid {content_type}", confidence)
             else:
-                logger.warning(
-                    f"❌ Content validation failed: {validation_result.get('content_type', 'unknown')} "
-                    f"(confidence: {validation_result.get('confidence', 0):.2f})"
-                )
-                logger.warning(f"📝 Feedback: {validation_result.get('feedback', 'No feedback')}")
+                confidence = validation_result.get('confidence', 0)
+                content_type = validation_result.get('content_type', 'unknown')
+                logger.validation_result("content_validation", f"Invalid {content_type}", confidence)
+                logger.info(f"Validation feedback: {validation_result.get('feedback', 'No feedback')}")
                 
                 # Add error to state for user feedback
                 state["errors"].append(
@@ -80,7 +77,7 @@ def content_validation_node(state: ProcessingState) -> ProcessingState:
                 )
         else:
             # Validation call failed or returned invalid format
-            logger.error("❌ LLM validation returned invalid format")
+            logger.validation_error("content_validation", "LLM validation returned invalid format")
             state["errors"].append("Content validation service returned invalid response")
             state["is_valid_content"] = False
             state["content_validation"] = {
@@ -94,7 +91,7 @@ def content_validation_node(state: ProcessingState) -> ProcessingState:
         
     except Exception as e:
         error_msg = f"Content validation failed: {str(e)}"
-        logger.error(f"❌ {error_msg}")
+        logger.validation_error("content_validation", error_msg)
         import traceback
         traceback.print_exc()
         

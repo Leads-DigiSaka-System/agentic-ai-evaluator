@@ -1,12 +1,9 @@
 # delete.py
 from qdrant_client.http import models
 from src.generator.qdrant_load import client, DEMO_COLLECTION 
-import logging
+from src.utils.clean_logger import get_clean_logger
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
+logger = get_clean_logger(__name__)
 def delete_from_qdrant(form_id: str):
     """
     Delete a demo trial entry from Qdrant based on form_id.
@@ -29,7 +26,7 @@ def delete_from_qdrant(form_id: str):
             points_selector=models.FilterSelector(filter=filter_condition)
         )
 
-        logger.info(f"✅ Deleted record with form_id: {form_id}")
+        logger.info(f"Deleted record with form_id: {form_id}")
 
         return {
             "status": "success",
@@ -38,7 +35,7 @@ def delete_from_qdrant(form_id: str):
         }
 
     except Exception as e:
-        logger.error(f"❌ Failed to delete record with form_id: {form_id} - {str(e)}")
+        logger.error(f"Failed to delete record with form_id: {form_id} - {str(e)}")
         return {
             "status": "error",
             "message": f"Failed to delete record with form_id: {form_id}",
@@ -64,9 +61,9 @@ def delete_all_from_collection(collection_name: str):
         try:
             collection_info = client.get_collection(collection_name=collection_name)
             point_count = collection_info.points_count
-            logger.info(f"🔍 Collection '{collection_name}' has {point_count} points")
+            logger.info(f"Collection '{collection_name}' has {point_count} points")
         except Exception as e:
-            logger.error(f"❌ Collection '{collection_name}' not found")
+            logger.error(f"Collection '{collection_name}' not found")
             return {
                 "status": "error",
                 "message": f"Collection '{collection_name}' does not exist",
@@ -74,7 +71,7 @@ def delete_all_from_collection(collection_name: str):
             }
         
         if point_count == 0:
-            logger.info(f"ℹ️ Collection '{collection_name}' is already empty")
+            logger.info(f"Collection '{collection_name}' is already empty")
             return {
                 "status": "success",
                 "message": f"Collection '{collection_name}' is already empty",
@@ -82,7 +79,7 @@ def delete_all_from_collection(collection_name: str):
             }
         
         # Delete all points by using an empty filter (matches everything)
-        logger.warning(f"⚠️ DELETING ALL {point_count} points from collection '{collection_name}'...")
+        logger.warning(f"DELETING ALL {point_count} points from collection '{collection_name}'...")
         
         response = client.delete(
             collection_name=collection_name,
@@ -98,7 +95,7 @@ def delete_all_from_collection(collection_name: str):
         remaining_points = collection_info_after.points_count
         
         if remaining_points == 0:
-            logger.info(f"✅ Successfully deleted all {point_count} points from '{collection_name}'")
+            logger.info(f"Successfully deleted all {point_count} points from '{collection_name}'")
             return {
                 "status": "success",
                 "message": f"Successfully deleted all records from collection '{collection_name}'",
@@ -107,7 +104,7 @@ def delete_all_from_collection(collection_name: str):
                 "response": str(response)
             }
         else:
-            logger.warning(f"⚠️ Deletion incomplete. {remaining_points} points remaining")
+            logger.warning(f"Deletion incomplete. {remaining_points} points remaining")
             return {
                 "status": "partial_success",
                 "message": f"Deleted some records, but {remaining_points} points remain",
@@ -117,7 +114,7 @@ def delete_all_from_collection(collection_name: str):
             }
 
     except Exception as e:
-        logger.error(f"❌ Failed to delete all records from '{collection_name}': {str(e)}")
+        logger.error(f"Failed to delete all records from '{collection_name}': {str(e)}")
         import traceback
         traceback.print_exc()
         return {

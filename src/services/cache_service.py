@@ -61,7 +61,7 @@ class AgentOutputCache:
             with open(cache_file_path, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, ensure_ascii=False, indent=2)
             
-            logger.info(f"✅ Agent output cached with ID: {cache_id}")
+            logger.info(f"Agent output cached with ID: {cache_id}")
             
             # Add cache_id to agent response for frontend
             agent_response["cache_id"] = cache_id
@@ -69,7 +69,7 @@ class AgentOutputCache:
             return cache_id
             
         except Exception as e:
-            logger.error(f"❌ Failed to cache agent output: {str(e)}")
+            logger.error(f"Failed to cache agent output: {str(e)}")
             raise Exception(f"Cache save failed: {str(e)}")
     
     def get_cached_output(self, cache_id: str) -> Optional[Dict[str, Any]]:
@@ -86,7 +86,7 @@ class AgentOutputCache:
             cache_file_path = self._get_cache_file_path(cache_id)
             
             if not os.path.exists(cache_file_path):
-                logger.warning(f"⚠️ Cache file not found: {cache_id}")
+                logger.warning(f"Cache file not found: {cache_id}")
                 return None
             
             # Load cache data
@@ -95,15 +95,15 @@ class AgentOutputCache:
             
             # Check if expired
             if self._is_cache_expired(cache_data):
-                logger.info(f"🗑️ Cache expired, deleting: {cache_id}")
+                logger.info(f"Cache expired, deleting: {cache_id}")
                 self.delete_cache(cache_id)
                 return None
             
-            logger.info(f"✅ Retrieved cached output: {cache_id}")
+            logger.info(f"Retrieved cached output: {cache_id}")
             return cache_data.get("agent_response")
             
         except Exception as e:
-            logger.error(f"❌ Failed to retrieve cache {cache_id}: {str(e)}")
+            logger.error(f"Failed to retrieve cache {cache_id}: {str(e)}")
             return None
     
     def delete_cache(self, cache_id: str) -> bool:
@@ -121,14 +121,14 @@ class AgentOutputCache:
             
             if os.path.exists(cache_file_path):
                 os.remove(cache_file_path)
-                logger.info(f"🗑️ Cache deleted: {cache_id}")
+                logger.info(f"Cache deleted: {cache_id}")
                 return True
             else:
-                logger.warning(f"⚠️ Cache file not found for deletion: {cache_id}")
+                logger.warning(f"Cache file not found for deletion: {cache_id}")
                 return False
                 
         except Exception as e:
-            logger.error(f"❌ Failed to delete cache {cache_id}: {str(e)}")
+            logger.error(f"Failed to delete cache {cache_id}: {str(e)}")
             return False
     
     def cleanup_expired_caches(self) -> int:
@@ -156,10 +156,10 @@ class AgentOutputCache:
                         if self._is_cache_expired(cache_data):
                             os.remove(cache_file_path)
                             cleaned_count += 1
-                            logger.info(f"🗑️ Cleaned expired cache: {cache_id}")
+                            logger.info(f"Cleaned expired cache: {cache_id}")
                             
                     except Exception as e:
-                        logger.warning(f"⚠️ Error processing cache file {filename}: {str(e)}")
+                        logger.warning(f"Error processing cache file {filename}: {str(e)}")
                         # Remove corrupted files
                         try:
                             os.remove(os.path.join(self.cache_dir, filename))
@@ -167,11 +167,11 @@ class AgentOutputCache:
                         except:
                             pass
             
-            logger.info(f"🧹 Cleanup completed: {cleaned_count} expired caches removed")
+            logger.info(f"Cleanup completed: {cleaned_count} expired caches removed")
             return cleaned_count
             
         except Exception as e:
-            logger.error(f"❌ Cache cleanup failed: {str(e)}")
+            logger.error(f"Cache cleanup failed: {str(e)}")
             return 0
     
     def get_cache_info(self, cache_id: str) -> Optional[Dict[str, Any]]:
@@ -206,7 +206,7 @@ class AgentOutputCache:
             }
             
         except Exception as e:
-            logger.error(f"❌ Failed to get cache info {cache_id}: {str(e)}")
+            logger.error(f"Failed to get cache info {cache_id}: {str(e)}")
             return None
 
 

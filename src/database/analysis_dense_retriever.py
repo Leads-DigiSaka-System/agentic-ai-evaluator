@@ -4,10 +4,8 @@ from langchain_core.retrievers import BaseRetriever
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import UnexpectedResponse
 from src.generator.encoder import DenseEncoder
+from src.utils.clean_logger import get_clean_logger
 from pydantic import Field, PrivateAttr
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 class QdrantDenseRetriever(BaseRetriever):
@@ -61,6 +59,7 @@ class QdrantDenseRetriever(BaseRetriever):
         # Use object.__setattr__ for private attributes
         object.__setattr__(self, '_client', client)
         object.__setattr__(self, '_dense_encoder', dense_encoder)
+        object.__setattr__(self, '_logger', get_clean_logger(__name__))
         
         # Validate collection exists
         self._validate_collection()
@@ -75,13 +74,18 @@ class QdrantDenseRetriever(BaseRetriever):
         """Access the DenseEncoder instance"""
         return self._dense_encoder
     
+    @property
+    def logger(self):
+        """Access the logger instance"""
+        return self._logger
+    
     def _validate_collection(self) -> None:
         """Validate that the collection exists in Qdrant"""
         try:
             self.client.get_collection(self.collection_name)
-            logger.debug(f"✅ Collection '{self.collection_name}' validated")
+            self.logger.debug(f"Collection '{self.collection_name}' validated")
         except UnexpectedResponse:
-            logger.error(f"❌ Collection '{self.collection_name}' does not exist")
+            self.logger.error(f"Collection '{self.collection_name}' does not exist")
             raise ValueError(f"Collection '{self.collection_name}' not found in Qdrant")
     
     def _get_relevant_documents(self, query: str) -> List[Document]:
@@ -98,7 +102,7 @@ class QdrantDenseRetriever(BaseRetriever):
             ValueError: If query is empty or encoding fails
         """
         if not query or not query.strip():
-            logger.warning("⚠️ Empty query provided")
+            self.logger.warning("Empty query provided")
             return []
         
         try:
@@ -126,11 +130,11 @@ class QdrantDenseRetriever(BaseRetriever):
                 )
                 documents.append(doc)
             
-            logger.info(f"🔍 Found {len(documents)} documents for query: '{query[:50]}...'")
+            self.logger.db_query("dense search", f"query: '{query[:50]}...'", len(documents))
             return documents
             
         except Exception as e:
-            logger.error(f"❌ Search failed for query '{query[:50]}...': {str(e)}")
+            self.logger.db_error("dense search", str(e))
             raise
     
     async def _aget_relevant_documents(self, query: str) -> List[Document]:

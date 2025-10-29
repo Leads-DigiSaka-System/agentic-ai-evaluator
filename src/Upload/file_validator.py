@@ -5,10 +5,7 @@ import pathlib
 from typing import Dict, Tuple, Optional
 from PIL import Image
 import PyPDF2
-import logging
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from src.utils.clean_logger import get_clean_logger
 
 
 class FileValidator:
@@ -48,6 +45,7 @@ class FileValidator:
                 "metadata": Dict (file-specific info)
             }
         """
+        logger = get_clean_logger(__name__)
         result = {
             "is_valid": False,
             "file_type": None,
@@ -160,7 +158,7 @@ class FileValidator:
             
             # PDF is valid
             result["is_valid"] = True
-            logger.info(f"✅ PDF validation passed: {filename} ({num_pages} pages)")
+            logger.file_validation(filename, "passed", f"{num_pages} pages")
             
         except PyPDF2.errors.PdfReadError as e:
             result["errors"].append(f"Invalid PDF structure: {str(e)}")
@@ -227,7 +225,7 @@ class FileValidator:
             
             # Image is valid
             result["is_valid"] = True
-            logger.info(f"✅ Image validation passed: {filename} ({width}x{height}, {img.format})")
+            logger.file_validation(filename, "passed", f"{width}x{height}, {img.format}")
             
         except Image.UnidentifiedImageError:
             result["errors"].append(f"File is not a valid {file_ext.upper()} image")

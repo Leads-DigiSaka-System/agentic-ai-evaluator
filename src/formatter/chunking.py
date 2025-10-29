@@ -2,6 +2,7 @@
 import re
 from langchain.text_splitter import SentenceTransformersTokenTextSplitter
 from src.utils.config import EMBEDDING_MODEL
+from src.utils.clean_logger import get_clean_logger
 
 def chunk_markdown_safe(markdown_text: str, model=EMBEDDING_MODEL):
     """
@@ -9,9 +10,11 @@ def chunk_markdown_safe(markdown_text: str, model=EMBEDDING_MODEL):
       - Flatten markdown tables into multi-line text chunks
       - Split remaining text into safe token-based chunks (NO OVERLAP)
     """
+    logger = get_clean_logger(__name__)
+    
     try:
         if not markdown_text or not markdown_text.strip():
-            raise ValueError("❌ Empty or invalid markdown text provided")
+            raise ValueError("Empty or invalid markdown text provided")
 
         chunks = []
 
@@ -22,7 +25,7 @@ def chunk_markdown_safe(markdown_text: str, model=EMBEDDING_MODEL):
         table_matches = list(re.finditer(table_pattern, markdown_text))
         tables = [m.group() for m in table_matches]
         
-        print(f"🔍 Found {len(tables)} tables in markdown")
+        logger.chunking_start("markdown", len(markdown_text))
 
         # 1. Flatten each table into one chunk
         for i, table in enumerate(tables):
@@ -35,7 +38,7 @@ def chunk_markdown_safe(markdown_text: str, model=EMBEDDING_MODEL):
             ]
 
             if len(clean_rows) < 2:  # Need at least header + 1 data row
-                print(f"⚠️ Skipping table {i} - insufficient rows")
+                logger.warning(f"Skipping table {i} - insufficient rows")
                 continue
 
             # convert each row into natural language
@@ -48,7 +51,7 @@ def chunk_markdown_safe(markdown_text: str, model=EMBEDDING_MODEL):
                     line = ", ".join(f"{h}: {c}" for h, c in zip(headers, cols))
                     flattened_lines.append(line)
                 else:
-                    print(f"⚠️ Table {i}, Row {row_idx}: Column mismatch ({len(cols)} vs {len(headers)})")
+                    logger.warning(f"Table {i}, Row {row_idx}: Column mismatch ({len(cols)} vs {len(headers)})")
 
             flat_table_text = "\n".join(flattened_lines)
 
@@ -65,7 +68,7 @@ def chunk_markdown_safe(markdown_text: str, model=EMBEDDING_MODEL):
                     "token_count": token_count,
                     "char_count": len(flat_table_text)
                 })
-                print(f"✅ Table {i} flattened: {len(flattened_lines)} rows, {token_count} tokens")
+                logger.chunking_result(1, token_count, f"Table {i} flattened: {len(flattened_lines)} rows")
 
         # 2. Remove tables from main text (improved removal)
         text_wo_tables = markdown_text
@@ -78,7 +81,7 @@ def chunk_markdown_safe(markdown_text: str, model=EMBEDDING_MODEL):
         # Clean up extra whitespace
         text_wo_tables = re.sub(r'\n{3,}', '\n\n', text_wo_tables).strip()
         
-        print(f"📝 Text without tables: {len(text_wo_tables)} chars")
+        logger.info(f"Text without tables: {len(text_wo_tables)} chars")
 
         # 3. Split the remaining text with NO OVERLAP
         if text_wo_tables.strip():
@@ -103,12 +106,12 @@ def chunk_markdown_safe(markdown_text: str, model=EMBEDDING_MODEL):
                         "char_count": len(chunk_text)
                     })
             
-            print(f"✅ Text split into {len(text_chunks)} chunks (no overlap)")
+            logger.chunking_result(len(text_chunks), sum(len(chunk.split()) for chunk in text_chunks), "Text split with no overlap")
         else:
-            print("⚠️ No text content after removing tables")
+            logger.warning("No text content after removing tables")
 
         if not chunks:
-            raise RuntimeError("❌ No chunks were created. Check input formatting.")
+            raise RuntimeError("No chunks were created. Check input formatting.")
 
         # Deduplicate chunks based on content
         unique_chunks = []
@@ -120,13 +123,13 @@ def chunk_markdown_safe(markdown_text: str, model=EMBEDDING_MODEL):
                 seen_content.add(content_hash)
                 unique_chunks.append(chunk)
             else:
-                print(f"⚠️ Skipped duplicate chunk: {chunk['chunk_id']}")
+                logger.warning(f"Skipped duplicate chunk: {chunk['chunk_id']}")
         
-        print(f"✅ Chunking successful. Total unique chunks: {len(unique_chunks)}")
+        logger.chunking_result(len(unique_chunks), sum(chunk.get('token_count', 0) for chunk in unique_chunks), "Chunking successful")
         return unique_chunks
 
     except Exception as e:
         import traceback
-        print(f"⚠️ Error during chunking: {str(e)}")
+        logger.chunking_error(str(e))
         traceback.print_exc()
         return []

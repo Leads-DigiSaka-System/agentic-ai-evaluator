@@ -5,6 +5,7 @@ from langchain_core.documents import Document
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from qdrant_client.http import models
 from pydantic import Field
+from src.utils.clean_logger import get_clean_logger
 
 class QdrantSparseRetriever(BaseRetriever):
     """

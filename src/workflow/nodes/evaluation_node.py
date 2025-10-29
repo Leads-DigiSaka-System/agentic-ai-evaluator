@@ -1,4 +1,5 @@
 from src.Agents.output_evaluator import validate_output
+from src.utils.clean_logger import CleanLogger
 
 def evaluation_node(state: dict) -> dict:
     """
@@ -7,7 +8,9 @@ def evaluation_node(state: dict) -> dict:
     Purpose: Use LLM to assess output quality and set decision flags
     Philosophy: Intelligence decides "is this good enough?" not "where to go next"
     """
-    print("🔍 Evaluating output quality with intelligent reasoning...")
+    logger = CleanLogger("workflow.nodes.evaluation")
+    
+    logger.workflow_start("output_evaluation", "Intelligent quality assessment")
     
     try:
         # Initialize evaluation attempts counter if not exists
@@ -30,9 +33,10 @@ def evaluation_node(state: dict) -> dict:
             evaluation_context = "unknown"
             state["current_step"] = "evaluation"
         
-        print(f"📋 Evaluation context: {evaluation_context}")
+        logger.log_decision("evaluation_context", evaluation_context, f"Current step: {current_step}")
             
         # Run intelligent output evaluation (LLM-based quality assessment)
+        logger.agent_start("output_evaluator", f"Evaluating {evaluation_context}")
         evaluation_result = validate_output(state)
         
         # Handle potential list returns from LLM
@@ -45,11 +49,9 @@ def evaluation_node(state: dict) -> dict:
         feedback = evaluation_result.get("feedback", "No feedback")
         issue_type = evaluation_result.get("issue_type", "no_issue")
         
-        print(f"📊 {evaluation_context.upper()} Evaluation Results:")
-        print(f"   ├─ Confidence: {confidence:.2f}")
-        print(f"   ├─ Decision: {decision}")
-        print(f"   ├─ Issue Type: {issue_type}")
-        print(f"   └─ Feedback: {feedback[:100]}...")
+        logger.agent_success("output_evaluator", f"Confidence: {confidence:.2f}, Decision: {decision}")
+        logger.info(f"Issue Type: {issue_type}")
+        logger.info(f"Feedback: {feedback[:100]}...")
         
         # Store evaluation results
         state["output_evaluation"] = evaluation_result
@@ -61,13 +63,13 @@ def evaluation_node(state: dict) -> dict:
         
         if evaluation_context == "analysis":
             # Evaluating ANALYSIS quality
-            print("\n🧠 Analysis Evaluation Decision:")
+            logger.log_decision("analysis_evaluation", "Starting analysis evaluation decision")
             
             if issue_type == "source_limitation":
                 # Data missing from source - this is EXPECTED, not an error
                 state["needs_reanalysis"] = False
                 state["needs_regraph"] = False
-                print("   ✅ Source limitations identified (expected) - will proceed")
+                logger.log_decision("analysis_evaluation", "Source limitations identified (expected) - will proceed")
                 
             elif issue_type == "fixable_analysis":
                 # Analysis has fixable issues
@@ -75,23 +77,23 @@ def evaluation_node(state: dict) -> dict:
                     state["needs_reanalysis"] = True
                     state["needs_regraph"] = False
                     state["evaluation_attempts"] += 1
-                    print(f"   🔄 Quality too low (conf: {confidence:.2f}) - RETRY #{state['evaluation_attempts']}")
+                    logger.log_retry("analysis", state["evaluation_attempts"], 2, f"Quality too low (conf: {confidence:.2f})")
                 else:
                     state["needs_reanalysis"] = False
                     state["needs_regraph"] = False
                     if state["evaluation_attempts"] >= 2:
-                        print(f"   ⚠️ Max retries reached - ACCEPTING with confidence {confidence:.2f}")
+                        logger.log_decision("analysis_evaluation", f"Max retries reached - ACCEPTING with confidence {confidence:.2f}")
                     else:
-                        print(f"   ✅ Acceptable quality (conf: {confidence:.2f}) - PROCEED")
+                        logger.log_decision("analysis_evaluation", f"Acceptable quality (conf: {confidence:.2f}) - PROCEED")
             else:
                 # No issues
                 state["needs_reanalysis"] = False
                 state["needs_regraph"] = False
-                print(f"   ✅ Analysis passed evaluation (conf: {confidence:.2f}) - PROCEED")
+                logger.log_decision("analysis_evaluation", f"Analysis passed evaluation (conf: {confidence:.2f}) - PROCEED")
                 
         elif evaluation_context == "graphs":
             # Evaluating GRAPH quality
-            print("\n🧠 Graph Evaluation Decision:")
+            logger.log_decision("graph_evaluation", "Starting graph evaluation decision")
             
             if issue_type == "graph_issue":
                 # Graphs have issues
@@ -99,25 +101,25 @@ def evaluation_node(state: dict) -> dict:
                     state["needs_reanalysis"] = False
                     state["needs_regraph"] = True
                     state["evaluation_attempts"] += 1
-                    print(f"   🔄 Graph quality low (conf: {confidence:.2f}) - REGENERATE #{state['evaluation_attempts']}")
+                    logger.log_retry("graph_generation", state["evaluation_attempts"], 2, f"Quality low (conf: {confidence:.2f})")
                 else:
                     state["needs_reanalysis"] = False
                     state["needs_regraph"] = False
                     if state["evaluation_attempts"] >= 2:
-                        print(f"   ⚠️ Max retries reached - ACCEPTING graphs with confidence {confidence:.2f}")
+                        logger.log_decision("graph_evaluation", f"Max retries reached - ACCEPTING graphs with confidence {confidence:.2f}")
                     else:
-                        print(f"   ✅ Acceptable graphs (conf: {confidence:.2f}) - PROCEED")
+                        logger.log_decision("graph_evaluation", f"Acceptable graphs (conf: {confidence:.2f}) - PROCEED")
             else:
                 # No issues
                 state["needs_reanalysis"] = False
                 state["needs_regraph"] = False
-                print(f"   ✅ Graphs passed evaluation (conf: {confidence:.2f}) - PROCEED")
+                logger.log_decision("graph_evaluation", f"Graphs passed evaluation (conf: {confidence:.2f}) - PROCEED")
         
         else:
             # Unknown context - safe defaults
             state["needs_reanalysis"] = False
             state["needs_regraph"] = False
-            print("   ⚠️ Unknown evaluation context - proceeding with defaults")
+            logger.log_decision("evaluation", "Unknown evaluation context - proceeding with defaults")
         
         # Add evaluation summary to state for visibility
         state["last_evaluation_summary"] = {
@@ -127,9 +129,11 @@ def evaluation_node(state: dict) -> dict:
             "issue_type": issue_type,
             "attempts": state["evaluation_attempts"]
         }
+        
+        logger.workflow_success("output_evaluation", f"Evaluation completed for {evaluation_context}")
             
     except Exception as e:
-        print(f"❌ Output evaluation failed: {str(e)}")
+        logger.workflow_error("output_evaluation", str(e))
         state["errors"].append(f"Output evaluation error: {str(e)}")
         
         # Safe fallback on error

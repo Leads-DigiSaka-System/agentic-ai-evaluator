@@ -1,14 +1,12 @@
 from typing import List, Dict, Any, Optional
 from langchain_core.documents import Document
 from qdrant_client import QdrantClient
-import logging
 import json
 
 from src.utils.config import QDRANT_LOCAL_URI, QDRANT_COLLECTION_ANALYSIS
 from src.generator.encoder import DenseEncoder
 from src.database.analysis_dense_retriever import QdrantDenseRetriever
-
-logger = logging.getLogger(__name__)
+from src.utils.clean_logger import get_clean_logger
 
 
 class AnalysisHybridSearch:
@@ -30,6 +28,7 @@ class AnalysisHybridSearch:
     
     def __init__(self, search_limit: int = 10):
         try:
+            self.logger = get_clean_logger(__name__)
             self.client = QdrantClient(url=QDRANT_LOCAL_URI)
             self.collection_name = QDRANT_COLLECTION_ANALYSIS
             self.dense_encoder = DenseEncoder()
@@ -43,10 +42,10 @@ class AnalysisHybridSearch:
                 vector_name="dense",
                 search_limit=search_limit
             )
-            logger.info(f"✅ AnalysisHybridSearch initialized for '{self.collection_name}'")
+            self.logger.storage_start("AnalysisHybridSearch", f"collection: {self.collection_name}")
             
         except Exception as e:
-            logger.error(f"❌ Failed to initialize AnalysisHybridSearch: {str(e)}")
+            self.logger.storage_error("AnalysisHybridSearch initialization", str(e))
             raise
     
     def search(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
@@ -64,11 +63,11 @@ class AnalysisHybridSearch:
             >>> results = searcher.search("rice fertilizer demo", top_k=3)
         """
         if not query or not query.strip():
-            logger.warning("⚠️ Empty search query provided")
+            self.logger.warning("Empty search query provided")
             return []
         
         if top_k <= 0:
-            logger.warning(f"⚠️ Invalid top_k value: {top_k}. Using default: 5")
+            self.logger.warning(f"Invalid top_k value: {top_k}. Using default: 5")
             top_k = 5
         
         try:
@@ -78,14 +77,14 @@ class AnalysisHybridSearch:
             # Format and return top-k results
             formatted_results = self._format_analysis_results(documents[:top_k])
             
-            logger.info(f"🔍 Search completed: '{query[:50]}...' -> {len(formatted_results)} results")
+            self.logger.db_query("analysis search", f"query: '{query[:50]}...'", len(formatted_results))
             return formatted_results
             
         except ValueError as e:
-            logger.error(f"❌ Invalid query: {str(e)}")
+            self.logger.db_error("analysis search", str(e))
             return []
         except Exception as e:
-            logger.error(f"❌ Search error: {str(e)}")
+            self.logger.db_error("analysis search", str(e))
             return []
     
     def _format_analysis_results(self, documents: List[Document]) -> List[Dict[str, Any]]:
@@ -114,7 +113,7 @@ class AnalysisHybridSearch:
                 try:
                     return json.loads(json_str)
                 except (json.JSONDecodeError, TypeError):
-                    logger.warning(f"Failed to parse JSON: {json_str[:100]}...")
+                    self.logger.warning(f"Failed to parse JSON: {json_str[:100]}...")
                     return default if default is not None else {}
             
             result = {
@@ -176,7 +175,7 @@ class AnalysisHybridSearch:
                 "status": "ready"
             }
         except Exception as e:
-            logger.error(f"❌ Failed to get collection info: {str(e)}")
+            self.logger.db_error("get collection info", str(e))
             return {"status": "error", "error": str(e)}
     
     def __repr__(self) -> str:

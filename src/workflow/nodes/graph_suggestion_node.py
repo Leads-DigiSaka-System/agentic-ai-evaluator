@@ -2,44 +2,47 @@ from src.prompt.graph_suggestion_template import graph_suggestion_prompt
 from src.utils.llm_helper import invoke_llm
 from src.workflow.state import ProcessingState
 from src.formatter.json_helper import clean_json_from_llm_response
+from src.utils.clean_logger import CleanLogger
 import json
 
 def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
     """Node for LLM-driven graph suggestions with specific chart data"""
+    logger = CleanLogger("workflow.nodes.graph_suggestion")
+    
     try:
         state["current_step"] = "graph_suggestion"
         
         if not state.get("analysis_result"):
+            logger.graph_error("No analysis result available for graph suggestions")
             state["errors"].append("No analysis result available for graph suggestions")
             return state
         
         analysis_data = state["analysis_result"]
         
-        print("📊 Generating LLM-driven graph suggestions with specific chart data...")
+        logger.graph_generation(0, ["LLM-driven suggestions"])
         
         # Get complete chart suggestions from LLM (including chart data)
         prompt_template = graph_suggestion_prompt()
         prompt = prompt_template.format(analysis_data=json.dumps(analysis_data, indent=2))
         
         # Get LLM response
+        logger.llm_request("gemini", "graph_suggestion")
         llm_response = invoke_llm(prompt, as_json=False)
         
         # Use centralized JSON cleaning function
         suggestions = clean_json_from_llm_response(llm_response)
         
         if not suggestions:
-            print("⚠️ Failed to parse JSON from LLM response")
+            logger.graph_error("Failed to parse JSON from LLM response")
             raise ValueError("Could not parse JSON from LLM response")
         
         if suggestions and "suggested_charts" in suggestions:
             state["graph_suggestions"] = suggestions
             chart_count = len(suggestions["suggested_charts"])
-            print(f"✅ Generated {chart_count} LLM-driven chart suggestions")
-            
-            # Log the specific charts generated
-            for chart in suggestions["suggested_charts"]:
-                print(f"   📈 {chart['chart_type']}: {chart['title']}")
+            chart_types = [chart.get('chart_type', 'unknown') for chart in suggestions["suggested_charts"]]
+            logger.graph_generation(chart_count, chart_types)
         else:
+            logger.graph_fallback("LLM failed to generate graph suggestions")
             state["errors"].append("LLM failed to generate graph suggestions")
             # Fallback to basic charts
             state["graph_suggestions"] = _generate_fallback_charts(analysis_data)
@@ -47,7 +50,7 @@ def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
         return state
         
     except Exception as e:
-        print(f"❌ Graph suggestion error: {str(e)}")
+        logger.graph_error(f"Graph generation failed: {str(e)}")
         state["errors"].append(f"Graph suggestion failed: {str(e)}")
         # Fallback to ensure we always have some charts
         state["graph_suggestions"] = _generate_fallback_charts(state.get("analysis_result", {}))

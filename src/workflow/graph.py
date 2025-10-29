@@ -4,6 +4,8 @@ from src.workflow.nodes.nodes import extraction_node, analysis_node, chunking_no
 from src.workflow.nodes.graph_suggestion_node import graph_suggestion_node
 from src.workflow.nodes.evaluation_node import evaluation_node
 from src.workflow.nodes.validation_node import content_validation_node
+from src.utils.clean_logger import CleanLogger
+from src.workflow.models import SimpleStorageApprovalRequest
 
 
 def create_advanced_processing_workflow():
@@ -23,6 +25,9 @@ def create_advanced_processing_workflow():
     8. END (storage handled separately via API endpoint)
     """
     workflow = StateGraph(ProcessingState)
+    logger = CleanLogger("workflow.graph")
+    
+    logger.workflow_start("Creating advanced processing workflow", "with content validation and intelligent evaluation")
     
     # Add all nodes (storage removed - handled separately)
     workflow.add_node("extract", extraction_node)
@@ -37,6 +42,8 @@ def create_advanced_processing_workflow():
     # Set entry point
     workflow.set_entry_point("extract")
     
+    logger.workflow_success("Workflow nodes added", "8 nodes configured")
+    
     # ============================================
     # ROUTERS WITH NEW VALIDATION LOGIC
     # ============================================
@@ -48,16 +55,16 @@ def create_advanced_processing_workflow():
         NEW: Routes to content validation instead of directly to analysis
         """
         if state.get("errors") and not state.get("extracted_markdown"):
-            print("❌ Extraction failed critically")
+            logger.workflow_error("extraction", "Extraction failed critically")
             return "handle_errors"
         
         # Check file validation results (if available)
         file_validation = state.get("file_validation", {})
         if file_validation and not file_validation.get("is_valid", True):
-            print("❌ File format validation failed")
+            logger.validation_error("file_format", "File format validation failed")
             return "handle_errors"
         
-        print("✅ Extract → Validate Content")
+        logger.log_route("extract", "validate_content", "Content validation required")
         return "validate_content"
     
     def route_after_content_validation(state: ProcessingState) -> str:
@@ -72,19 +79,19 @@ def create_advanced_processing_workflow():
         if not is_valid:
             confidence = validation_result.get("confidence", 0.0)
             content_type = validation_result.get("content_type", "unknown")
-            print(f"❌ Content validation failed: {content_type} (confidence: {confidence:.2f})")
-            print(f"📝 Feedback: {validation_result.get('feedback', 'No feedback')}")
+            logger.validation_error("content", f"Content validation failed: {content_type} (confidence: {confidence:.2f})")
+            logger.info(f"Validation feedback: {validation_result.get('feedback', 'No feedback')}")
             return "handle_errors"
         
-        print(f"✅ Content validated as product demo → Analyze")
+        logger.log_route("validate_content", "analyze", "Content validated as product demo")
         return "analyze"
     
     def route_after_analysis(state: ProcessingState) -> str:
         """After analysis, check for errors then proceed to evaluation"""
         if state.get("errors") and not state.get("analysis_result"):
-            print("❌ Analysis failed critically")
+            logger.workflow_error("analysis", "Analysis failed critically")
             return "handle_errors"
-        print("✅ Analyze → Evaluate Analysis")
+        logger.log_route("analyze", "evaluate_analysis", "Analysis completed successfully")
         return "evaluate_analysis"
     
     def route_after_analysis_evaluation(state: ProcessingState) -> str:
@@ -104,28 +111,28 @@ def create_advanced_processing_workflow():
         
         # INTELLIGENT DECISION LOGIC
         if needs_reanalysis and attempts < 2:
-            print(f"🔄 Analysis quality low (confidence: {confidence:.2f}) - Retrying analysis (attempt {attempts + 1})")
+            logger.log_retry("analysis", attempts + 1, 2, f"Quality low (confidence: {confidence:.2f})")
             return "analyze"
         
         if issue_type == "source_limitation":
-            print("✅ Source limitations identified (expected) - Proceeding to graphs")
+            logger.log_route("evaluate_analysis", "suggest_graphs", "Source limitations identified (expected)")
             return "suggest_graphs"
         
         if confidence < 0.3 and attempts < 2:
-            print(f"⚠️ Very low confidence ({confidence:.2f}) - Forcing reanalysis")
+            logger.log_retry("analysis", attempts + 1, 2, f"Very low confidence ({confidence:.2f})")
             state["needs_reanalysis"] = True
             return "analyze"
         
         # Default: proceed to next step
-        print(f"✅ Analysis acceptable (confidence: {confidence:.2f}) → Suggest Graphs")
+        logger.log_route("evaluate_analysis", "suggest_graphs", f"Analysis acceptable (confidence: {confidence:.2f})")
         return "suggest_graphs"
     
     def route_after_graph_suggestion(state: ProcessingState) -> str:
         """After graph generation, always evaluate graphs"""
         if state.get("errors") and not state.get("graph_suggestions"):
-            print("❌ Graph generation failed critically")
+            logger.workflow_error("graph_generation", "Graph generation failed critically")
             return "handle_errors"
-        print("✅ Suggest Graphs → Evaluate Graphs")
+        logger.log_route("suggest_graphs", "evaluate_graphs", "Graph generation completed successfully")
         return "evaluate_graphs"
     
     def route_after_graph_evaluation(state: ProcessingState) -> str:
@@ -145,24 +152,25 @@ def create_advanced_processing_workflow():
         
         # INTELLIGENT DECISION LOGIC
         if needs_regraph and attempts < 2:
-            print(f"🔄 Graph quality low (confidence: {confidence:.2f}) - Regenerating graphs (attempt {attempts + 1})")
+            logger.log_retry("graph_generation", attempts + 1, 2, f"Quality low (confidence: {confidence:.2f})")
             return "suggest_graphs"
         
         if issue_type == "graph_issue" and confidence < 0.5 and attempts < 2:
-            print(f"⚠️ Graph issues detected (confidence: {confidence:.2f}) - Forcing regeneration")
+            logger.log_retry("graph_generation", attempts + 1, 2, f"Graph issues detected (confidence: {confidence:.2f})")
             state["needs_regraph"] = True
             return "suggest_graphs"
         
         # Default: proceed to chunking
-        print(f"✅ Graphs acceptable (confidence: {confidence:.2f}) → Chunk")
+        logger.log_route("evaluate_graphs", "chunk", f"Graphs acceptable (confidence: {confidence:.2f})")
         return "chunk"
     
     def route_after_chunk(state: ProcessingState) -> str:
         """After chunking, workflow ends - storage handled separately"""
         if not state.get("chunks"):
-            print("❌ Chunking produced no chunks")
+            logger.workflow_error("chunking", "Chunking produced no chunks")
             return "handle_errors"
-        print(f"✅ Chunk ({len(state.get('chunks', []))} chunks) → END (storage via API)")
+        chunk_count = len(state.get('chunks', []))
+        logger.log_route("chunk", "END", f"Chunking completed ({chunk_count} chunks) - storage via API")
         return END
     
     # ============================================
@@ -244,6 +252,7 @@ def create_advanced_processing_workflow():
     # Handle errors always ends
     workflow.add_edge("handle_errors", END)
     
+    logger.workflow_success("Workflow compilation", "All edges and routes configured")
     return workflow.compile()
 
 # Create workflow instance

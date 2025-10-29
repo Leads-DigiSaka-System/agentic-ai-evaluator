@@ -5,17 +5,12 @@ from src.services.storage_service import storage_service
 from src.services.cache_service import agent_cache
 from src.utils.limiter_config import limiter
 from src.utils.errors import ProcessingError, ValidationError
-from src.utils.safe_logger import SafeLogger
+from src.utils.clean_logger import get_clean_logger
+from src.workflow.models import SimpleStorageApprovalRequest
 from datetime import datetime
 
 router = APIRouter()
-logger = SafeLogger(__name__)
-
-
-class SimpleStorageApprovalRequest(BaseModel):
-    """Simplified request model for storage approval using cache"""
-    cache_id: str = Field(..., description="Cache ID from agent response")
-    approved: bool = Field(..., description="User approval for storage")
+logger = get_clean_logger(__name__)
 
 
 @router.post("/storage/approve-simple")
@@ -35,7 +30,7 @@ async def approve_storage_simple(request: Request, approval_request: SimpleStora
         Storage results with success/failure status
     """
     try:
-        logger.info(f"Processing simple storage approval for cache: {approval_request.cache_id[:8]}...")
+        logger.cache_retrieve(approval_request.cache_id, "processing")
         logger.info(f"User approval: {approval_request.approved}")
         
         # Get cached agent output
@@ -92,7 +87,7 @@ async def approve_storage_simple(request: Request, approval_request: SimpleStora
         # Clean up cache after successful storage
         if result.get("status") == "success":
             agent_cache.delete_cache(approval_request.cache_id)
-            logger.info(f"✅ Cache cleaned up after successful storage: {approval_request.cache_id[:8]}...")
+            logger.cache_delete(approval_request.cache_id)
         
         return result
         
@@ -131,9 +126,9 @@ async def _process_single_report_storage(report_data: Dict[str, Any]) -> Dict[st
         storage_result = storage_service.store_all(storage_data)
         
         if storage_result["success"]:
-            logger.info(f"✅ Single report storage successful: {report_data['file_name'][:50]}")
+            logger.storage_success("single report", 1, report_data['file_name'][:50])
         else:
-            logger.error(f"❌ Single report storage failed: {report_data['file_name'][:50]}")
+            logger.storage_error("single report", report_data['file_name'][:50])
         
         return {
             "status": "success" if storage_result["success"] else "failed",
@@ -142,7 +137,7 @@ async def _process_single_report_storage(report_data: Dict[str, Any]) -> Dict[st
         }
         
     except Exception as e:
-        logger.error(f"❌ Single report storage processing failed: {str(e)}")
+        logger.error(f"Single report storage processing failed: {str(e)}")
         return {
             "status": "failed",
             "message": f"Storage processing failed: {str(e)}"
@@ -196,7 +191,7 @@ async def _process_multiple_reports_storage(reports: List[Dict[str, Any]]) -> Di
                     "error": str(e)[:200]
                 })
         
-        logger.info(f"✅ Batch storage completed: {success_count}/{len(reports)} successful")
+        logger.storage_success("batch storage", success_count, f"{len(reports)} reports")
         
         return {
             "status": "completed",
@@ -208,7 +203,7 @@ async def _process_multiple_reports_storage(reports: List[Dict[str, Any]]) -> Di
         }
         
     except Exception as e:
-        logger.error(f"❌ Batch storage processing failed: {str(e)}")
+        logger.storage_error("batch storage", str(e))
         return {
             "status": "failed",
             "message": f"Batch storage processing failed: {str(e)}"

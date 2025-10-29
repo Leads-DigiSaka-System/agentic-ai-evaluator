@@ -1,4 +1,5 @@
 from src.utils.llm_helper import invoke_llm
+from src.utils.clean_logger import get_clean_logger
 
 def validate_output(state: dict) -> dict:
     """
@@ -9,6 +10,8 @@ def validate_output(state: dict) -> dict:
     
     Returns quality metrics that evaluation_node uses to set flags
     """
+    logger = get_clean_logger(__name__)
+    
     try:
         # Extract state data
         analysis = state.get("analysis_result", {})
@@ -153,12 +156,12 @@ Guidelines:
         
         # Handle potential list returns
         if isinstance(result, list):
-            print("⚠️ LLM returned list, extracting first element")
+            logger.warning("LLM returned list, extracting first element")
             result = result[0] if result else {}
         
         # Validate result structure
         if not result or not isinstance(result, dict):
-            print("⚠️ Invalid LLM response structure, using defaults")
+            logger.warning("Invalid LLM response structure, using defaults")
             return {
                 "confidence": 0.5,
                 "feedback": "LLM returned invalid response structure",
@@ -174,13 +177,13 @@ Guidelines:
         
         # Validate confidence range
         if not (0.0 <= result["confidence"] <= 1.0):
-            print(f"⚠️ Invalid confidence value: {result['confidence']}, clamping to 0.5")
+            logger.warning(f"Invalid confidence value: {result['confidence']}, clamping to 0.5")
             result["confidence"] = 0.5
         
         return result
 
     except Exception as e:
-        print(f"❌ Quality validation failed: {str(e)}")
+        logger.error(f"Quality validation failed: {str(e)}")
         return {
             "confidence": 0.5,
             "feedback": f"Validation error: {str(e)}",

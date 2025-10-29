@@ -4,6 +4,7 @@ from langchain_core.documents import Document
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from qdrant_client.http import models
 from pydantic import Field
+from src.utils.clean_logger import get_clean_logger
 
 class QdrantDenseRetriever(BaseRetriever):
     """
@@ -89,7 +90,8 @@ class QdrantDenseRetriever(BaseRetriever):
             # Log error and return empty list to prevent crashes
             if run_manager:
                 run_manager.on_retriever_error(e)
-            print(f"Error in dense retrieval: {e}")
+            logger = get_clean_logger(__name__)
+            logger.db_error("dense retrieval", str(e))
             return []
     
     def update_search_limit(self, new_limit: int):

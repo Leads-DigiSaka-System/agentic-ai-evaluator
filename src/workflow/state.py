@@ -1,4 +1,5 @@
 from typing import Dict, Any, List, Optional, TypedDict
+from src.workflow.models import SimpleStorageApprovalRequest
 
 class ProcessingState(TypedDict):
     """
@@ -147,4 +148,14 @@ class ProcessingState(TypedDict):
     """
     Storage preview data for user review
     Contains summary of what would be stored
+    """
+    
+    # ============================================
+    # STORAGE APPROVAL REQUEST
+    # ============================================
+    
+    storage_approval_request: Optional[SimpleStorageApprovalRequest]
+    """
+    Storage approval request from user
+    Contains cache_id and approval decision
     """

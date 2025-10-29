@@ -5,11 +5,11 @@ from src.database.analysis_search import analysis_searcher
 from src.utils.limiter_config import limiter 
 from src.utils import constants 
 from src.utils.errors import ProcessingError, ValidationError
-from src.utils.safe_logger import SafeLogger
+from src.utils.clean_logger import get_clean_logger
 
 router = APIRouter()
 search_engine = LangChainHybridSearch()
-logger = SafeLogger(__name__)
+logger = get_clean_logger(__name__)
 
 class HybridSearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=500, description="Search query")
@@ -36,7 +36,7 @@ class HybridSearchRequest(BaseModel):
 async def hybrid_search_endpoint(request: Request, search_request: HybridSearchRequest):
     """Enhanced search with validation and error handling"""
     try:
-        logger.info(f"Search request: '{search_request.query[:50]}', top_k={search_request.top_k}")
+        logger.db_query("hybrid search", f"query: '{search_request.query[:50]}'", search_request.top_k)
         
         results = search_engine.search_with_custom_weights(
             query=search_request.query,
@@ -53,7 +53,7 @@ async def hybrid_search_endpoint(request: Request, search_request: HybridSearchR
                 "results": []
             }
         
-        logger.info(f"Found {len(results)} results for: '{search_request.query[:50]}'")
+        logger.db_query("hybrid search", f"query: '{search_request.query[:50]}'", len(results))
         return {
             "query": search_request.query,
             "total_results": len(results),
@@ -63,7 +63,7 @@ async def hybrid_search_endpoint(request: Request, search_request: HybridSearchR
     except ValidationError:
         raise
     except Exception as e:
-        logger.error(f"Search error: {str(e)[:100]}")
+        logger.db_error("hybrid search", str(e))
         raise ProcessingError(
             detail="Search operation failed",
             step="hybrid_search",

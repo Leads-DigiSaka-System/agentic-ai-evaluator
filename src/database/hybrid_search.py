@@ -2,6 +2,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from langchain.retrievers import EnsembleRetriever
 from langchain_core.documents import Document
 from src.database.insert import qdrant_client
+from src.utils.clean_logger import get_clean_logger
 
 # Import our custom retrievers
 from src.database.dense_retriever import QdrantDenseRetriever
@@ -142,7 +143,8 @@ class LangChainHybridSearch:
             return self._format_results(documents)
             
         except Exception as e:
-            print(f"Error in hybrid search: {e}")
+            logger = get_clean_logger(__name__)
+            logger.db_error("hybrid search", str(e))
             return []
     
     def search_with_custom_weights(
@@ -236,7 +238,8 @@ class LangChainHybridSearch:
             ]
             
         except Exception as e:
-            print(f"Error in retriever comparison: {e}")
+            logger = get_clean_logger(__name__)
+            logger.db_error("retriever comparison", str(e))
             results = {"error": str(e)}
         
         return results

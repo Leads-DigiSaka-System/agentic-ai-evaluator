@@ -3,13 +3,10 @@ from typing import Optional, Dict, Any
 from google import genai
 from google.genai import types
 from src.utils.config import GOOGLE_API_KEY, GEMINI_MODEL
-from langchain.document_loaders import PyMuPDFLoader
+from langchain_community.document_loaders import PyMuPDFLoader
 from src.prompt.prompt_template import formatting_template
 from src.Upload.file_validator import FileValidator
-import logging
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from src.utils.clean_logger import get_clean_logger
 
 
 def extract_with_gemini(
@@ -35,6 +32,7 @@ def extract_with_gemini(
             "error": str (if failed)
         }
     """
+    logger = get_clean_logger(__name__)
     result = {
         "success": False,
         "extracted_text": None,
@@ -47,7 +45,7 @@ def extract_with_gemini(
         filepath = pathlib.Path(file_path)
         if not filepath.exists():
             result["error"] = f"File not found: {file_path}"
-            logger.error(f"❌ {result['error']}")
+            logger.file_error(filepath.name, result['error'])
             return result
         
         # Read file content
@@ -56,17 +54,17 @@ def extract_with_gemini(
         
         # Step 1: Validate file format (if enabled)
         if validate_format:
-            logger.info(f"🔍 Validating file format for {filename}...")
+            logger.file_validation(filename, "validating format")
             validation_result = FileValidator.validate_file(file_content, filename)
             result["validation_result"] = validation_result
             
             if not validation_result["is_valid"]:
                 result["error"] = "; ".join(validation_result["errors"])
-                logger.error(f"❌ File validation failed: {result['error']}")
+                logger.file_validation(filename, "failed", result['error'])
                 return result
             
             result["file_type"] = validation_result["file_type"]
-            logger.info(FileValidator.get_validation_summary(validation_result))
+            logger.file_validation(filename, "passed", FileValidator.get_validation_summary(validation_result))
         else:
             # Infer file type from extension
             file_ext = filepath.suffix.lower()
@@ -76,25 +74,28 @@ def extract_with_gemini(
                 result["file_type"] = "image"
             else:
                 result["error"] = f"Unsupported file type: {file_ext}"
+                logger.file_error(filename, result['error'])
                 return result
         
         # Step 2: Extract content with Gemini
-        logger.info(f"🚀 Starting Gemini extraction for {filename}...")
+        logger.file_extraction(filename, result["file_type"], len(file_content))
         extracted_text = _extract_with_gemini_api(file_content, filepath, result["file_type"])
         
         if extracted_text:
             result["success"] = True
             result["extracted_text"] = extracted_text
-            logger.info(f"✅ Extraction completed successfully ({len(extracted_text)} characters)")
+            # Log completion without passing an extra argument to file_extraction
+            logger.file_extraction(filename, result["file_type"], len(extracted_text))
+            logger.info("Extraction completed successfully")
         else:
             result["error"] = "No content extracted from file"
-            logger.error("❌ Extraction returned no content")
+            logger.file_error(filename, "Extraction returned no content")
         
         return result
         
     except Exception as e:
         result["error"] = f"Extraction failed: {str(e)}"
-        logger.error(f"❌ {result['error']}")
+        logger.file_error(filepath.name if 'filepath' in locals() else "unknown", result['error'])
         import traceback
         traceback.print_exc()
         return result
@@ -118,11 +119,12 @@ def _extract_with_gemini_api(
     Returns:
         Extracted text or None
     """
+    logger = get_clean_logger(__name__)
     try:
         client = genai.Client(api_key=GOOGLE_API_KEY)
         file_size = len(file_content)
         
-        logger.info(f"📊 File size: {file_size / (1024*1024):.2f} MB")
+        logger.info(f"File size: {file_size / (1024*1024):.2f} MB")
         
         # Get extraction prompt template
         prompt_template = formatting_template()
@@ -141,12 +143,12 @@ def _extract_with_gemini_api(
             else:
                 mime_type = 'image/jpeg'  # Default
         else:
-            logger.error(f"❌ Unsupported file type: {file_type}")
+            logger.error(f"Unsupported file type: {file_type}")
             return None
         
         # Choose processing method based on file size
         if file_size < 20 * 1024 * 1024:  # 20MB threshold
-            logger.info("📤 Processing with inline method...")
+            logger.info("Processing with inline method")
             response = client.models.generate_content(
                 model=GEMINI_MODEL,
                 contents=[
@@ -158,7 +160,7 @@ def _extract_with_gemini_api(
                 ]
             )
         else:
-            logger.info("📤 Processing with File API method (large file)...")
+            logger.info("Processing with File API method (large file)")
             sample_file = client.files.upload(file=filepath)
             response = client.models.generate_content(
                 model=GEMINI_MODEL,
@@ -168,14 +170,14 @@ def _extract_with_gemini_api(
         # Extract text from response
         if response.candidates and response.candidates[0].content.parts:
             extracted_text = "".join(part.text for part in response.candidates[0].content.parts)
-            logger.info(f"✅ Gemini API extraction successful")
+            logger.info("Gemini API extraction successful")
             return extracted_text
         else:
-            logger.error("❌ No content in Gemini response")
+            logger.error("No content in Gemini response")
             return None
             
     except Exception as e:
-        logger.error(f"❌ Gemini API extraction failed: {str(e)}")
+        logger.error(f"Gemini API extraction failed: {str(e)}")
         import traceback
         traceback.print_exc()
         return None
@@ -197,7 +199,8 @@ def extract_pdf_with_gemini(pdf_path: str) -> Optional[str]:
     Returns:
         Extracted text or None
     """
-    logger.warning("⚠️  Using legacy extract_pdf_with_gemini - consider migrating to extract_with_gemini")
+    logger = get_clean_logger(__name__)
+    logger.warning("Using legacy extract_pdf_with_gemini - consider migrating to extract_with_gemini")
     result = extract_with_gemini(pdf_path, validate_format=True)
     return result["extracted_text"]
 
@@ -209,6 +212,7 @@ def extract_pdf_metadata(pdf_path: str) -> Dict[str, Any]:
     UPDATED: Now handles non-PDF files gracefully (e.g., images)
     Returns basic metadata if not a PDF
     """
+    logger = get_clean_logger(__name__)
     try:
         # Check if file is actually a PDF
         import pathlib

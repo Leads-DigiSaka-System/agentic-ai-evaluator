@@ -14,28 +14,31 @@ from src.utils.config import CONNECTION_WEB
 from slowapi.errors import RateLimitExceeded              # ← Keep this
 from slowapi import _rate_limit_exceeded_handler          # ← Keep this
 from src.utils.safe_logger import SafeLogger
+from src.utils.simple_clean_logging import setup_clean_logging, get_clean_logger
 from slowapi.middleware import SlowAPIMiddleware
 from src.utils.limiter_config import limiter    
 
 # Load .env
 load_dotenv()
 
-logger = SafeLogger(__name__)  # Use SafeLogger
+# Setup clean logging with colors
+setup_clean_logging("INFO")
+logger = get_clean_logger(__name__)
 
 # Graceful shutdown handler
 def shutdown_handler():
     """Handle graceful shutdown"""
-    logger.info("🛑 Shutting down gracefully...")
-    logger.info("📝 Closing database connections...")
+    logger.info("Shutting down gracefully...")
+    logger.info("Closing database connections...")
     # Add cleanup logic here if needed
-    logger.info("✅ Shutdown complete")
+    logger.info("Shutdown complete")
 
 # Register shutdown handlers
 atexit.register(shutdown_handler)
 
 def signal_handler(sig, frame):
     """Handle SIGINT and SIGTERM"""
-    logger.info(f"🛑 Received signal {sig}, initiating shutdown...")
+    logger.info(f"Received signal {sig}, initiating shutdown...")
     shutdown_handler()
     os._exit(0)
 
@@ -67,7 +70,7 @@ app.include_router(storage_router, prefix="/api", tags=["storage"])
 # Health check endpoint
 @app.get("/")
 def root():
-    return {"message": "Agentic AI Evaluation API is running 🚀"}
+    return {"message": "Agentic AI Evaluation API is running"}
 
 @app.get("/api/health")
 def health_check():

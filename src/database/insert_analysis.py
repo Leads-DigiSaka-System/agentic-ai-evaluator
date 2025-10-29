@@ -3,14 +3,12 @@ from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
 from src.generator.encoder import DenseEncoder
 from src.utils.config import QDRANT_LOCAL_URI, QDRANT_COLLECTION_ANALYSIS
+from src.utils.clean_logger import get_clean_logger
 from typing import Dict, Any, List, Optional
 import uuid
-import logging
 from datetime import datetime, date
 import json
 import re
-
-logger = logging.getLogger(__name__)
 
 class AnalysisStorage:
 
@@ -21,12 +19,13 @@ class AnalysisStorage:
     MIN_SUMMARY_LENGTH = 10
     
     def __init__(self):
+        self.logger = get_clean_logger(__name__)
         self.client = QdrantClient(url=QDRANT_LOCAL_URI)
         self.collection_name = QDRANT_COLLECTION_ANALYSIS
         self.dense_encoder = DenseEncoder()
         self.vector_size = 768
         
-        logger.info(f"📦 AnalysisStorage initialized for '{self.collection_name}'")
+        self.logger.storage_start("AnalysisStorage", f"collection: {self.collection_name}")
     
     @staticmethod
     def _safe_get(dictionary: Dict, *keys: str, default: Any = None) -> Any:
@@ -75,7 +74,7 @@ class AnalysisStorage:
         try:
             return json.dumps(obj, default=default_serializer, ensure_ascii=False)
         except Exception as e:
-            logger.warning(f"⚠️ JSON serialization failed: {str(e)}")
+            self.logger.warning(f"JSON serialization failed: {str(e)}")
             return json.dumps({
                 "error": "Failed to serialize",
                 "original_type": str(type(obj))
@@ -87,11 +86,11 @@ class AnalysisStorage:
             # Check if collection exists
             try:
                 self.client.get_collection(self.collection_name)
-                logger.debug(f"✅ Collection '{self.collection_name}' validated")
+                self.logger.debug(f"Collection '{self.collection_name}' validated")
                 return True
             except UnexpectedResponse:
                 # Collection doesn't exist, create it
-                logger.info(f"📦 Creating collection: {self.collection_name}")
+                self.logger.storage_start("collection creation", f"name: {self.collection_name}")
                 self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config={
@@ -101,23 +100,23 @@ class AnalysisStorage:
                         )
                     }
                 )
-                logger.info(f"✅ Collection '{self.collection_name}' created")
+                self.logger.storage_success("collection creation", 1, f"name: {self.collection_name}")
                 return True
                 
         except Exception as e:
-            logger.error(f"❌ Failed to ensure collection: {str(e)}")
+            self.logger.storage_error("collection creation", str(e))
             return False
     
     def insert_multi_report_response(self, response: Dict[str, Any]) -> bool:
 
         try:
             if response.get("status") != "success":
-                logger.warning("⚠️ Response status is not success, skipping")
+                self.logger.warning("Response status is not success, skipping")
                 return False
             
             reports = response.get("reports", [])
             if not reports:
-                logger.warning("⚠️ No reports to insert")
+                self.logger.warning("No reports to insert")
                 return False
             
             # Ensure collection exists
@@ -137,15 +136,16 @@ class AnalysisStorage:
                 self._insert_cross_report_analysis(response)
             
             success_rate = (inserted_count / total_reports) * 100
-            logger.info(
-                f"✅ Inserted {inserted_count}/{total_reports} reports "
-                f"({success_rate:.1f}% success rate)"
+            self.logger.storage_success(
+                "multi-report insertion", 
+                inserted_count, 
+                f"{success_rate:.1f}% success rate"
             )
             
             return inserted_count > 0
             
         except Exception as e:
-            logger.error(f"❌ Failed to insert multi-report response: {str(e)}")
+            self.logger.storage_error("multi-report insertion", str(e))
             return False
     
     def _validate_report(self, report: Dict[str, Any]) -> bool:
@@ -168,8 +168,8 @@ class AnalysisStorage:
         try:
             # Validate report
             if not self._validate_report(report):
-                logger.warning(
-                    f"⚠️ Skipping invalid report #{report.get('report_number')}"
+                self.logger.warning(
+                    f"Skipping invalid report #{report.get('report_number')}"
                 )
                 return False
             
@@ -196,12 +196,12 @@ class AnalysisStorage:
             try:
                 vector = self.dense_encoder.encode([summary_text])[0]
                 if len(vector) != self.vector_size:
-                    logger.error(
-                        f"❌ Vector size mismatch: {len(vector)} != {self.vector_size}"
+                    self.logger.error(
+                        f"Vector size mismatch: {len(vector)} != {self.vector_size}"
                     )
                     return False
             except Exception as e:
-                logger.error(f"❌ Vector encoding failed: {str(e)}")
+                self.logger.error(f"Vector encoding failed: {str(e)}")
                 return False
             
             # Generate unique form_id
@@ -229,15 +229,17 @@ class AnalysisStorage:
                 wait=True
             )
             
-            logger.info(
-                f"✅ Report #{report.get('report_number')} inserted - "
-                f"{basic_info.get('product', 'N/A')}"
+            self.logger.storage_success(
+                "report insertion", 
+                1, 
+                f"Report #{report.get('report_number')} - {basic_info.get('product', 'N/A')}"
             )
             return True
             
         except Exception as e:
-            logger.error(
-                f"❌ Failed to insert report #{report.get('report_number')}: {str(e)}"
+            self.logger.storage_error(
+                f"report insertion #{report.get('report_number')}", 
+                str(e)
             )
             return False
     
@@ -455,10 +457,10 @@ class AnalysisStorage:
                 wait=True
             )
             
-            logger.info("✅ Cross-report analysis inserted")
+            self.logger.storage_success("cross-report analysis", 1)
             
         except Exception as e:
-            logger.error(f"⚠️ Failed to insert cross-report analysis: {str(e)}")
+            self.logger.storage_error("cross-report analysis", str(e))
 
 
 # Global instance for easy import

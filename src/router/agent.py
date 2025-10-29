@@ -8,10 +8,10 @@ from src.services.cache_service import agent_cache
 from src.formatter.json_helper import validate_and_clean_agent_response
 import asyncio
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from src.utils.safe_logger import SafeLogger
+from src.utils.clean_logger import get_clean_logger
 
 router = APIRouter()
-logger = SafeLogger(__name__)
+logger = get_clean_logger(__name__)
 
 
 @router.post("/agent")
@@ -37,7 +37,7 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         # Comprehensive file validation
         validate_and_raise(file.filename, content, field_name="file")
         
-        logger.info(f"Processing file: {file.filename[:50]}, size: {len(content)} bytes")
+        logger.file_upload(file.filename, len(content))
         
         # Process with timeout protection
         try:
@@ -46,23 +46,23 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
                 timeout=constants.REQUEST_TIMEOUT_SECONDS
             )
             
-            logger.info(f"Successfully processed file: {file.filename[:50]}")
+            logger.file_validation(file.filename, "success", "processed successfully")
             
             # Validate and clean the response structure
             try:
                 cleaned_result = validate_and_clean_agent_response(result)
-                logger.info("🧹 Agent response validated and cleaned")
+                logger.info("Agent response validated and cleaned")
                 result = cleaned_result
             except Exception as e:
-                logger.warning(f"⚠️ Failed to clean agent response: {str(e)}")
+                logger.warning(f"Failed to clean agent response: {str(e)}")
                 # Continue with original result if cleaning fails
             
             # Automatically cache the result for storage
             try:
                 cache_id = agent_cache.save_agent_output(result)
-                logger.info(f"📦 Agent output cached with ID: {cache_id}")
+                logger.cache_save(cache_id, "agent output")
             except Exception as e:
-                logger.warning(f"⚠️ Failed to cache agent output: {str(e)}")
+                logger.warning(f"Failed to cache agent output: {str(e)}")
                 # Don't fail the request if caching fails
             
             return result

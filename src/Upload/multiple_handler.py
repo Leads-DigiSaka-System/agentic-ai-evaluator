@@ -6,10 +6,12 @@ from src.workflow.state import ProcessingState
 from src.workflow.graph import processing_workflow
 from src.Upload.form_extractor import extract_pdf_with_gemini, extract_pdf_metadata
 from src.database.insert_analysis import analysis_storage 
+from src.utils.clean_logger import get_clean_logger 
 
+logger = get_clean_logger(__name__)
 class MultiReportHandler:
     """Handler for processing PDFs with multiple reports including graph suggestions"""
-    
+    #logger = get_clean_logger(__name__)
     @staticmethod
     async def process_multi_report_pdf(file_content: bytes, original_filename: str) -> Dict[str, Any]:
         """
@@ -22,13 +24,14 @@ class MultiReportHandler:
         - Content validation happens in workflow
         - Auto-detects file type from extension
         """
+        #logger = get_clean_logger(__name__)
         tmp_path = None
         try:
             # ✅ FIX: Detect file type from original filename
             file_ext = original_filename.lower().split('.')[-1] if '.' in original_filename else 'pdf'
             suffix = f".{file_ext}"
             
-            print(f"📁 File type detected: {file_ext.upper()}")
+            logger.file_upload(original_filename, len(file_content))
             
             # ✅ FIX: Save with correct extension
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, mode='wb') as tmp_file:
@@ -36,13 +39,14 @@ class MultiReportHandler:
                 tmp_file.flush()  # Ensure written to disk
                 tmp_path = tmp_file.name
             
-            print(f"💾 Saved to temporary file: {tmp_path}")
+            logger.info(f"Saved to temporary file: {tmp_path}")
 
             # Extract content (supports both PDF and images via Gemini)
-            print(f"🚀 Extracting {file_ext.upper()} with validation...")
+            logger.file_extraction(original_filename, file_ext.upper(), len(file_content))
             extracted_markdown = extract_pdf_with_gemini(tmp_path)
             
             if not extracted_markdown:
+                logger.file_error(original_filename, f"Failed to extract content from {file_ext.upper()}")
                 raise Exception(
                     f"Failed to extract content from {file_ext.upper()}. "
                     "File may be corrupted, encrypted, or not a valid file."
@@ -81,12 +85,12 @@ class MultiReportHandler:
         # Use the unique separator for splitting
         reports_markdown = MultiReportHandler._split_reports_intelligently(extracted_markdown)
 
-        print(f"📄 Found {len(reports_markdown)} reports in PDF")
+        logger.processing_start("multi-report processing", f"file: {original_filename}")
 
         # CRITICAL FIX: Handle single vs multiple reports differently
         if len(reports_markdown) == 1:
             # For SINGLE REPORT, use full workflow with validation
-            print("📋 Processing as SINGLE REPORT (full validation enabled)")
+            logger.info("Processing as SINGLE REPORT (full validation enabled)")
             report_response = await MultiReportHandler._process_single_report_direct(
                 tmp_path, file_content, original_filename, pdf_metadata
             )
@@ -95,7 +99,7 @@ class MultiReportHandler:
             if report_response.get("errors"):
                 validation_errors = [e for e in report_response["errors"] if "validation" in e.lower()]
                 if validation_errors:
-                    print(f"❌ Validation failed: {validation_errors[0]}")
+                    logger.file_validation(original_filename, "failed", validation_errors[0])
             
             result = {
                 "status": "success" if not report_response.get("errors") else "failed",
@@ -106,7 +110,7 @@ class MultiReportHandler:
             
             # Analysis storage is now handled separately via API endpoint
             result["analysis_storage_status"] = "ready_for_approval"
-            print("📦 Analysis storage ready for user approval via /api/storage/approve")
+            logger.storage_start("analysis storage", "ready for user approval")
             
             return result
         
@@ -131,7 +135,7 @@ class MultiReportHandler:
         
         # Analysis storage is now handled separately via API endpoint
         result["analysis_storage_status"] = "ready_for_approval"
-        print("📦 Analysis storage ready for user approval via /api/storage/approve")
+        logger.storage_start("analysis storage", "ready for user approval")
         
         return result
 
@@ -146,8 +150,10 @@ class MultiReportHandler:
         - Better error messages from validation
         - File format already validated during extraction
         """
+        logger = get_clean_logger(__name__)
+        
         try:
-            print("📄 Processing SINGLE REPORT with full validation...")
+            logger.info("Processing SINGLE REPORT with full validation")
 
             # Initialize state WITHOUT pre-extracted markdown
             # Workflow will: extract → validate file → validate content → analyze
@@ -205,16 +211,16 @@ class MultiReportHandler:
             }
 
             if final_state["errors"]:
-                print(f"⚠️ Single report completed with errors: {final_state['errors']}")
+                logger.processing_error(original_filename, f"Single report completed with errors: {final_state['errors']}")
             else:
                 chart_count = len(final_state.get("graph_suggestions", {}).get("suggested_charts", []))
-                print(f"✅ Single report processed successfully with {chart_count} chart suggestions")
-                print("📦 Storage data prepared - ready for user approval")
+                logger.processing_success(original_filename, f"Single report processed successfully with {chart_count} chart suggestions")
+                logger.storage_start("analysis storage", "ready for user approval")
 
             return report_response
 
         except Exception as e:
-            print(f"❌ Failed to process single report: {str(e)}")
+            logger.processing_error(original_filename, f"Failed to process single report: {str(e)}")
             import traceback
             traceback.print_exc()
             return {
@@ -238,26 +244,28 @@ class MultiReportHandler:
         Intelligently split markdown into individual reports
         UNCHANGED - Works as before
         """
+        logger = get_clean_logger(__name__)
+        
         # First, try splitting by the unique separator
         unique_separator = "### REPORT_END ###"
         if unique_separator in markdown_content:
             reports = markdown_content.split(unique_separator)
             reports = [report.strip() for report in reports if report.strip()]
             if len(reports) > 1:
-                print(f"🔑 Using unique separator, found {len(reports)} reports")
+                logger.info(f"Using unique separator, found {len(reports)} reports")
                 return reports
 
         # If no unique separator found, check for multiple # headings
         headings = re.findall(r'^#\s+.+$', markdown_content, re.MULTILINE)
         if len(headings) > 1:
-            print(f"🔑 Found {len(headings)} potential reports by heading detection")
+            logger.info(f"Found {len(headings)} potential reports by heading detection")
             reports = re.split(r'^(?=#\s+)', markdown_content, flags=re.MULTILINE)
             reports = [report.strip() for report in reports if report.strip() and report.startswith('#')]
             if len(reports) > 1:
                 return reports
 
         # If all else fails, treat as single report
-        print("📋 No clear report separators found, treating as SINGLE REPORT")
+            logger.info("No clear report separators found, treating as SINGLE REPORT")
         return [markdown_content]
 
     @staticmethod
@@ -272,8 +280,10 @@ class MultiReportHandler:
         - Content validation still runs in workflow
         - If content is invalid, workflow will error out gracefully
         """
+        logger = get_clean_logger(__name__)
+        
         try:
-            print(f"📄 Processing report {report_index + 1}/{total_reports}...")
+            logger.info(f"Processing report {report_index + 1}/{total_reports}")
 
             # Initialize state with pre-extracted markdown
             # Workflow will: validate content → analyze → graphs → chunk → store
@@ -326,16 +336,16 @@ class MultiReportHandler:
             }
 
             if final_state["errors"]:
-                print(f"⚠️ Report {report_index + 1} completed with errors: {final_state['errors']}")
+                logger.processing_error(f"Report {report_index + 1}", f"Report completed with errors: {final_state['errors']}")
             else:
                 chart_count = len(final_state.get("graph_suggestions", {}).get("suggested_charts", []))
-                print(f"✅ Report {report_index + 1} processed successfully with {chart_count} chart suggestions")
-                print("📦 Storage data prepared - ready for user approval")
+                logger.processing_success(f"Report {report_index + 1}", f"Report processed successfully with {chart_count} chart suggestions")
+                logger.storage_start("analysis storage", "ready for user approval")
 
             return report_response
 
         except Exception as e:
-            print(f"❌ Failed to process report {report_index + 1}: {str(e)}")
+            logger.processing_error(f"Report {report_index + 1}", f"Failed to process report: {str(e)}")
             import traceback
             traceback.print_exc()
             return {
@@ -393,7 +403,7 @@ class MultiReportHandler:
             }
             
         except Exception as e:
-            print(f"⚠️ Failed to generate cross-report suggestions: {str(e)}")
+            logger.warning(f"Failed to generate cross-report suggestions: {str(e)}")
             return {"cross_report_suggestions": []}
 
     @staticmethod

@@ -5,6 +5,7 @@ from src.Upload.form_extractor import extract_pdf_with_gemini
 from src.formatter.chunking import chunk_markdown_safe
 from src.formatter.formatter import extract_form_type_from_content
 from src.database.insert import qdrant_client
+from src.utils.clean_logger import get_clean_logger
 import os
 import tempfile
 import uuid
@@ -14,6 +15,7 @@ router = APIRouter()
 
 @router.post("/upload-file-product-demo", response_class=PlainTextResponse)
 async def upload_file(file: UploadFile = File(...)) -> str:
+    logger = get_clean_logger(__name__)
     tmp_path = None
     try:
         # Step 0: Save uploaded PDF
@@ -29,7 +31,7 @@ async def upload_file(file: UploadFile = File(...)) -> str:
 
         # Step 2: Extract Form Type (first header only)
         form_type = extract_form_type_from_content(extracted_content)
-        print(f"📋 Extracted form type: {form_type}")
+        logger.file_upload(file.filename, len(content))
 
         # Step 3: Chunking
         chunks = chunk_markdown_safe(extracted_content)
@@ -49,21 +51,18 @@ async def upload_file(file: UploadFile = File(...)) -> str:
             }
 
         # Debug info
-        print(f"📊 Total chunks: {len(chunks)}")
-        print(f"🆔 Form ID: {form_id}")
-        print(f"📝 Form Title: {file.filename}")
-        print(f"📑 Form Type: {form_type}")
+        logger.file_extraction(file.filename, "markdown", len(extracted_content))
 
         # Step 5: Insert into Qdrant
         if chunks:
             insert_success = qdrant_client.insert_chunks(chunks)
             if insert_success:
-                print("✅ Successfully stored in vector database")
+                logger.storage_success("chunk insertion", len(chunks), f"file: {file.filename}")
 
         return extracted_content
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
+        logger.file_error(file.filename, str(e))
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:

@@ -101,13 +101,13 @@ class StorageService:
                 "form_type": state.get("form_type", "unknown")
             }
             
-            logger.info(f"✅ Storage data prepared for {state['file_name']}")
-            logger.info(f"📊 Chunks: {len(prepared_chunks)}, Form ID: {form_id}")
+            logger.info(f"Storage data prepared for {state['file_name']}")
+            logger.info(f"Chunks: {len(prepared_chunks)}, Form ID: {form_id}")
             
             return storage_data
             
         except Exception as e:
-            logger.error(f"❌ Failed to prepare storage data: {str(e)}")
+            logger.error(f"Failed to prepare storage data: {str(e)}")
             raise
     
     def store_chunks(self, chunks: List[Dict[str, Any]]) -> Tuple[bool, str]:
@@ -126,16 +126,16 @@ class StorageService:
             
             if insert_success:
                 message = f"Successfully stored {len(chunks)} chunks in vector database"
-                logger.info(f"✅ {message}")
+                logger.info(message)
                 return True, message
             else:
                 message = "Failed to store chunks in vector database"
-                logger.error(f"❌ {message}")
+                logger.error(message)
                 return False, message
                 
         except Exception as e:
             message = f"Chunk storage failed: {str(e)}"
-            logger.error(f"❌ {message}")
+            logger.error(message)
             return False, message
     
     def store_analysis(self, analysis_response: Dict[str, Any]) -> Tuple[bool, str]:
@@ -154,16 +154,16 @@ class StorageService:
             
             if storage_success:
                 message = "Successfully stored analysis results in structured database"
-                logger.info(f"✅ {message}")
+                logger.info(message)
                 return True, message
             else:
                 message = "Failed to store analysis results in structured database"
-                logger.error(f"❌ {message}")
+                logger.error(message)
                 return False, message
                 
         except Exception as e:
             message = f"Analysis storage failed: {str(e)}"
-            logger.error(f"❌ {message}")
+            logger.error(message)
             return False, message
     
     def store_all(self, storage_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -208,14 +208,14 @@ class StorageService:
             }
             
             if overall_success:
-                logger.info(f"✅ Complete storage successful for form {form_id}")
+                logger.info(f"Complete storage successful for form {form_id}")
             else:
-                logger.warning(f"⚠️ Partial storage failure for form {form_id}")
+                logger.warning(f"Partial storage failure for form {form_id}")
             
             return result
             
         except Exception as e:
-            logger.error(f"❌ Complete storage failed: {str(e)}")
+            logger.error(f"Complete storage failed: {str(e)}")
             return {
                 "success": False,
                 "form_id": storage_data.get("form_id", "unknown"),
@@ -259,7 +259,7 @@ class StorageService:
             return preview
             
         except Exception as e:
-            logger.error(f"❌ Failed to create storage preview: {str(e)}")
+            logger.error(f"Failed to create storage preview: {str(e)}")
             return {
                 "error": str(e),
                 "prepared_at": datetime.now().isoformat()

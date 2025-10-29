@@ -1,6 +1,7 @@
 # file: src/workflow/nodes/analysis.py (FIXED)
 from src.prompt.analysis_template import analysis_prompt_template_structured
 from src.utils.llm_helper import invoke_llm
+from src.utils.clean_logger import CleanLogger
 from typing import List
 import traceback
 
@@ -19,52 +20,52 @@ def analyze_demo_trial(markdown_data: str):
     Returns:
         Adaptive analysis results dict
     """
+    logger = CleanLogger("workflow.nodes.analysis")
+    
     try:
-        print("🔍 Starting universal adaptive analysis...")
+        logger.analysis_start("universal_adaptive_analysis")
         
         # Truncate if too long
         if len(markdown_data) > 4000:
             markdown_data = markdown_data[:4000] + "\n... (truncated)"
-            print("📏 Content truncated to 4000 characters")
+            logger.info("Content truncated to 4000 characters")
         
         # Use single universal template
         template = analysis_prompt_template_structured()
         prompt = template.format(markdown_data=markdown_data)
         
-        print("📤 Sending to Universal Agricultural Demo Analyst...")
+        logger.llm_request("gemini", "universal_agricultural_demo_analysis")
         result = invoke_llm(prompt, as_json=True)
         
         if not result:
             error_msg = "No response from LLM"
-            print(f"❌ {error_msg}")
+            logger.llm_error("gemini", error_msg)
             return create_universal_error_response(error_msg)
         
-        print(f"✅ LLM response received, type: {type(result)}")
+        logger.llm_response("gemini", "success", f"Response type: {type(result)}")
         
         # Validate response
         if isinstance(result, dict):
             if result.get("status") == "error":
-                print(f"⚠️ Analysis returned error: {result.get('error_message', 'Unknown error')}")
+                logger.analysis_error("universal_adaptive_analysis", result.get('error_message', 'Unknown error'))
             else:
                 # Show what was detected
                 product_category = result.get("product_category", "unknown")
                 metrics = result.get("metrics_detected", [])
-                print(f"🎯 Analysis completed successfully")
-                print(f"   Product Category: {product_category}")
-                print(f"   Metrics Detected: {', '.join(metrics)}")
+                logger.analysis_result("universal_adaptive_analysis", metrics, f"Product Category: {product_category}")
                 
                 # Generate summary if missing
                 if not result.get("executive_summary"):
                     result["executive_summary"] = generate_adaptive_summary(result)
         else:
-            print(f"⚠️ Unexpected response type: {type(result)}")
+            logger.warning(f"Unexpected response type: {type(result)}")
             result = create_universal_error_response(f"Unexpected response type: {type(result)}")
         
         return result
         
     except Exception as e:
         error_msg = f"Analysis failed: {str(e)}"
-        print(f"❌ {error_msg}")
+        logger.analysis_error("universal_adaptive_analysis", error_msg)
         traceback.print_exc()
         return create_universal_error_response(error_msg)
 

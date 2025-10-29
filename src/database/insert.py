@@ -2,7 +2,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from typing import List, Dict, Any
 import uuid
-import logging
+from src.utils.clean_logger import get_clean_logger
 import os
 import numpy as np
 import threading
@@ -14,7 +14,7 @@ from src.generator.encoder import (
     TfidfEncoder
 )
 
-logger = logging.getLogger(__name__)
+logger = get_clean_logger(__name__)
 
 class QdrantOperations:
     def __init__(self, dense_encoder=None, sparse_encoder=None):
@@ -29,10 +29,10 @@ class QdrantOperations:
 
         # ✅ Auto-train handling for sparse encoder
         if os.path.exists("tfidf_vectorizer.pkl"):
-            print("📂 Loading existing tfidf_vectorizer.pkl (insert.py)")
+            logger.info("Loading existing tfidf_vectorizer.pkl (insert.py)")
             self.sparse_encoder = sparse_encoder or TfidfEncoder(vectorizer_path="tfidf_vectorizer.pkl")
         else:
-            print("⚠️ tfidf_vectorizer.pkl not found (insert.py). Will start with empty TF-IDF encoder.")
+            logger.warning("tfidf_vectorizer.pkl not found (insert.py). Will start with empty TF-IDF encoder.")
             self.sparse_encoder = sparse_encoder or TfidfEncoder()
 
         self.default_dense_size = 768   # MiniLM default dim
@@ -45,8 +45,7 @@ class QdrantOperations:
             collection_names = [col.name for col in collections.collections]
 
             if self.collection_name not in collection_names:
-                logger.info(f"📦 Creating collection: {self.collection_name} "
-                            f"with dense={dense_size}, sparse={sparse_size}")
+                logger.storage_start("collection creation", f"name: {self.collection_name}, dense={dense_size}, sparse={sparse_size}")
                 self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config={
@@ -60,14 +59,14 @@ class QdrantOperations:
                         )
                     }
                 )
-                logger.info(f"✅ Collection '{self.collection_name}' created successfully")
+                logger.storage_success("collection creation", 1, f"name: {self.collection_name}")
             else:
-                logger.info(f"📦 Collection '{self.collection_name}' already exists")
+                logger.info(f"Collection '{self.collection_name}' already exists")
 
             return True
 
         except Exception as e:
-            logger.error(f"❌ Failed to ensure collection exists: {str(e)}")
+            logger.storage_error("collection creation", str(e))
             return False
 
     def insert_chunks(self, chunks: List[Dict[str, Any]]) -> bool:
@@ -76,7 +75,7 @@ class QdrantOperations:
         """
         try:
             if not chunks:
-                logger.warning("⚠️ No chunks to insert")
+                logger.warning("No chunks to insert")
                 return False
 
             # Prepare text contents
@@ -90,7 +89,7 @@ class QdrantOperations:
                 with self.tfidf_lock:  # Thread-safe training
                     # Check again inside the lock to avoid race condition
                     if not hasattr(self.sparse_encoder.vectorizer, "vocabulary_"):
-                        print("⚡ Training TF-IDF (insert.py auto-train) on current chunks...")
+                        logger.info("Training TF-IDF (insert.py auto-train) on current chunks...")
                         self.sparse_encoder.fit(texts, save_path="tfidf_vectorizer.pkl")
 
             sparse_vectors = self.sparse_encoder.encode(texts)
@@ -137,23 +136,23 @@ class QdrantOperations:
                 points.append(point)
 
             if not points:
-                logger.warning("⚠️ No valid points to insert")
+                logger.warning("No valid points to insert")
                 return False
 
             # Insert points
-            logger.info(f"🚀 Inserting {len(points)} points into Qdrant...")
+            logger.storage_start("chunk insertion", f"count: {len(points)}")
             operation_info = self.client.upsert(
                 collection_name=self.collection_name,
                 points=points,
                 wait=True
             )
 
-            logger.info(f"✅ Successfully inserted {len(points)} chunks into Qdrant")
-            logger.info(f"📊 Operation status: {operation_info.status}")
+            logger.storage_success("chunk insertion", len(points))
+            logger.info(f"Operation status: {operation_info.status}")
             return True
 
         except Exception as e:
-            logger.error(f"❌ Failed to insert chunks into Qdrant: {str(e)}")
+            logger.storage_error("chunk insertion", str(e))
             import traceback
             traceback.print_exc()
             return False
