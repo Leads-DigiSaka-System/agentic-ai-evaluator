@@ -337,23 +337,8 @@ INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
 
-### Method 2: Activate Virtual Environment Manually
 
-If you prefer to work within an activated environment:
-
-**On Windows:**
-```bash
-.venv\Scripts\activate
-python main.py
-```
-
-**On macOS / Linux:**
-```bash
-source .venv/bin/activate
-python main.py
-```
-
-### Method 3: Run with Uvicorn Directly (Production Mode)
+### Method 2: Run with Uvicorn Directly (Production Mode)
 
 For production or if you need more control:
 
