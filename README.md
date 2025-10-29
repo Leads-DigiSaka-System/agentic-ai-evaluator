@@ -145,7 +145,7 @@ Qdrant is the vector database that stores embeddings for the application. We'll 
 This is the easiest method - it handles everything automatically:
 
 ```bash
-docker compose -f docker-compose.qdrant.yml up -d
+docker compose -f docker/docker-compose.qdrant.yml up -d
 ```
 
 **What this does:**
@@ -162,7 +162,7 @@ If you want to use the custom Dockerfile with additional healthchecks:
 **1. Build the custom image:**
 
 ```bash
-docker build -f Dockerfile.qdrant -t qdrant-custom:latest .
+docker build -f docker/Dockerfile.qdrant -t qdrant-custom:latest .
 ```
 
 **2. Run the custom image:**
@@ -205,7 +205,7 @@ If you want to see what's happening:
 
 ```bash
 # For docker compose
-docker compose -f docker-compose.qdrant.yml logs -f
+docker compose -f docker/docker-compose.qdrant.yml logs -f
 
 # For direct docker run
 docker logs -f qdrant
@@ -526,8 +526,9 @@ agentic-ai-evaluator/
 ├── main.py              # Application entry point
 ├── pyproject.toml       # Project configuration
 ├── uv.lock              # Locked dependencies
-├── Dockerfile.qdrant    # Qdrant Dockerfile
-├── docker-compose.qdrant.yml  # Docker Compose for Qdrant
+├── docker/
+│   ├── Dockerfile.qdrant    # Qdrant Dockerfile
+│   └── docker-compose.qdrant.yml  # Docker Compose for Qdrant
 └── requirements.txt     # Alternative requirements (for compatibility)
 ```
 
@@ -554,16 +555,16 @@ uv run <command>
 **Docker Commands:**
 ```bash
 # Start Qdrant
-docker compose -f docker-compose.qdrant.yml up -d
+docker compose -f docker/docker-compose.qdrant.yml up -d
 
 # Stop Qdrant
-docker compose -f docker-compose.qdrant.yml down
+docker compose -f docker/docker-compose.qdrant.yml down
 
 # View logs
-docker compose -f docker-compose.qdrant.yml logs -f
+docker compose -f docker/docker-compose.qdrant.yml logs -f
 
 # Remove container and data
-docker compose -f docker-compose.qdrant.yml down -v
+docker compose -f docker/docker-compose.qdrant.yml down -v
 ```
 
 ---
