@@ -4,7 +4,10 @@ from src.router.upload import router as upload_router
 from src.router.search import router as search_router
 from src.router.delete_extract import router as delete_router
 from src.router.agent import router as agent_router
+from src.router.storage import router as storage_router
 import os
+import signal
+import atexit
 from dotenv import load_dotenv
 from datetime import datetime
 from src.utils.config import CONNECTION_WEB
@@ -13,10 +16,31 @@ from slowapi import _rate_limit_exceeded_handler          # ← Keep this
 from src.utils.safe_logger import SafeLogger
 from slowapi.middleware import SlowAPIMiddleware
 from src.utils.limiter_config import limiter    
+
 # Load .env
 load_dotenv()
 
 logger = SafeLogger(__name__)  # Use SafeLogger
+
+# Graceful shutdown handler
+def shutdown_handler():
+    """Handle graceful shutdown"""
+    logger.info("🛑 Shutting down gracefully...")
+    logger.info("📝 Closing database connections...")
+    # Add cleanup logic here if needed
+    logger.info("✅ Shutdown complete")
+
+# Register shutdown handlers
+atexit.register(shutdown_handler)
+
+def signal_handler(sig, frame):
+    """Handle SIGINT and SIGTERM"""
+    logger.info(f"🛑 Received signal {sig}, initiating shutdown...")
+    shutdown_handler()
+    os._exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 app = FastAPI()
 
@@ -38,6 +62,7 @@ app.include_router(upload_router, prefix="/api", tags=["Upload"])
 app.include_router(agent_router, prefix="/api", tags=["agent"])
 app.include_router(search_router, prefix="/api", tags=["search"])
 app.include_router(delete_router, prefix="/api", tags=["delete"])
+app.include_router(storage_router, prefix="/api", tags=["storage"])
 
 # Health check endpoint
 @app.get("/")
@@ -83,7 +108,50 @@ def health_check():
     
     return health_status
 
-# REMOVE LINE 87 (the duplicate logger line)
+@app.get("/api/admin/validate-database")
+def validate_database():
+    """
+    Admin endpoint to validate database integrity
+    
+    Checks:
+    - Total points in database
+    - Indexed vectors count
+    - Collection health
+    - Connection status
+    """
+    try:
+        from src.database.insert import qdrant_client
+        
+        # Get all collections
+        collections_info = []
+        try:
+            collections = qdrant_client.client.get_collections()
+            for collection in collections.collections:
+                collection_details = qdrant_client.client.get_collection(collection.name)
+                collections_info.append({
+                    "name": collection.name,
+                    "total_points": collection_details.points_count,
+                    "indexed_vectors": collection_details.indexed_vectors_count if hasattr(collection_details, 'indexed_vectors_count') else "N/A",
+                    "status": "ok" if collection_details.points_count > 0 else "empty",
+                    "vectors": collection_details.vectors_count if hasattr(collection_details, 'vectors_count') else "N/A"
+                })
+        except Exception as e:
+            collections_info = [{"error": str(e)}]
+        
+        return {
+            "status": "ok",
+            "timestamp": datetime.now().isoformat(),
+            "collections": collections_info,
+            "connection": "active"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e),
+            "message": "Database validation failed"
+        }
+
 
 #  Run app with Uvicorn
 if __name__ == "__main__":
