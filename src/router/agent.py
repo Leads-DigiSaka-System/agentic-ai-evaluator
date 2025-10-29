@@ -2,8 +2,16 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from src.Upload.multiple_handler import MultiReportHandler
 from src.utils import constants
 from src.utils.limiter_config import limiter
+from src.utils.errors import ProcessingError, ValidationError
+from src.utils.file_validator import validate_and_raise, FileValidator
+from src.services.cache_service import agent_cache
+from src.formatter.json_helper import validate_and_clean_agent_response
+import asyncio
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from src.utils.safe_logger import SafeLogger
 
 router = APIRouter()
+logger = SafeLogger(__name__)
 
 
 @router.post("/agent")
@@ -16,38 +24,69 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
     - PDF files (single or multi-report)
     - Image files (PNG, JPG, JPEG)
     
-    Note: Rate limiting is handled by middleware in main.py
+    Security Features:
+    - File validation (type, size, filename security)
+    - Request timeout protection
+    - Rate limiting (10 requests/minute)
+    - Comprehensive error handling
     """
     try:
-        # Validate file type
-        allowed_extensions = constants.ALLOWED_EXTENSIONS
-        file_ext = '.' + file.filename.lower().split('.')[-1] if '.' in file.filename else ''
-        
-        if file_ext not in allowed_extensions:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Unsupported file type: {file_ext}. Supported formats: {constants.ALLOWED_EXTENSIONS}"
-            )
-        
         # Read file content
         content = await file.read()
         
-        if len(content) == 0:
-            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        # Comprehensive file validation
+        validate_and_raise(file.filename, content, field_name="file")
         
-        # Validate file size
-        if len(content) > constants.MAX_FILE_SIZE_BYTES:
-            size_mb = len(content) / (1024 * 1024)
-            raise HTTPException(
-                status_code=400, 
-                detail=f"File too large ({size_mb:.2f}MB). Maximum size: {constants.MAX_FILE_SIZE_MB}MB"
+        logger.info(f"Processing file: {file.filename[:50]}, size: {len(content)} bytes")
+        
+        # Process with timeout protection
+        try:
+            result = await asyncio.wait_for(
+                MultiReportHandler.process_multi_report_pdf(content, file.filename),
+                timeout=constants.REQUEST_TIMEOUT_SECONDS
+            )
+            
+            logger.info(f"Successfully processed file: {file.filename[:50]}")
+            
+            # Validate and clean the response structure
+            try:
+                cleaned_result = validate_and_clean_agent_response(result)
+                logger.info("🧹 Agent response validated and cleaned")
+                result = cleaned_result
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to clean agent response: {str(e)}")
+                # Continue with original result if cleaning fails
+            
+            # Automatically cache the result for storage
+            try:
+                cache_id = agent_cache.save_agent_output(result)
+                logger.info(f"📦 Agent output cached with ID: {cache_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to cache agent output: {str(e)}")
+                # Don't fail the request if caching fails
+            
+            return result
+            
+        except FutureTimeoutError:
+            raise ProcessingError(
+                detail="File processing timed out",
+                step="workflow_execution",
+                file_name=file.filename[:50],
+                timeout_seconds=constants.REQUEST_TIMEOUT_SECONDS
             )
         
-        # Process the file
-        result = await MultiReportHandler.process_multi_report_pdf(content, file.filename)
-        return result
-
+    except (ValidationError, ProcessingError):
+        # Re-raise custom errors as-is
+        raise
     except HTTPException:
+        # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+        # Catch unexpected errors and provide context
+        logger.error(f"Unexpected error processing file: {str(e)[:100]}")
+        raise ProcessingError(
+            detail=f"Unexpected error during file processing",
+            step="file_upload",
+            file_name=file.filename[:50] if file.filename else "unknown",
+            error=str(e)[:200]
+        )

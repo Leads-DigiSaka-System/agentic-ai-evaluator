@@ -1,0 +1,215 @@
+from fastapi import APIRouter, Request
+from pydantic import BaseModel, Field
+from typing import Dict, Any, List
+from src.services.storage_service import storage_service
+from src.services.cache_service import agent_cache
+from src.utils.limiter_config import limiter
+from src.utils.errors import ProcessingError, ValidationError
+from src.utils.safe_logger import SafeLogger
+from datetime import datetime
+
+router = APIRouter()
+logger = SafeLogger(__name__)
+
+
+class SimpleStorageApprovalRequest(BaseModel):
+    """Simplified request model for storage approval using cache"""
+    cache_id: str = Field(..., description="Cache ID from agent response")
+    approved: bool = Field(..., description="User approval for storage")
+
+
+@router.post("/storage/approve-simple")
+@limiter.limit("10/minute")
+async def approve_storage_simple(request: Request, approval_request: SimpleStorageApprovalRequest):
+    """
+    Simplified storage approval using cached agent output
+    
+    This endpoint automatically retrieves cached agent output and stores it.
+    Frontend only needs to provide cache_id and approval decision.
+    
+    Args:
+        cache_id: Cache ID from agent response
+        approved: True to store, False to reject storage
+        
+    Returns:
+        Storage results with success/failure status
+    """
+    try:
+        logger.info(f"Processing simple storage approval for cache: {approval_request.cache_id[:8]}...")
+        logger.info(f"User approval: {approval_request.approved}")
+        
+        # Get cached agent output
+        cached_output = agent_cache.get_cached_output(approval_request.cache_id)
+        
+        if not cached_output:
+            raise ProcessingError(
+                detail="Cached agent output not found or expired",
+                step="cache_retrieval",
+                file_name="cached_output"
+            )
+        
+        # Check if storage is ready
+        reports = cached_output.get("reports", [])
+        if not reports:
+            raise ProcessingError(
+                detail="No reports found in cached output",
+                step="cache_validation",
+                file_name="cached_output"
+            )
+        
+        first_report = reports[0]
+        storage_status = first_report.get("storage_status")
+        
+        if storage_status != "ready_for_approval":
+            raise ProcessingError(
+                detail=f"Storage not ready: {storage_status}",
+                step="storage_validation",
+                file_name=first_report.get("file_name", "unknown")
+            )
+        
+        # Handle rejection
+        if not approval_request.approved:
+            logger.info(f"Storage rejected by user for cache: {approval_request.cache_id[:8]}...")
+            
+            # Clean up cache
+            agent_cache.delete_cache(approval_request.cache_id)
+            
+            return {
+                "status": "rejected",
+                "message": "Storage rejected by user",
+                "cache_id": approval_request.cache_id,
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        # Process storage for single or multiple reports
+        if len(reports) == 1:
+            # Single report
+            result = await _process_single_report_storage(first_report)
+        else:
+            # Multiple reports - use batch storage
+            result = await _process_multiple_reports_storage(reports)
+        
+        # Clean up cache after successful storage
+        if result.get("status") == "success":
+            agent_cache.delete_cache(approval_request.cache_id)
+            logger.info(f"✅ Cache cleaned up after successful storage: {approval_request.cache_id[:8]}...")
+        
+        return result
+        
+    except (ValidationError, ProcessingError):
+        # Re-raise custom errors as-is
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during simple storage approval: {str(e)[:100]}")
+        raise ProcessingError(
+            detail="Unexpected error during simple storage approval",
+            step="simple_storage_approval",
+            error=str(e)[:200]
+        )
+
+
+async def _process_single_report_storage(report_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Process storage for single report"""
+    try:
+        # Convert to state format
+        state_data = {
+            "file_name": report_data["file_name"],
+            "form_type": report_data.get("form_type"),
+            "analysis_result": report_data.get("analysis", {}),
+            "graph_suggestions": report_data.get("graph_suggestions", {}),
+            "extracted_markdown": report_data.get("extracted_content", ""),
+            "chunks": report_data.get("chunks", []),
+            "errors": report_data.get("errors", []),
+            "file_validation": report_data.get("validation", {}).get("file_validation"),
+            "is_valid_content": report_data.get("validation", {}).get("content_validation", {}).get("is_valid_demo", False),
+            "content_validation": report_data.get("validation", {}).get("content_validation"),
+            "current_step": "simple_storage_approval"
+        }
+        
+        # Prepare and store
+        storage_data = storage_service.prepare_storage_data(state_data)
+        storage_result = storage_service.store_all(storage_data)
+        
+        if storage_result["success"]:
+            logger.info(f"✅ Single report storage successful: {report_data['file_name'][:50]}")
+        else:
+            logger.error(f"❌ Single report storage failed: {report_data['file_name'][:50]}")
+        
+        return {
+            "status": "success" if storage_result["success"] else "failed",
+            "storage_result": storage_result,
+            "message": "Storage completed successfully" if storage_result["success"] else "Storage failed"
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Single report storage processing failed: {str(e)}")
+        return {
+            "status": "failed",
+            "message": f"Storage processing failed: {str(e)}"
+        }
+
+
+async def _process_multiple_reports_storage(reports: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Process batch storage for multiple reports"""
+    try:
+        results = []
+        success_count = 0
+        
+        for i, report in enumerate(reports):
+            try:
+                # Convert to state format
+                state_data = {
+                    "file_name": report["file_name"],
+                    "form_type": report.get("form_type"),
+                    "analysis_result": report.get("analysis", {}),
+                    "graph_suggestions": report.get("graph_suggestions", {}),
+                    "extracted_markdown": report.get("extracted_content", ""),
+                    "chunks": report.get("chunks", []),
+                    "errors": report.get("errors", []),
+                    "file_validation": report.get("validation", {}).get("file_validation"),
+                    "is_valid_content": report.get("validation", {}).get("content_validation", {}).get("is_valid_demo", False),
+                    "content_validation": report.get("validation", {}).get("content_validation"),
+                    "current_step": "batch_storage_approval"
+                }
+                
+                # Prepare and store
+                storage_data = storage_service.prepare_storage_data(state_data)
+                storage_result = storage_service.store_all(storage_data)
+                
+                results.append({
+                    "index": i,
+                    "file_name": report["file_name"],
+                    "status": "success" if storage_result["success"] else "failed",
+                    "form_id": storage_result.get("form_id"),
+                    "storage_result": storage_result
+                })
+                
+                if storage_result["success"]:
+                    success_count += 1
+                    
+            except Exception as e:
+                logger.error(f"Error processing batch item {i}: {str(e)[:100]}")
+                results.append({
+                    "index": i,
+                    "file_name": report["file_name"],
+                    "status": "error",
+                    "error": str(e)[:200]
+                })
+        
+        logger.info(f"✅ Batch storage completed: {success_count}/{len(reports)} successful")
+        
+        return {
+            "status": "completed",
+            "total_items": len(reports),
+            "successful_items": success_count,
+            "failed_items": len(reports) - success_count,
+            "results": results,
+            "message": f"Batch storage completed: {success_count}/{len(reports)} successful"
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Batch storage processing failed: {str(e)}")
+        return {
+            "status": "failed",
+            "message": f"Batch storage processing failed: {str(e)}"
+        }

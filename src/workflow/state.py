@@ -118,3 +118,33 @@ class ProcessingState(TypedDict):
     Quick reference for last evaluation decision
     Useful for debugging and monitoring
     """
+    
+    # ============================================
+    # STORAGE CONTROL FLAGS
+    # ============================================
+    
+    storage_approved: Optional[bool]
+    """
+    User-controlled flag for storage approval
+    True: User approved storage, proceed with storing
+    False: User rejected storage, skip storing
+    None: No user decision yet (default)
+    """
+    
+    storage_prepared: Optional[bool]
+    """
+    Flag indicating if storage data has been prepared
+    Set to True after prepare_storage_data() is called
+    """
+    
+    storage_data: Optional[Dict[str, Any]]
+    """
+    Prepared storage data from StorageService.prepare_storage_data()
+    Contains chunks, analysis_response, metadata, etc.
+    """
+    
+    storage_preview: Optional[Dict[str, Any]]
+    """
+    Storage preview data for user review
+    Contains summary of what would be stored
+    """

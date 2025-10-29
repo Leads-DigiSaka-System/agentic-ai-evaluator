@@ -197,55 +197,6 @@ def chunking_node(state: ProcessingState) -> ProcessingState:
         state["errors"].append(f"Chunking failed: {str(e)}")
         return state
 
-def storage_node(state: ProcessingState) -> ProcessingState:
-    """Node 4: Prepare and store data in vector database"""
-    try:
-        state["current_step"] = "storage"
-        
-        if not state.get("chunks"):
-            state["errors"].append("No chunks available for storage")
-            return state
-        
-        # Generate unique IDs and timestamps
-        state["form_id"] = str(uuid.uuid4())
-        state["insertion_date"] = datetime.now().isoformat()
-        
-        # Enhanced metadata with analysis results - FIXED nested access
-        analysis_data = state.get("analysis_result", {})
-        basic_info = analysis_data.get("basic_info", {})
-        efficacy_analysis = analysis_data.get("efficacy_analysis", {})
-        averages = efficacy_analysis.get("averages", {})
-        
-        metadata = {
-            "form_id": state["form_id"],
-            "form_title": state["file_name"],
-            "form_type": state.get("form_type", "unknown"),
-            "date_of_insertion": state["insertion_date"],
-            "analysis_status": analysis_data.get("status", "unknown"),
-            "cooperator": basic_info.get("cooperator", ""),
-            "product": basic_info.get("product", ""),
-            "location": basic_info.get("location", ""),
-            "improvement_percent": averages.get("improvement_percent", 0)
-        }
-        
-        # Attach metadata to chunks
-        for chunk in state["chunks"]:
-            chunk["metadata"] = metadata.copy()
-        
-        # Insert into Qdrant
-        insert_success = qdrant_client.insert_chunks(state["chunks"])
-        if insert_success:
-            print("✅ Successfully stored in vector database")
-            print(f"🆔 Form ID: {state['form_id']}")
-        else:
-            state["errors"].append("Failed to store chunks in database")
-        
-        return state
-        
-    except Exception as e:
-        state["errors"].append(f"Storage failed: {str(e)}")
-        return state
-
 def error_node(state: ProcessingState) -> ProcessingState:
     """Node 5: Handle errors"""
     if state["errors"]:

@@ -1,6 +1,6 @@
 from langgraph.graph import StateGraph, END
 from src.workflow.state import ProcessingState
-from src.workflow.nodes.nodes import extraction_node, analysis_node, chunking_node, storage_node, error_node
+from src.workflow.nodes.nodes import extraction_node, analysis_node, chunking_node, error_node
 from src.workflow.nodes.graph_suggestion_node import graph_suggestion_node
 from src.workflow.nodes.evaluation_node import evaluation_node
 from src.workflow.nodes.validation_node import content_validation_node
@@ -20,11 +20,11 @@ def create_advanced_processing_workflow():
     5. Suggest Graphs (existing)
     6. Evaluate Graphs (existing)
     7. Chunk (existing)
-    8. Store (existing)
+    8. END (storage handled separately via API endpoint)
     """
     workflow = StateGraph(ProcessingState)
     
-    # Add all nodes
+    # Add all nodes (storage removed - handled separately)
     workflow.add_node("extract", extraction_node)
     workflow.add_node("validate_content", content_validation_node)  # NEW
     workflow.add_node("analyze", analysis_node)
@@ -32,7 +32,6 @@ def create_advanced_processing_workflow():
     workflow.add_node("suggest_graphs", graph_suggestion_node)
     workflow.add_node("evaluate_graphs", evaluation_node)
     workflow.add_node("chunk", chunking_node)
-    workflow.add_node("store", storage_node)
     workflow.add_node("handle_errors", error_node)
     
     # Set entry point
@@ -159,21 +158,12 @@ def create_advanced_processing_workflow():
         return "chunk"
     
     def route_after_chunk(state: ProcessingState) -> str:
-        """After chunking, always proceed to storage"""
+        """After chunking, workflow ends - storage handled separately"""
         if not state.get("chunks"):
             print("❌ Chunking produced no chunks")
             return "handle_errors"
-        print(f"✅ Chunk ({len(state.get('chunks', []))} chunks) → Store")
-        return "store"
-    
-    def route_after_store(state: ProcessingState) -> str:
-        """After storage, check success then END"""
-        if state.get("form_id"):
-            print("✅ Storage successful → END")
-            return END
-        else:
-            print("❌ Storage failed")
-            return "handle_errors"
+        print(f"✅ Chunk ({len(state.get('chunks', []))} chunks) → END (storage via API)")
+        return END
     
     # ============================================
     # WORKFLOW EDGES - Updated with Validation
@@ -241,20 +231,10 @@ def create_advanced_processing_workflow():
         }
     )
     
-    # Chunk → Store
+    # Chunk → END (storage handled separately)
     workflow.add_conditional_edges(
         "chunk",
         route_after_chunk,
-        {
-            "store": "store",
-            "handle_errors": "handle_errors"
-        }
-    )
-    
-    # Store → END
-    workflow.add_conditional_edges(
-        "store",
-        route_after_store,
         {
             END: END,
             "handle_errors": "handle_errors"

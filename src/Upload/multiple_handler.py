@@ -104,10 +104,9 @@ class MultiReportHandler:
                 "cross_report_analysis": {"cross_report_suggestions": []}
             }
             
-            # Store analysis results
-            storage_success = analysis_storage.insert_multi_report_response(result)
-            result["analysis_storage_status"] = "success" if storage_success else "failed"
-            print(f"📊 Analysis storage: {result['analysis_storage_status']}")
+            # Analysis storage is now handled separately via API endpoint
+            result["analysis_storage_status"] = "ready_for_approval"
+            print("📦 Analysis storage ready for user approval via /api/storage/approve")
             
             return result
         
@@ -130,10 +129,9 @@ class MultiReportHandler:
             "cross_report_analysis": cross_report_suggestions
         }
         
-        # Store analysis results
-        storage_success = analysis_storage.insert_multi_report_response(result)
-        result["analysis_storage_status"] = "success" if storage_success else "failed"
-        print(f"📊 Analysis storage: {result['analysis_storage_status']}")
+        # Analysis storage is now handled separately via API endpoint
+        result["analysis_storage_status"] = "ready_for_approval"
+        print("📦 Analysis storage ready for user approval via /api/storage/approve")
         
         return result
 
@@ -177,19 +175,21 @@ class MultiReportHandler:
             # Execute the workflow (now includes validation)
             final_state = processing_workflow.invoke(initial_state)
 
-            # Build response with validation info
+            # Build response with validation info (storage data prepared but not stored)
             report_response = {
                 "report_number": 1,
                 "file_name": original_filename,
-                "form_id": final_state.get("form_id", ""),
+                "form_id": "",  # Will be generated during storage approval
                 "form_type": final_state.get("form_type", ""),
                 "extracted_content": final_state.get("extracted_markdown", ""),
                 "analysis": final_state.get("analysis_result", {}),
                 "graph_suggestions": final_state.get("graph_suggestions", {}),
+                "chunks": final_state.get("chunks", []),  # Include chunks for storage
                 "processing_metrics": {
                     "chunk_count": len(final_state.get("chunks", [])),
                     "processing_steps": final_state.get("current_step", ""),
-                    "insertion_date": final_state.get("insertion_date", "")
+                    "workflow_completed": True,
+                    "storage_ready": True
                 },
                 "errors": final_state.get("errors", []),
                 
@@ -197,7 +197,11 @@ class MultiReportHandler:
                 "validation": {
                     "file_validation": final_state.get("file_validation"),
                     "content_validation": final_state.get("content_validation")
-                }
+                },
+                
+                # NEW: Storage control info
+                "storage_status": "ready_for_approval",
+                "storage_message": "Analysis completed. Use /api/storage/preview to review and /api/storage/approve to store."
             }
 
             if final_state["errors"]:
@@ -205,6 +209,7 @@ class MultiReportHandler:
             else:
                 chart_count = len(final_state.get("graph_suggestions", {}).get("suggested_charts", []))
                 print(f"✅ Single report processed successfully with {chart_count} chart suggestions")
+                print("📦 Storage data prepared - ready for user approval")
 
             return report_response
 
@@ -222,7 +227,9 @@ class MultiReportHandler:
                 "graph_suggestions": {},
                 "processing_metrics": {},
                 "errors": [f"Single report processing failed: {str(e)}"],
-                "validation": {"file_validation": None, "content_validation": None}
+                "validation": {"file_validation": None, "content_validation": None},
+                "storage_status": "failed",
+                "storage_message": "Processing failed - cannot store"
             }
 
     @staticmethod
@@ -294,24 +301,28 @@ class MultiReportHandler:
             # Execute the workflow
             final_state = processing_workflow.invoke(initial_state)
 
-            # Build response
+            # Build response (storage data prepared but not stored)
             report_response = {
                 "report_number": report_index + 1,
                 "file_name": original_filename,
-                "form_id": final_state.get("form_id", ""),
+                "form_id": "",  # Will be generated during storage approval
                 "form_type": final_state.get("form_type", ""),
                 "extracted_content": final_state.get("extracted_markdown", ""),
                 "analysis": final_state.get("analysis_result", {}),
                 "graph_suggestions": final_state.get("graph_suggestions", {}),
+                "chunks": final_state.get("chunks", []),  # Include chunks for storage
                 "processing_metrics": {
                     "chunk_count": len(final_state.get("chunks", [])),
                     "processing_steps": final_state.get("current_step", ""),
-                    "insertion_date": final_state.get("insertion_date", "")
+                    "workflow_completed": True,
+                    "storage_ready": True
                 },
                 "errors": final_state.get("errors", []),
                 "validation": {
                     "content_validation": final_state.get("content_validation")
-                }
+                },
+                "storage_status": "ready_for_approval",
+                "storage_message": "Analysis completed. Use /api/storage/preview to review and /api/storage/approve to store."
             }
 
             if final_state["errors"]:
@@ -319,6 +330,7 @@ class MultiReportHandler:
             else:
                 chart_count = len(final_state.get("graph_suggestions", {}).get("suggested_charts", []))
                 print(f"✅ Report {report_index + 1} processed successfully with {chart_count} chart suggestions")
+                print("📦 Storage data prepared - ready for user approval")
 
             return report_response
 
@@ -336,7 +348,9 @@ class MultiReportHandler:
                 "graph_suggestions": {},
                 "processing_metrics": {},
                 "errors": [f"Report processing failed: {str(e)}"],
-                "validation": {"content_validation": None}
+                "validation": {"content_validation": None},
+                "storage_status": "failed",
+                "storage_message": "Processing failed - cannot store"
             }
 
     @staticmethod

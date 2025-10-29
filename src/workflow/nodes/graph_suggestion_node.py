@@ -1,6 +1,7 @@
 from src.prompt.graph_suggestion_template import graph_suggestion_prompt
 from src.utils.llm_helper import invoke_llm
 from src.workflow.state import ProcessingState
+from src.formatter.json_helper import clean_json_from_llm_response
 import json
 
 def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
@@ -20,7 +21,15 @@ def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
         prompt_template = graph_suggestion_prompt()
         prompt = prompt_template.format(analysis_data=json.dumps(analysis_data, indent=2))
         
-        suggestions = invoke_llm(prompt, as_json=True)
+        # Get LLM response
+        llm_response = invoke_llm(prompt, as_json=False)
+        
+        # Use centralized JSON cleaning function
+        suggestions = clean_json_from_llm_response(llm_response)
+        
+        if not suggestions:
+            print("⚠️ Failed to parse JSON from LLM response")
+            raise ValueError("Could not parse JSON from LLM response")
         
         if suggestions and "suggested_charts" in suggestions:
             state["graph_suggestions"] = suggestions
@@ -38,10 +47,12 @@ def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
         return state
         
     except Exception as e:
+        print(f"❌ Graph suggestion error: {str(e)}")
         state["errors"].append(f"Graph suggestion failed: {str(e)}")
         # Fallback to ensure we always have some charts
         state["graph_suggestions"] = _generate_fallback_charts(state.get("analysis_result", {}))
         return state
+
 
 def _generate_fallback_charts(analysis_data: dict) -> dict:
     """Generate basic fallback charts if LLM fails"""
