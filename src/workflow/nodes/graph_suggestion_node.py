@@ -25,15 +25,27 @@ def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
         prompt_template = graph_suggestion_prompt()
         prompt = prompt_template.format(analysis_data=json.dumps(analysis_data, indent=2))
         
-        # Get LLM response
+        # Get LLM response (prefer structured JSON)
         logger.llm_request("gemini", "graph_suggestion")
-        llm_response = invoke_llm(prompt, as_json=False)
+        suggestions = invoke_llm(prompt, as_json=True)
         
-        # Use centralized JSON cleaning function
-        suggestions = clean_json_from_llm_response(llm_response)
+        # Handle list return or None
+        if isinstance(suggestions, list):
+            suggestions = suggestions[0] if suggestions else None
+        if not isinstance(suggestions, dict) or not suggestions:
+            # Fallback: use centralized JSON cleaning function from raw response
+            raw_response = invoke_llm(prompt, as_json=False)
+            suggestions = clean_json_from_llm_response(raw_response)
         
         if not suggestions:
-            logger.graph_error("Failed to parse JSON from LLM response")
+            # One retry with stricter instruction
+            retry_prompt = prompt + "\n\nReturn ONLY valid JSON that matches the required structure. No markdown, no code fences."
+            logger.llm_request("gemini", "graph_suggestion_retry")
+            retry_raw = invoke_llm(retry_prompt, as_json=False)
+            suggestions = clean_json_from_llm_response(retry_raw)
+        
+        if not suggestions:
+            logger.graph_error("Failed to parse JSON from LLM response (after retry)")
             raise ValueError("Could not parse JSON from LLM response")
         
         if suggestions and "suggested_charts" in suggestions:
