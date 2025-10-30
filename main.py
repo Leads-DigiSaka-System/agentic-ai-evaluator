@@ -1,10 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from src.router.upload import router as upload_router 
 from src.router.search import router as search_router
 #from src.router.delete_extract import router as delete_router
 from src.router.agent import router as agent_router
 from src.router.storage import router as storage_router
+from src.deps.security import require_api_key
 import os
 import signal
 import atexit
@@ -61,11 +62,12 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(upload_router, prefix="/api", tags=["Upload"])
-app.include_router(agent_router, prefix="/api", tags=["agent"])
-app.include_router(search_router, prefix="/api", tags=["search"])
-#app.include_router(delete_router, prefix="/api", tags=["delete"])
-app.include_router(storage_router, prefix="/api", tags=["storage"])
+# Secure all API routes with API key. Health and admin validate can remain open if desired.
+app.include_router(upload_router, prefix="/api", tags=["Upload"], dependencies=[Depends(require_api_key)])
+app.include_router(agent_router, prefix="/api", tags=["agent"], dependencies=[Depends(require_api_key)])
+app.include_router(search_router, prefix="/api", tags=["search"], dependencies=[Depends(require_api_key)])
+#app.include_router(delete_router, prefix="/api", tags=["delete"], dependencies=[Depends(require_api_key)])
+app.include_router(storage_router, prefix="/api", tags=["storage"], dependencies=[Depends(require_api_key)])
 
 # Health check endpoint
 @app.get("/")
