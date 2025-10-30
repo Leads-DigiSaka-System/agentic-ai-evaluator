@@ -16,21 +16,39 @@ def clean_json_from_llm_response(response: Any) -> Optional[dict]:
     """
     response_text = response.content if hasattr(response, "content") else str(response)
 
-    # Extract JSON inside markdown backticks
-    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response_text, re.DOTALL)
-    if not match:
-        logger.warning("No valid JSON found in LLM response")
-        logger.debug(f"Response text: {response_text[:200]}...")
-        return None
+    # 1) Direct parse if response is raw JSON (object or array)
+    raw = response_text.strip()
+    if (raw.startswith('{') and raw.endswith('}')) or (raw.startswith('[') and raw.endswith(']')):
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else (parsed[0] if parsed and isinstance(parsed, list) else None)
+        except json.JSONDecodeError:
+            pass
 
-    cleaned_json = match.group(1)
+    # 2) Extract JSON inside markdown backticks (object or array)
+    fenced = re.search(r"```(?:json)?\s*([\[{].*?[\]}])\s*```", response_text, re.DOTALL)
+    if fenced:
+        candidate = fenced.group(1)
+        try:
+            parsed = json.loads(candidate)
+            return parsed if isinstance(parsed, dict) else (parsed[0] if parsed and isinstance(parsed, list) else None)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to decode fenced JSON: {str(e)}")
+            logger.debug(f"Fenced JSON: {candidate[:200]}...")
 
-    try:
-        return json.loads(cleaned_json)
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to decode cleaned JSON: {str(e)}")
-        logger.debug(f"Cleaned JSON: {cleaned_json[:200]}...")
-        return None
+    # 3) Fallback: find first JSON object heuristically
+    obj_match = re.search(r"\{[\s\S]*\}", response_text)
+    if obj_match:
+        candidate = obj_match.group(0)
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to decode heuristic JSON object: {str(e)}")
+            logger.debug(f"Heuristic JSON: {candidate[:200]}...")
+
+    logger.warning("No valid JSON found in LLM response after cleanup attempts")
+    logger.debug(f"Response text: {response_text[:300]}...")
+    return None
 
 
 def normalize_analysis_response(response_data: Dict[str, Any]) -> Dict[str, Any]:

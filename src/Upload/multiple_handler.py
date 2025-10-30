@@ -265,7 +265,7 @@ class MultiReportHandler:
                 return reports
 
         # If all else fails, treat as single report
-            logger.info("No clear report separators found, treating as SINGLE REPORT")
+        logger.info("No clear report separators found, treating as SINGLE REPORT")
         return [markdown_content]
 
     @staticmethod
@@ -383,11 +383,19 @@ class MultiReportHandler:
                 perf_analysis = analysis.get("performance_analysis", {})
                 calculated = perf_analysis.get("calculated_metrics", {})
                 
+                # Prefer 'relative_improvement_percent' (current schema), fallback to 'improvement_percent'
+                relative_improvement = calculated.get("relative_improvement_percent")
+                improvement_percent = (
+                    relative_improvement
+                    if isinstance(relative_improvement, (int, float))
+                    else calculated.get("improvement_percent", 0)
+                )
+
                 performance_data.append({
                     "report_number": report.get("report_number"),
                     "product": basic_info.get("product", "Unknown Product"),
                     "location": basic_info.get("location", "Unknown Location"),
-                    "improvement_percent": calculated.get("improvement_percent", 0),
+                    "improvement_percent": improvement_percent,
                     "control_average": calculated.get("control_average", 0),
                     "leads_average": calculated.get("leads_average", 0),
                     "form_type": report.get("form_type", "unknown")

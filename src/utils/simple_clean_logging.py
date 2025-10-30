@@ -6,7 +6,9 @@ This replaces emoji-heavy logging with clean, colored logging using coloredlogs 
 
 import logging
 import coloredlogs
-from typing import Optional
+from typing import Optional, Dict, Any, List
+import traceback
+import json
 
 def setup_clean_logging(level: str = "INFO", format_string: Optional[str] = None):
     """
@@ -61,6 +63,29 @@ def get_clean_logger(name: str) -> logging.Logger:
         Configured logger instance
     """
     return logging.getLogger(name)
+
+
+def log_exception(logger: logging.Logger, stage: str, error: Exception, context: Optional[Dict[str, Any]] = None, hints: Optional[List[str]] = None):
+    """Emit a structured exception log with full traceback, context, and hints.
+    This is a lightweight alternative for codepaths not using CleanLogger.
+    """
+    error_type = type(error).__name__
+    trace = ''.join(traceback.format_exception(type(error), error, error.__traceback__))
+    safe_context = context or {}
+    safe_hints = hints or []
+    try:
+        context_str = json.dumps(safe_context, ensure_ascii=False)
+    except Exception:
+        context_str = str(safe_context)
+    try:
+        hints_str = json.dumps(safe_hints, ensure_ascii=False)
+    except Exception:
+        hints_str = str(safe_hints)
+    message = (
+        f"Stage: {stage} | ErrorType: {error_type} | Message: {str(error)}\n"
+        f"Context: {context_str}\nHints: {hints_str}\nTRACEBACK:\n{trace}"
+    )
+    logger.error(message)
 
 
 # Example usage and migration guide

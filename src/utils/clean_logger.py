@@ -1,6 +1,8 @@
 from src.utils.safe_logger import SafeLogger
-from typing import Optional, Any
+from typing import Optional, Any, Dict, List
 import sys
+import traceback
+import json
 
 class CleanLogger:
     """
@@ -14,6 +16,25 @@ class CleanLogger:
     def _format_message(self, tag: str, message: str) -> str:
         """Format message with clean tag"""
         return f"[{tag}] {message}"
+    
+    def _format_exception(self, stage: str, error: Exception, context: Optional[Dict[str, Any]] = None, hints: Optional[List[str]] = None) -> str:
+        """Create a structured exception message with stage, type, message, context, hints, and full traceback."""
+        error_type = type(error).__name__
+        trace = ''.join(traceback.format_exception(type(error), error, error.__traceback__))
+        safe_context = context or {}
+        safe_hints = hints or []
+        try:
+            context_str = json.dumps(safe_context, ensure_ascii=False)
+        except Exception:
+            context_str = str(safe_context)
+        try:
+            hints_str = json.dumps(safe_hints, ensure_ascii=False)
+        except Exception:
+            hints_str = str(safe_hints)
+        return (
+            f"Stage: {stage} | ErrorType: {error_type} | Message: {str(error)}\n"
+            f"Context: {context_str}\nHints: {hints_str}\nTRACEBACK:\n{trace}"
+        )
     
     # Workflow Tags
     def workflow_start(self, step: str, details: str = ""):
@@ -74,6 +95,11 @@ class CleanLogger:
         """Log processing error"""
         msg = f"Failed {process} - {error}"
         self.logger.error(self._format_message("PROCESSING", msg))
+    
+    def processing_exception(self, process: str, stage: str, error: Exception, context: Optional[Dict[str, Any]] = None, hints: Optional[List[str]] = None):
+        """Log processing exception with full traceback and context."""
+        details = self._format_exception(stage=stage, error=error, context=context, hints=hints)
+        self.logger.error(self._format_message("PROCESSING", details))
     
     # Data Tags
     def data_extracted(self, data_type: str, count: int, details: str = ""):
@@ -187,6 +213,11 @@ class CleanLogger:
         msg = f"{analysis_type} analysis failed - {error}"
         self.logger.error(self._format_message("ANALYSIS", msg))
     
+    def analysis_exception(self, analysis_type: str, stage: str, error: Exception, context: Optional[Dict[str, Any]] = None, hints: Optional[List[str]] = None):
+        """Log analysis exception with full traceback and context."""
+        details = self._format_exception(stage=stage, error=error, context=context, hints=hints)
+        self.logger.error(self._format_message("ANALYSIS", details))
+    
     # Graph Tags
     def graph_generation(self, chart_count: int, chart_types: list):
         """Log graph generation"""
@@ -197,6 +228,11 @@ class CleanLogger:
         """Log graph error"""
         msg = f"Graph generation failed - {error}"
         self.logger.error(self._format_message("GRAPH", msg))
+    
+    def graph_exception(self, stage: str, error: Exception, context: Optional[Dict[str, Any]] = None, hints: Optional[List[str]] = None):
+        """Log graph exception with full traceback and context."""
+        details = self._format_exception(stage=stage, error=error, context=context, hints=hints)
+        self.logger.error(self._format_message("GRAPH", details))
     
     def graph_fallback(self, reason: str):
         """Log graph fallback usage"""
@@ -220,6 +256,11 @@ class CleanLogger:
         """Log file processing error"""
         msg = f"{filename} processing failed - {error}"
         self.logger.error(self._format_message("FILE", msg))
+    
+    def file_exception(self, filename: str, stage: str, error: Exception, context: Optional[Dict[str, Any]] = None, hints: Optional[List[str]] = None):
+        """Log file exception with full traceback and context."""
+        details = self._format_exception(stage=stage, error=error, context=context, hints=hints)
+        self.logger.error(self._format_message("FILE", details))
     
     def file_extraction(self, filename: str, content_type: str, size: int):
         """Log file content extraction"""
@@ -400,6 +441,11 @@ class CleanLogger:
         """Log cross-report analysis error"""
         msg = f"Cross-report analysis failed - {error}"
         self.logger.error(self._format_message("CROSS_REPORT", msg))
+    
+    def cross_report_exception(self, stage: str, error: Exception, context: Optional[Dict[str, Any]] = None, hints: Optional[List[str]] = None):
+        """Log cross-report exception with full traceback and context."""
+        details = self._format_exception(stage=stage, error=error, context=context, hints=hints)
+        self.logger.error(self._format_message("CROSS_REPORT", details))
     
     # Timeout Tags
     def timeout_warning(self, operation: str, duration: float, limit: float):
