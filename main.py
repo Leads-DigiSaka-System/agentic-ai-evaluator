@@ -26,12 +26,33 @@ load_dotenv()
 setup_clean_logging("INFO")
 logger = get_clean_logger(__name__)
 
+# ⚠️ CRITICAL: Initialize Langfuse v3 BEFORE importing routes
+# This ensures Langfuse is ready when nodes are imported
+try:
+    from src.monitoring.trace.langfuse_helper import initialize_langfuse
+    if initialize_langfuse():
+        logger.info("✅ Langfuse v3 initialized successfully")
+    else:
+        logger.info("ℹ️ Langfuse not configured or initialization skipped")
+except Exception as e:
+    logger.warning(f"⚠️ Langfuse initialization failed: {e}")
+    logger.info("ℹ️ Continuing without Langfuse observability")
+
 # Graceful shutdown handler
 def shutdown_handler():
     """Handle graceful shutdown"""
     logger.info("Shutting down gracefully...")
     logger.info("Closing database connections...")
-    # Add cleanup logic here if needed
+    
+    # Flush and shutdown Langfuse
+    try:
+        from src.monitoring.trace.langfuse_helper import flush_langfuse, shutdown_langfuse
+        flush_langfuse()
+        shutdown_langfuse()
+        logger.info("✅ Langfuse flushed and shutdown")
+    except Exception as e:
+        logger.debug(f"Langfuse shutdown error (non-critical): {e}")
+    
     logger.info("Shutdown complete")
 
 # Register shutdown handlers
@@ -47,6 +68,18 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 app = FastAPI()
+
+# Add FastAPI shutdown event for Langfuse
+@app.on_event("shutdown")
+async def shutdown_event():
+    """FastAPI shutdown event - flush Langfuse before shutdown"""
+    try:
+        from src.monitoring.trace.langfuse_helper import flush_langfuse, shutdown_langfuse
+        flush_langfuse()
+        shutdown_langfuse()
+        logger.info("✅ Langfuse flushed on FastAPI shutdown")
+    except Exception as e:
+        logger.debug(f"Langfuse shutdown error (non-critical): {e}")
 
 
 app.state.limiter = limiter

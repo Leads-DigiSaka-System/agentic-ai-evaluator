@@ -3,10 +3,31 @@ from src.utils.llm_helper import invoke_llm
 from src.workflow.state import ProcessingState
 from src.formatter.json_helper import clean_json_from_llm_response
 from src.utils.clean_logger import CleanLogger
+from src.utils.config import LANGFUSE_CONFIGURED
 import json
 
+# Import Langfuse decorator if available (v3 API)
+if LANGFUSE_CONFIGURED:
+    try:
+        from langfuse import observe, get_client
+        LANGFUSE_AVAILABLE = True
+    except ImportError:
+        LANGFUSE_AVAILABLE = False
+        def observe(*args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
+else:
+    LANGFUSE_AVAILABLE = False
+    def observe(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
+
+@observe(name="graph_suggestion_generation")
 def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
-    """Node for LLM-driven graph suggestions with specific chart data"""
+    """Node for LLM-driven graph suggestions with specific chart data (v3 API)"""
     logger = CleanLogger("workflow.nodes.graph_suggestion")
     
     try:
@@ -19,6 +40,21 @@ def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
         
         analysis_data = state["analysis_result"]
         
+        # Log input metadata to Langfuse (v3 API)
+        if LANGFUSE_AVAILABLE:
+            try:
+                client = get_client()
+                if client:
+                    client.update_current_observation(
+                        metadata={
+                            "has_analysis": True,
+                            "product_category": analysis_data.get("product_category", "unknown"),
+                            "metrics_count": len(analysis_data.get("metrics_detected", []))
+                        }
+                    )
+            except Exception as e:
+                logger.debug(f"Could not update observation: {e}")
+        
         logger.graph_generation(0, ["LLM-driven suggestions"])
         
         # Get complete chart suggestions from LLM (including chart data)
@@ -27,21 +63,21 @@ def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
         
         # Get LLM response (prefer structured JSON)
         logger.llm_request("gemini", "graph_suggestion")
-        suggestions = invoke_llm(prompt, as_json=True)
+        suggestions = invoke_llm(prompt, as_json=True, trace_name="graph_suggestion")
         
         # Handle list return or None
         if isinstance(suggestions, list):
             suggestions = suggestions[0] if suggestions else None
         if not isinstance(suggestions, dict) or not suggestions:
             # Fallback: use centralized JSON cleaning function from raw response
-            raw_response = invoke_llm(prompt, as_json=False)
+            raw_response = invoke_llm(prompt, as_json=False, trace_name="graph_suggestion_raw")
             suggestions = clean_json_from_llm_response(raw_response)
         
         if not suggestions:
             # One retry with stricter instruction
             retry_prompt = prompt + "\n\nReturn ONLY valid JSON that matches the required structure. No markdown, no code fences."
             logger.llm_request("gemini", "graph_suggestion_retry")
-            retry_raw = invoke_llm(retry_prompt, as_json=False)
+            retry_raw = invoke_llm(retry_prompt, as_json=False, trace_name="graph_suggestion_retry")
             suggestions = clean_json_from_llm_response(retry_raw)
         
         if not suggestions:
@@ -53,19 +89,61 @@ def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
             chart_count = len(suggestions["suggested_charts"])
             chart_types = [chart.get('chart_type', 'unknown') for chart in suggestions["suggested_charts"]]
             logger.graph_generation(chart_count, chart_types)
+            
+            # Log graph metrics to Langfuse (v3 API)
+            if LANGFUSE_AVAILABLE:
+                try:
+                    client = get_client()
+                    if client:
+                        client.update_current_observation(
+                            metadata={
+                                "chart_count": chart_count,
+                                "chart_types": chart_types,
+                                "generation_method": "llm"
+                            }
+                        )
+                except Exception as e:
+                    logger.debug(f"Could not update observation with metrics: {e}")
         else:
             logger.graph_fallback("LLM failed to generate graph suggestions")
             state["errors"].append("LLM failed to generate graph suggestions")
             # Fallback to basic charts
             state["graph_suggestions"] = _generate_fallback_charts(analysis_data)
+            
+            if LANGFUSE_AVAILABLE:
+                try:
+                    client = get_client()
+                    if client:
+                        client.update_current_observation(
+                            metadata={"generation_method": "fallback", "reason": "llm_failed"}
+                        )
+                except Exception as e:
+                    logger.debug(f"Could not update observation: {e}")
         
         return state
         
     except Exception as e:
         logger.graph_error(f"Graph generation failed: {str(e)}")
         state["errors"].append(f"Graph suggestion failed: {str(e)}")
+        
+        # Log error to Langfuse (v3 API)
+        if LANGFUSE_AVAILABLE:
+            from src.monitoring.trace.langfuse_helper import update_trace_with_error
+            update_trace_with_error(e, {"step": "graph_suggestion"})
+        
         # Fallback to ensure we always have some charts
         state["graph_suggestions"] = _generate_fallback_charts(state.get("analysis_result", {}))
+        
+        if LANGFUSE_AVAILABLE:
+            try:
+                client = get_client()
+                if client:
+                    client.update_current_observation(
+                        metadata={"generation_method": "fallback", "reason": "exception"}
+                    )
+            except Exception as e:
+                logger.debug(f"Could not update observation: {e}")
+        
         return state
 
 

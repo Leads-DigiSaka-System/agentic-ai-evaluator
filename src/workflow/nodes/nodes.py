@@ -5,9 +5,35 @@ from src.formatter.formatter import extract_form_type_from_content
 from src.workflow.nodes.analysis import analyze_demo_trial
 from src.database.insert import qdrant_client
 from src.utils.clean_logger import CleanLogger
+from src.utils.config import LANGFUSE_CONFIGURED
 import uuid
 from datetime import datetime
 
+# Import Langfuse decorator if available
+if LANGFUSE_CONFIGURED:
+    try:
+        from langfuse import observe
+        from src.monitoring.trace.langfuse_helper import get_langfuse_client
+        LANGFUSE_AVAILABLE = True
+    except ImportError:
+        LANGFUSE_AVAILABLE = False
+        def observe(*args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
+        def get_langfuse_client():
+            return None
+else:
+    LANGFUSE_AVAILABLE = False
+    def observe(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def get_langfuse_client():
+        return None
+
+
+@observe(name="extraction_node")
 def extraction_node(state: ProcessingState) -> ProcessingState:
     """
     Node 1: Extract content from PDF/Image with validation
@@ -46,18 +72,46 @@ def extraction_node(state: ProcessingState) -> ProcessingState:
             # Mark file validation as passed (since it was pre-extracted)
             state["file_validation"] = {
                 "is_valid": True,
-                "file_type": "pdf",  # Assume PDF for pre-extracted content
+                "file_type": "pdf",
                 "format": "PDF",
                 "validation_skipped": True
             }
+            
+            # Log to Langfuse
+            if LANGFUSE_AVAILABLE:
+                client = get_langfuse_client()
+                if client:
+                    try:
+                        client.update_current_observation(
+                            metadata={
+                                "extraction_method": "pre-extracted",
+                                "file_type": state["file_validation"]["file_type"]
+                            }
+                        )
+                    except Exception:
+                        pass  # Silently fail if not in observation context
             
             return state
         
         # NEW: Extract with validation
         logger.processing_start("file_extraction", f"File: {state['file_name']}")
+        
+        if LANGFUSE_AVAILABLE:
+            client = get_langfuse_client()
+            if client:
+                try:
+                    client.update_current_observation(
+                        metadata={
+                            "file_name": state['file_name'],
+                            "file_path": state['file_path']
+                        }
+                    )
+                except Exception:
+                    pass  # Silently fail if not in observation context
+        
         extraction_result = extract_with_gemini(
             state["file_path"], 
-            validate_format=True  # Enable format validation
+            validate_format=True
         )
         
         # Store validation results in state
@@ -68,6 +122,20 @@ def extraction_node(state: ProcessingState) -> ProcessingState:
             error_msg = extraction_result.get("error", "Unknown extraction error")
             logger.processing_error("file_extraction", error_msg)
             state["errors"].append(f"File extraction failed: {error_msg}")
+            
+            if LANGFUSE_AVAILABLE:
+                client = get_langfuse_client()
+                if client:
+                    try:
+                        client.update_current_observation(
+                            metadata={
+                                "extraction_success": False,
+                                "error": error_msg
+                            }
+                        )
+                    except Exception:
+                        pass  # Silently fail if not in observation context
+            
             return state
         
         # Store extracted content
@@ -77,7 +145,6 @@ def extraction_node(state: ProcessingState) -> ProcessingState:
         file_type = extraction_result.get("file_type")
         
         if file_type == "pdf":
-            # Extract rich metadata from PDF
             try:
                 state["metadata"] = extract_pdf_metadata(state["file_path"])
             except Exception as e:
@@ -90,7 +157,6 @@ def extraction_node(state: ProcessingState) -> ProcessingState:
                 }
         
         elif file_type == "image":
-            # FIXED: Create proper metadata for images
             validation_meta = extraction_result.get("validation_result", {}).get("metadata", {})
             state["metadata"] = {
                 "source": state["file_path"],
@@ -105,7 +171,6 @@ def extraction_node(state: ProcessingState) -> ProcessingState:
             }
         
         else:
-            # Fallback for unknown file types (should not happen with validation)
             logger.warning(f"Unknown file type: {file_type}")
             state["metadata"] = {
                 "source": state["file_path"],
@@ -113,6 +178,22 @@ def extraction_node(state: ProcessingState) -> ProcessingState:
                 "file_type": file_type or "unknown",
                 "extraction_method": "gemini_api"
             }
+        
+        # Log extraction success to Langfuse
+        if LANGFUSE_AVAILABLE:
+            client = get_langfuse_client()
+            if client:
+                try:
+                    client.update_current_observation(
+                        metadata={
+                            "extraction_success": True,
+                            "file_type": state['metadata'].get('file_type', 'unknown'),
+                            "content_length": len(state["extracted_markdown"]),
+                            "metadata": state["metadata"]
+                        }
+                    )
+                except Exception:
+                    pass  # Silently fail if not in observation context
         
         logger.processing_success("file_extraction", f"File type: {state['metadata'].get('file_type', 'unknown')}")
         
@@ -122,6 +203,11 @@ def extraction_node(state: ProcessingState) -> ProcessingState:
         error_msg = f"Extraction failed: {str(e)}"
         logger.processing_error("file_extraction", error_msg)
         state["errors"].append(error_msg)
+        
+        # Log error to Langfuse
+        if LANGFUSE_AVAILABLE:
+            from src.monitoring.trace.langfuse_helper import update_trace_with_error
+            update_trace_with_error(e, {"step": "extraction", "file_name": state.get("file_name", "unknown")})
         
         # Ensure metadata exists even on error
         if not state.get("metadata"):
@@ -134,6 +220,9 @@ def extraction_node(state: ProcessingState) -> ProcessingState:
         import traceback
         traceback.print_exc()
         return state
+
+
+@observe(name="analysis_node")
 def analysis_node(state: ProcessingState) -> ProcessingState:
     """Node 2: Analyze extracted content and determine form type"""
     logger = CleanLogger("workflow.nodes.analysis")
@@ -145,6 +234,19 @@ def analysis_node(state: ProcessingState) -> ProcessingState:
             logger.processing_error("analysis", "No extracted content available for analysis")
             state["errors"].append("No extracted content available for analysis")
             return state
+        
+        # Log input to Langfuse
+        if LANGFUSE_AVAILABLE:
+            client = get_langfuse_client()
+            if client:
+                try:
+                    client.update_current_observation(
+                        metadata={
+                            "content_length": len(state["extracted_markdown"])
+                        }
+                    )
+                except Exception:
+                    pass  # Silently fail if not in observation context
         
         # Extract form type
         logger.processing_start("form_type_extraction", "Extracting form type from content")
@@ -162,8 +264,38 @@ def analysis_node(state: ProcessingState) -> ProcessingState:
             error_msg = analysis_result.get("error_message", "Unknown analysis error")
             logger.analysis_error("demo_trial_analysis", error_msg)
             state["errors"].append(f"Analysis error: {error_msg}")
+            
+            if LANGFUSE_AVAILABLE:
+                client = get_langfuse_client()
+                if client:
+                    try:
+                        client.update_current_observation(
+                            metadata={
+                                "analysis_success": False,
+                                "form_type": form_type,
+                                "error": error_msg
+                            }
+                        )
+                    except Exception:
+                        pass  # Silently fail if not in observation context
         else:
             logger.analysis_result("demo_trial_analysis", analysis_result.get("metrics_detected", []), "Analysis completed successfully")
+            
+            if LANGFUSE_AVAILABLE:
+                client = get_langfuse_client()
+                if client:
+                    try:
+                        client.update_current_observation(
+                            metadata={
+                                "analysis_success": True,
+                                "form_type": form_type,
+                                "product_category": analysis_result.get("product_category", "unknown"),
+                                "metrics_count": len(analysis_result.get("metrics_detected", []))
+                            }
+                        )
+                    except Exception:
+                        pass  # Silently fail if not in observation context
+            
             # Log analysis summary if available
             if analysis_result.get("executive_summary"):
                 logger.info(f"Executive Summary: {analysis_result.get('executive_summary')}")
@@ -174,8 +306,15 @@ def analysis_node(state: ProcessingState) -> ProcessingState:
         error_msg = f"Analysis failed: {str(e)}"
         logger.analysis_error("demo_trial_analysis", error_msg)
         state["errors"].append(error_msg)
+        
+        if LANGFUSE_AVAILABLE:
+            from src.monitoring.trace.langfuse_helper import update_trace_with_error
+            update_trace_with_error(e, {"step": "analysis"})
+        
         return state
 
+
+@observe(name="chunking_node")
 def chunking_node(state: ProcessingState) -> ProcessingState:
     """Node 3: Chunk the extracted content"""
     logger = CleanLogger("workflow.nodes.chunking")
@@ -197,7 +336,24 @@ def chunking_node(state: ProcessingState) -> ProcessingState:
             return state
             
         state["chunks"] = chunks
-        logger.chunking_result(len(chunks), sum(len(chunk.get("content", "")) for chunk in chunks), "Chunking completed successfully")
+        
+        total_chunk_size = sum(len(chunk.get("content", "")) for chunk in chunks)
+        logger.chunking_result(len(chunks), total_chunk_size, "Chunking completed successfully")
+        
+        # Log chunking results to Langfuse
+        if LANGFUSE_AVAILABLE:
+            client = get_langfuse_client()
+            if client:
+                try:
+                    client.update_current_observation(
+                        metadata={
+                            "chunk_count": len(chunks),
+                            "total_chunk_size": total_chunk_size,
+                            "average_chunk_size": total_chunk_size // len(chunks) if chunks else 0
+                        }
+                    )
+                except Exception:
+                    pass  # Silently fail if not in observation context
         
         return state
         
@@ -205,7 +361,13 @@ def chunking_node(state: ProcessingState) -> ProcessingState:
         error_msg = f"Chunking failed: {str(e)}"
         logger.chunking_error(error_msg)
         state["errors"].append(error_msg)
+        
+        if LANGFUSE_AVAILABLE:
+            from src.monitoring.trace.langfuse_helper import update_trace_with_error
+            update_trace_with_error(e, {"step": "chunking"})
+        
         return state
+
 
 def error_node(state: ProcessingState) -> ProcessingState:
     """Node 5: Handle errors"""
@@ -215,4 +377,5 @@ def error_node(state: ProcessingState) -> ProcessingState:
         logger.error(f"Processing completed with {len(state['errors'])} error(s)")
         for i, error in enumerate(state["errors"], 1):
             logger.error(f"Error {i}: {error}")
+    
     return state

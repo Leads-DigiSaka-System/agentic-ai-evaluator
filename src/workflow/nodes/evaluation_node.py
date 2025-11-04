@@ -1,6 +1,32 @@
 from src.Agents.output_evaluator import validate_output
 from src.utils.clean_logger import CleanLogger
+from src.utils.config import LANGFUSE_CONFIGURED
 
+# Import Langfuse decorator if available
+if LANGFUSE_CONFIGURED:
+    try:
+        from langfuse import observe
+        from src.monitoring.trace.langfuse_helper import get_langfuse_client
+        LANGFUSE_AVAILABLE = True
+    except ImportError:
+        LANGFUSE_AVAILABLE = False
+        def observe(*args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
+        def get_langfuse_client():
+            return None
+else:
+    LANGFUSE_AVAILABLE = False
+    def observe(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def get_langfuse_client():
+        return None
+
+
+@observe(name="output_evaluation")
 def evaluation_node(state: dict) -> dict:
     """
     INTELLIGENT EVALUATION NODE
@@ -34,6 +60,22 @@ def evaluation_node(state: dict) -> dict:
             state["current_step"] = "evaluation"
         
         logger.log_decision("evaluation_context", evaluation_context, f"Current step: {current_step}")
+        
+        # Log evaluation context to Langfuse
+        if LANGFUSE_AVAILABLE:
+            client = get_langfuse_client()
+            if client:
+                try:
+                    client.update_current_observation(
+                        metadata={
+                            "evaluation_context": evaluation_context,
+                            "evaluation_attempt": state.get("evaluation_attempts", 0),
+                            "has_analysis": has_analysis,
+                            "has_graphs": has_graphs
+                        }
+                    )
+                except Exception:
+                    pass  # Silently fail if not in observation context
             
         # Run intelligent output evaluation (LLM-based quality assessment)
         logger.agent_start("output_evaluator", f"Evaluating {evaluation_context}")
@@ -55,6 +97,22 @@ def evaluation_node(state: dict) -> dict:
         
         # Store evaluation results
         state["output_evaluation"] = evaluation_result
+        
+        # Log evaluation results to Langfuse
+        if LANGFUSE_AVAILABLE:
+            client = get_langfuse_client()
+            if client:
+                try:
+                    client.update_current_observation(
+                        metadata={
+                            "confidence": confidence,
+                            "decision": decision,
+                            "issue_type": issue_type,
+                            "feedback_length": len(feedback)
+                        }
+                    )
+                except Exception:
+                    pass  # Silently fail if not in observation context
         
         # ============================================
         # INTELLIGENT DECISION LOGIC
@@ -130,11 +188,31 @@ def evaluation_node(state: dict) -> dict:
             "attempts": state["evaluation_attempts"]
         }
         
+        # Log final decision to Langfuse
+        if LANGFUSE_AVAILABLE:
+            client = get_langfuse_client()
+            if client:
+                try:
+                    client.update_current_observation(
+                        metadata={
+                            "needs_reanalysis": state.get("needs_reanalysis", False),
+                            "needs_regraph": state.get("needs_regraph", False),
+                            "final_decision": "retry" if (state.get("needs_reanalysis") or state.get("needs_regraph")) else "proceed"
+                        }
+                    )
+                except Exception:
+                    pass  # Silently fail if not in observation context
+        
         logger.workflow_success("output_evaluation", f"Evaluation completed for {evaluation_context}")
             
     except Exception as e:
         logger.workflow_error("output_evaluation", str(e))
         state["errors"].append(f"Output evaluation error: {str(e)}")
+        
+        # Log error to Langfuse
+        if LANGFUSE_AVAILABLE:
+            from src.monitoring.trace.langfuse_helper import update_trace_with_error
+            update_trace_with_error(e, {"step": "evaluation"})
         
         # Safe fallback on error
         state["output_evaluation"] = {

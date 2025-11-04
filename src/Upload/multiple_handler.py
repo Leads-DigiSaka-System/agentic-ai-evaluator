@@ -6,12 +6,55 @@ from src.workflow.state import ProcessingState
 from src.workflow.graph import processing_workflow
 from src.Upload.form_extractor import extract_pdf_with_gemini, extract_pdf_metadata
 from src.database.insert_analysis import analysis_storage 
-from src.utils.clean_logger import get_clean_logger 
+from src.utils.clean_logger import get_clean_logger
+from src.utils.config import LANGFUSE_CONFIGURED
+
+# Import Langfuse decorator if available
+if LANGFUSE_CONFIGURED:
+    try:
+        from langfuse import observe
+        from src.monitoring.trace.langfuse_helper import (
+            flush_langfuse, 
+            update_trace_with_metrics, 
+            get_trace_url,
+            get_langfuse_client
+        )
+        LANGFUSE_AVAILABLE = True
+    except ImportError:
+        LANGFUSE_AVAILABLE = False
+        def observe(*args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
+        def flush_langfuse():
+            pass
+        def update_trace_with_metrics(*args, **kwargs):
+            pass
+        def get_trace_url():
+            return None
+        def get_langfuse_client():
+            return None
+else:
+    LANGFUSE_AVAILABLE = False
+    def observe(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def flush_langfuse():
+        pass
+    def update_trace_with_metrics(*args, **kwargs):
+        pass
+    def get_trace_url():
+        return None
+    def get_langfuse_client():
+        return None
 
 logger = get_clean_logger(__name__)
+
+
 class MultiReportHandler:
     """Handler for processing PDFs with multiple reports including graph suggestions"""
-    #logger = get_clean_logger(__name__)
+    
     @staticmethod
     async def process_multi_report_pdf(file_content: bytes, original_filename: str) -> Dict[str, Any]:
         """
@@ -24,19 +67,18 @@ class MultiReportHandler:
         - Content validation happens in workflow
         - Auto-detects file type from extension
         """
-        #logger = get_clean_logger(__name__)
         tmp_path = None
         try:
-            # ✅ FIX: Detect file type from original filename
+            # Detect file type from original filename
             file_ext = original_filename.lower().split('.')[-1] if '.' in original_filename else 'pdf'
             suffix = f".{file_ext}"
             
             logger.file_upload(original_filename, len(file_content))
             
-            # ✅ FIX: Save with correct extension
+            # Save with correct extension
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, mode='wb') as tmp_file:
                 tmp_file.write(file_content)
-                tmp_file.flush()  # Ensure written to disk
+                tmp_file.flush()
                 tmp_path = tmp_file.name
             
             logger.info(f"Saved to temporary file: {tmp_path}")
@@ -115,7 +157,6 @@ class MultiReportHandler:
             return result
         
         # For MULTIPLE REPORTS, use pre-extracted markdown approach
-        # Note: Content validation still happens in workflow for each report
         all_reports_response = []
         for i, report_md in enumerate(reports_markdown):
             report_response = await MultiReportHandler._process_single_report(
@@ -133,35 +174,60 @@ class MultiReportHandler:
             "cross_report_analysis": cross_report_suggestions
         }
         
-        # Analysis storage is now handled separately via API endpoint
         result["analysis_storage_status"] = "ready_for_approval"
         logger.storage_start("analysis storage", "ready for user approval")
         
         return result
 
     @staticmethod
+    @observe(as_type="generation", name="process_single_report_direct")
     async def _process_single_report_direct(tmp_path: str, file_content: bytes, 
                                            original_filename: str, pdf_metadata: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process a SINGLE report PDF with FULL VALIDATION
         
-        NEW BEHAVIOR:
-        - Workflow now includes content validation step
-        - Better error messages from validation
-        - File format already validated during extraction
+        Uses official Langfuse @observe() decorator for tracing
         """
         logger = get_clean_logger(__name__)
         
         try:
             logger.info("Processing SINGLE REPORT with full validation")
+            
+            # Detect file_type from metadata or filename extension
+            file_type = pdf_metadata.get("file_type")
+            if not file_type or file_type == "unknown":
+                file_ext = original_filename.lower().split('.')[-1] if '.' in original_filename else ''
+                if file_ext == 'pdf':
+                    file_type = "pdf"
+                elif file_ext in ['png', 'jpg', 'jpeg']:
+                    file_type = "image"
+                else:
+                    file_type = file_ext or "unknown"
+            
+            # Log processing start to Langfuse
+            if LANGFUSE_AVAILABLE:
+                client = get_langfuse_client()
+                if client:
+                    try:
+                        client.update_current_trace(
+                            name="process_single_report",
+                            metadata={
+                                "file_name": original_filename,
+                                "file_type": file_type,
+                                "file_size": len(file_content),
+                                "processing_type": "single_report"
+                            },
+                            tags=["single_report", file_type, "agricultural_demo"]
+                        )
+                    except Exception:
+                        pass  # Silently fail if not in trace context
 
             # Initialize state WITHOUT pre-extracted markdown
-            # Workflow will: extract → validate file → validate content → analyze
             initial_state: ProcessingState = {
                 "file_path": tmp_path,
                 "file_name": original_filename,
                 "file_content": file_content,
-                "extracted_markdown": None,  # Let workflow extract and validate
+                "extracted_markdown": None,
                 "form_type": None,
                 "chunks": [],
                 "analysis_result": None,
@@ -171,8 +237,6 @@ class MultiReportHandler:
                 "insertion_date": "",
                 "current_step": "start",
                 "errors": [],
-                
-                # NEW: Validation fields (populated by workflow)
                 "file_validation": None,
                 "is_valid_content": None,
                 "content_validation": None
@@ -181,16 +245,16 @@ class MultiReportHandler:
             # Execute the workflow (now includes validation)
             final_state = processing_workflow.invoke(initial_state)
 
-            # Build response with validation info (storage data prepared but not stored)
+            # Build response with validation info
             report_response = {
                 "report_number": 1,
                 "file_name": original_filename,
-                "form_id": "",  # Will be generated during storage approval
+                "form_id": "",
                 "form_type": final_state.get("form_type", ""),
                 "extracted_content": final_state.get("extracted_markdown", ""),
                 "analysis": final_state.get("analysis_result", {}),
                 "graph_suggestions": final_state.get("graph_suggestions", {}),
-                "chunks": final_state.get("chunks", []),  # Include chunks for storage
+                "chunks": final_state.get("chunks", []),
                 "processing_metrics": {
                     "chunk_count": len(final_state.get("chunks", [])),
                     "processing_steps": final_state.get("current_step", ""),
@@ -198,24 +262,39 @@ class MultiReportHandler:
                     "storage_ready": True
                 },
                 "errors": final_state.get("errors", []),
-                
-                # NEW: Include validation results in response
                 "validation": {
                     "file_validation": final_state.get("file_validation"),
                     "content_validation": final_state.get("content_validation")
                 },
-                
-                # NEW: Storage control info
                 "storage_status": "ready_for_approval",
                 "storage_message": "Analysis completed. Use /api/storage/preview to review and /api/storage/approve to store."
             }
+
+            # Log final metrics to Langfuse
+            if LANGFUSE_AVAILABLE:
+                update_trace_with_metrics({
+                    "success": len(final_state["errors"]) == 0,
+                    "error_count": len(final_state["errors"]),
+                    "chunk_count": len(final_state.get("chunks", [])),
+                    "chart_count": len(final_state.get("graph_suggestions", {}).get("suggested_charts", [])),
+                    "form_type": final_state.get("form_type", ""),
+                    "is_valid_content": final_state.get("is_valid_content", False),
+                    "final_step": final_state.get("current_step", "")
+                })
+                
+                trace_url = get_trace_url()
+                if trace_url:
+                    logger.info(f"📊 Langfuse trace: {trace_url}")
 
             if final_state["errors"]:
                 logger.processing_error(original_filename, f"Single report completed with errors: {final_state['errors']}")
             else:
                 chart_count = len(final_state.get("graph_suggestions", {}).get("suggested_charts", []))
                 logger.processing_success(original_filename, f"Single report processed successfully with {chart_count} chart suggestions")
-                logger.storage_start("analysis storage", "ready for user approval")
+
+            # Flush Langfuse events
+            flush_langfuse()
+            logger.info(f"✅ Workflow completed - trace available in Langfuse dashboard")
 
             return report_response
 
@@ -223,6 +302,18 @@ class MultiReportHandler:
             logger.processing_error(original_filename, f"Failed to process single report: {str(e)}")
             import traceback
             traceback.print_exc()
+            
+            # Log error to Langfuse
+            if LANGFUSE_AVAILABLE:
+                from src.monitoring.trace.langfuse_helper import update_trace_with_error
+                update_trace_with_error(e, {
+                    "file_name": original_filename,
+                    "processing_type": "single_report"
+                })
+            
+            # Flush even on error
+            flush_langfuse()
+            
             return {
                 "report_number": 1,
                 "file_name": original_filename,
@@ -240,13 +331,9 @@ class MultiReportHandler:
 
     @staticmethod
     def _split_reports_intelligently(markdown_content: str) -> List[str]:
-        """
-        Intelligently split markdown into individual reports
-        UNCHANGED - Works as before
-        """
+        """Intelligently split markdown into individual reports"""
         logger = get_clean_logger(__name__)
         
-        # First, try splitting by the unique separator
         unique_separator = "### REPORT_END ###"
         if unique_separator in markdown_content:
             reports = markdown_content.split(unique_separator)
@@ -255,7 +342,6 @@ class MultiReportHandler:
                 logger.info(f"Using unique separator, found {len(reports)} reports")
                 return reports
 
-        # If no unique separator found, check for multiple # headings
         headings = re.findall(r'^#\s+.+$', markdown_content, re.MULTILINE)
         if len(headings) > 1:
             logger.info(f"Found {len(headings)} potential reports by heading detection")
@@ -264,34 +350,45 @@ class MultiReportHandler:
             if len(reports) > 1:
                 return reports
 
-        # If all else fails, treat as single report
         logger.info("No clear report separators found, treating as SINGLE REPORT")
         return [markdown_content]
 
     @staticmethod
+    @observe(as_type="generation", name="process_single_report")
     async def _process_single_report(report_md: str, file_content: bytes, original_filename: str,
                                    tmp_path: str, pdf_metadata: Dict[str, Any], 
                                    report_index: int, total_reports: int) -> Dict[str, Any]:
-        """
-        Process a single report from a MULTI-REPORT PDF
-        
-        WORKS WITH VALIDATION:
-        - Pre-extracted markdown provided
-        - Content validation still runs in workflow
-        - If content is invalid, workflow will error out gracefully
-        """
+        """Process a single report from a MULTI-REPORT PDF"""
         logger = get_clean_logger(__name__)
         
         try:
             logger.info(f"Processing report {report_index + 1}/{total_reports}")
 
-            # Initialize state with pre-extracted markdown
-            # Workflow will: validate content → analyze → graphs → chunk → store
+            file_type = pdf_metadata.get("file_type", "pdf")
+            
+            # Log to Langfuse
+            if LANGFUSE_AVAILABLE:
+                client = get_langfuse_client()
+                if client:
+                    try:
+                        client.update_current_trace(
+                            name=f"process_report_{report_index + 1}",
+                            metadata={
+                                "report_number": report_index + 1,
+                                "total_reports": total_reports,
+                                "file_name": original_filename,
+                                "file_type": file_type
+                            },
+                            tags=["multi_report", file_type, f"report_{report_index + 1}"]
+                        )
+                    except Exception:
+                        pass  # Silently fail if not in trace context
+
             initial_state: ProcessingState = {
                 "file_path": tmp_path,
                 "file_name": f"{original_filename}_report_{report_index + 1}",
                 "file_content": file_content,
-                "extracted_markdown": report_md,  # Pre-extracted for multi-report
+                "extracted_markdown": report_md,
                 "form_type": None,
                 "chunks": [],
                 "analysis_result": None,
@@ -301,26 +398,22 @@ class MultiReportHandler:
                 "insertion_date": "",
                 "current_step": "start",
                 "errors": [],
-                
-                # Validation fields (content validation will still run)
                 "file_validation": {"is_valid": True, "validation_skipped": True},
                 "is_valid_content": None,
                 "content_validation": None
             }
 
-            # Execute the workflow
             final_state = processing_workflow.invoke(initial_state)
 
-            # Build response (storage data prepared but not stored)
             report_response = {
                 "report_number": report_index + 1,
                 "file_name": original_filename,
-                "form_id": "",  # Will be generated during storage approval
+                "form_id": "",
                 "form_type": final_state.get("form_type", ""),
                 "extracted_content": final_state.get("extracted_markdown", ""),
                 "analysis": final_state.get("analysis_result", {}),
                 "graph_suggestions": final_state.get("graph_suggestions", {}),
-                "chunks": final_state.get("chunks", []),  # Include chunks for storage
+                "chunks": final_state.get("chunks", []),
                 "processing_metrics": {
                     "chunk_count": len(final_state.get("chunks", [])),
                     "processing_steps": final_state.get("current_step", ""),
@@ -335,19 +428,36 @@ class MultiReportHandler:
                 "storage_message": "Analysis completed. Use /api/storage/preview to review and /api/storage/approve to store."
             }
 
+            # Log metrics
+            if LANGFUSE_AVAILABLE:
+                update_trace_with_metrics({
+                    "report_number": report_index + 1,
+                    "success": len(final_state["errors"]) == 0,
+                    "error_count": len(final_state["errors"]),
+                    "chart_count": len(final_state.get("graph_suggestions", {}).get("suggested_charts", []))
+                })
+
             if final_state["errors"]:
-                logger.processing_error(f"Report {report_index + 1}", f"Report completed with errors: {final_state['errors']}")
+                logger.processing_error(f"Report {report_index + 1}", f"Report completed with errors")
             else:
-                chart_count = len(final_state.get("graph_suggestions", {}).get("suggested_charts", []))
-                logger.processing_success(f"Report {report_index + 1}", f"Report processed successfully with {chart_count} chart suggestions")
-                logger.storage_start("analysis storage", "ready for user approval")
+                logger.processing_success(f"Report {report_index + 1}", "Report processed successfully")
+
+            flush_langfuse()
 
             return report_response
 
         except Exception as e:
-            logger.processing_error(f"Report {report_index + 1}", f"Failed to process report: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            logger.processing_error(f"Report {report_index + 1}", f"Failed: {str(e)}")
+            
+            if LANGFUSE_AVAILABLE:
+                from src.monitoring.trace.langfuse_helper import update_trace_with_error
+                update_trace_with_error(e, {
+                    "report_number": report_index + 1,
+                    "file_name": original_filename
+                })
+            
+            flush_langfuse()
+            
             return {
                 "report_number": report_index + 1,
                 "file_name": original_filename,
@@ -365,15 +475,11 @@ class MultiReportHandler:
 
     @staticmethod
     def _generate_cross_report_suggestions(all_reports: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Generate graph suggestions that compare multiple reports
-        UNCHANGED - Works as before
-        """
+        """Generate graph suggestions that compare multiple reports"""
         try:
             if len(all_reports) <= 1:
                 return {"cross_report_suggestions": []}
             
-            # Collect performance data from all reports
             performance_data = []
             product_types = set()
             
@@ -383,7 +489,6 @@ class MultiReportHandler:
                 perf_analysis = analysis.get("performance_analysis", {})
                 calculated = perf_analysis.get("calculated_metrics", {})
                 
-                # Prefer 'relative_improvement_percent' (current schema), fallback to 'improvement_percent'
                 relative_improvement = calculated.get("relative_improvement_percent")
                 improvement_percent = (
                     relative_improvement
@@ -402,7 +507,6 @@ class MultiReportHandler:
                 })
                 product_types.add(report.get("form_type", "unknown"))
             
-            # Generate cross-report chart suggestions
             cross_report_charts = MultiReportHandler._create_cross_report_charts(performance_data, product_types)
             
             return {
@@ -416,10 +520,9 @@ class MultiReportHandler:
 
     @staticmethod
     def _create_cross_report_charts(performance_data: List[Dict], product_types: set) -> List[Dict]:
-        """Intelligently create cross-report charts based on data patterns"""
+        """Create cross-report charts based on data patterns"""
         charts = []
         
-        # Chart 1: Improvement comparison (always relevant)
         improvement_data = sorted(performance_data, key=lambda x: x['improvement_percent'], reverse=True)
         
         charts.append({
@@ -427,7 +530,7 @@ class MultiReportHandler:
             "chart_type": "bar_chart",
             "title": f"Performance Improvement Across {len(improvement_data)} Demos",
             "priority": "high",
-            "description": "Ranked comparison of performance improvement percentages across all demo reports",
+            "description": "Ranked comparison of performance improvement percentages",
             "chart_data": {
                 "labels": [f"Report {data['report_number']}: {data['product']}" for data in improvement_data],
                 "datasets": [{
@@ -437,58 +540,8 @@ class MultiReportHandler:
                     "borderColor": MultiReportHandler._get_improvement_colors(improvement_data),
                     "borderWidth": 1
                 }]
-            },
-            "chart_options": {
-                "responsive": True,
-                "plugins": {
-                    "legend": {"display": False},
-                    "title": {
-                        "display": True,
-                        "text": f"Top Performer: {improvement_data[0]['product']} ({improvement_data[0]['improvement_percent']}% improvement)"
-                    }
-                },
-                "scales": {
-                    "y": {
-                        "beginAtZero": True,
-                        "title": {"display": True, "text": "Improvement %"}
-                    }
-                }
             }
         })
-        
-        # Additional charts only for multiple product types
-        if len(product_types) > 1:
-            categories = {}
-            for data in performance_data:
-                category = data["form_type"]
-                categories[category] = categories.get(category, 0) + 1
-            
-            charts.append({
-                "chart_id": "product_category_distribution",
-                "chart_type": "pie_chart",
-                "title": f"Product Category Distribution ({len(performance_data)} Demos)",
-                "priority": "medium",
-                "description": "Breakdown of demo types by product category",
-                "chart_data": {
-                    "labels": list(categories.keys()),
-                    "datasets": [{
-                        "data": list(categories.values()),
-                        "backgroundColor": MultiReportHandler._get_category_colors(categories),
-                        "borderColor": MultiReportHandler._get_category_colors(categories),
-                        "borderWidth": 2
-                    }]
-                },
-                "chart_options": {
-                    "responsive": True,
-                    "plugins": {
-                        "legend": {"position": "right"},
-                        "title": {
-                            "display": True,
-                            "text": "Demo Distribution by Product Type"
-                        }
-                    }
-                }
-            })
         
         return charts
 
@@ -499,11 +552,11 @@ class MultiReportHandler:
         for data in improvement_data:
             improvement = data["improvement_percent"]
             if improvement >= 25:
-                colors.append("#27ae60")  # Green
+                colors.append("#27ae60")
             elif improvement >= 15:
-                colors.append("#f39c12")  # Orange
+                colors.append("#f39c12")
             else:
-                colors.append("#e74c3c")  # Red
+                colors.append("#e74c3c")
         return colors
 
     @staticmethod

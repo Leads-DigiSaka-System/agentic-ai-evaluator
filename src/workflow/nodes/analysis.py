@@ -1,10 +1,30 @@
-# file: src/workflow/nodes/analysis.py (FIXED)
 from src.prompt.analysis_template import analysis_prompt_template_structured
 from src.utils.llm_helper import invoke_llm
 from src.utils.clean_logger import CleanLogger
+from src.utils.config import LANGFUSE_CONFIGURED
 from typing import List
 import traceback
 
+# Import Langfuse decorator if available (v3 API)
+if LANGFUSE_CONFIGURED:
+    try:
+        from langfuse import observe, get_client
+        LANGFUSE_AVAILABLE = True
+    except ImportError:
+        LANGFUSE_AVAILABLE = False
+        def observe(*args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
+else:
+    LANGFUSE_AVAILABLE = False
+    def observe(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
+
+@observe(name="analyze_demo_trial")
 def analyze_demo_trial(markdown_data: str):
     """
     Universal analyzer that adapts to ANY agricultural demo form
@@ -26,16 +46,32 @@ def analyze_demo_trial(markdown_data: str):
         logger.analysis_start("universal_adaptive_analysis")
         
         # Truncate if too long
-        if len(markdown_data) > 4000:
+        original_length = len(markdown_data)
+        if original_length > 4000:
             markdown_data = markdown_data[:4000] + "\n... (truncated)"
-            logger.info("Content truncated to 4000 characters")
+            logger.info(f"Content truncated from {original_length} to 4000 characters")
+        
+        # Update trace with input metadata (v3 API)
+        if LANGFUSE_AVAILABLE:
+            try:
+                client = get_client()
+                if client:
+                    client.update_current_observation(
+                        metadata={
+                            "input_length": original_length,
+                            "truncated": original_length > 4000,
+                            "template": "universal_adaptive_analysis"
+                        }
+                    )
+            except Exception as e:
+                logger.debug(f"Could not update observation: {e}")
         
         # Use single universal template
         template = analysis_prompt_template_structured()
         prompt = template.format(markdown_data=markdown_data)
         
         logger.llm_request("gemini", "universal_agricultural_demo_analysis")
-        result = invoke_llm(prompt, as_json=True)
+        result = invoke_llm(prompt, as_json=True, trace_name="agricultural_demo_analysis")
         
         if not result:
             error_msg = "No response from LLM"
@@ -54,6 +90,23 @@ def analyze_demo_trial(markdown_data: str):
                 metrics = result.get("metrics_detected", [])
                 logger.analysis_result("universal_adaptive_analysis", metrics, f"Product Category: {product_category}")
                 
+                # Log analysis metrics to Langfuse (v3 API)
+                if LANGFUSE_AVAILABLE:
+                    try:
+                        client = get_client()
+                        if client:
+                            client.update_current_observation(
+                                metadata={
+                                    "product_category": product_category,
+                                    "metrics_count": len(metrics),
+                                    "metrics_detected": metrics[:5],  # First 5 metrics
+                                    "data_quality_score": result.get("data_quality", {}).get("completeness_score", 0),
+                                    "improvement_percent": result.get("performance_analysis", {}).get("calculated_metrics", {}).get("improvement_percent", 0)
+                                }
+                            )
+                    except Exception as e:
+                        logger.debug(f"Could not update observation with metrics: {e}")
+                
                 # Generate summary if missing
                 if not result.get("executive_summary"):
                     result["executive_summary"] = generate_adaptive_summary(result)
@@ -67,6 +120,12 @@ def analyze_demo_trial(markdown_data: str):
         error_msg = f"Analysis failed: {str(e)}"
         logger.analysis_error("universal_adaptive_analysis", error_msg)
         traceback.print_exc()
+        
+        # Log error to Langfuse (v3 API)
+        if LANGFUSE_AVAILABLE:
+            from src.monitoring.trace.langfuse_helper import update_trace_with_error
+            update_trace_with_error(e, {"step": "analysis", "input_length": len(markdown_data)})
+        
         return create_universal_error_response(error_msg)
 
 
@@ -194,7 +253,6 @@ def create_universal_error_response(message):
         "executive_summary": "",
         "error_message": message
     }
-
 
 
 # Alias for backward compatibility
