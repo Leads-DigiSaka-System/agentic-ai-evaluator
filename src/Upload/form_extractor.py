@@ -3,6 +3,7 @@ from typing import Optional, Dict, Any
 from google import genai
 from google.genai import types
 from src.utils.config import GOOGLE_API_KEY, GEMINI_MODEL
+import time
 from langchain_community.document_loaders import PyMuPDFLoader
 from src.prompt.prompt_template import formatting_template
 from src.Upload.file_validator import FileValidator
@@ -11,7 +12,8 @@ from src.utils.clean_logger import get_clean_logger
 
 def extract_with_gemini(
     file_path: str, 
-    validate_format: bool = True
+    validate_format: bool = True,
+    trace_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Extract and process PDF/Image using Gemini API with validation
@@ -55,7 +57,7 @@ def extract_with_gemini(
         # Step 1: Validate file format (if enabled)
         if validate_format:
             logger.file_validation(filename, "validating format")
-            validation_result = FileValidator.validate_file(file_content, filename)
+            validation_result = FileValidator.validate_file(file_content, filename, trace_id=trace_id)
             result["validation_result"] = validation_result
             
             if not validation_result["is_valid"]:
@@ -79,7 +81,7 @@ def extract_with_gemini(
         
         # Step 2: Extract content with Gemini
         logger.file_extraction(filename, result["file_type"], len(file_content))
-        extracted_text = _extract_with_gemini_api(file_content, filepath, result["file_type"])
+        extracted_text = _extract_with_gemini_api(file_content, filepath, result["file_type"], trace_id=trace_id)
         
         if extracted_text:
             result["success"] = True
@@ -104,7 +106,8 @@ def extract_with_gemini(
 def _extract_with_gemini_api(
     file_content: bytes, 
     filepath: pathlib.Path, 
-    file_type: str
+    file_type: str,
+    trace_id: Optional[str] = None
 ) -> Optional[str]:
     """
     Internal function: Call Gemini API for extraction
@@ -120,6 +123,9 @@ def _extract_with_gemini_api(
         Extracted text or None
     """
     logger = get_clean_logger(__name__)
+    # Get model name at function start to avoid UnboundLocalError
+    model_name = GEMINI_MODEL  # Use module-level import
+    
     try:
         client = genai.Client(api_key=GOOGLE_API_KEY)
         file_size = len(file_content)
@@ -147,10 +153,11 @@ def _extract_with_gemini_api(
             return None
         
         # Choose processing method based on file size
+        
         if file_size < 20 * 1024 * 1024:  # 20MB threshold
             logger.info("Processing with inline method")
             response = client.models.generate_content(
-                model=GEMINI_MODEL,
+                model=model_name,
                 contents=[
                     types.Part.from_bytes(
                         data=file_content,
@@ -163,7 +170,7 @@ def _extract_with_gemini_api(
             logger.info("Processing with File API method (large file)")
             sample_file = client.files.upload(file=filepath)
             response = client.models.generate_content(
-                model=GEMINI_MODEL,
+                model=model_name,
                 contents=[sample_file, extraction_prompt]
             )
         
@@ -171,6 +178,40 @@ def _extract_with_gemini_api(
         if response.candidates and response.candidates[0].content.parts:
             extracted_text = "".join(part.text for part in response.candidates[0].content.parts)
             logger.info("Gemini API extraction successful")
+            
+            # Log to Langfuse if trace_id provided
+            if trace_id:
+                try:
+                    from src.utils.langfuse_helper import log_generation, estimate_tokens
+                    
+                    # Estimate token usage
+                    prompt_tokens = estimate_tokens(extraction_prompt)
+                    completion_tokens = estimate_tokens(extracted_text)
+                    
+                    # Log generation (truncate long texts)
+                    log_generation(
+                        name="gemini_file_extraction",
+                        trace_id=trace_id,
+                        model=model_name,  # Use local variable
+                        prompt=extraction_prompt[:2000],  # Truncate for Langfuse
+                        completion=extracted_text[:2000],  # Truncate for Langfuse
+                        metadata={
+                            "file_type": file_type,
+                            "file_name": filepath.name,
+                            "file_size_mb": round(file_size / (1024*1024), 2),
+                            "mime_type": mime_type,
+                            "extraction_method": "gemini_api_direct"
+                        },
+                        usage={
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                            "total_tokens": prompt_tokens + completion_tokens
+                        }
+                    )
+                    logger.debug(f"Logged file extraction to Langfuse trace: {trace_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to log extraction to Langfuse: {e}")
+            
             return extracted_text
         else:
             logger.error("No content in Gemini response")
@@ -253,7 +294,17 @@ def extract_pdf_metadata(pdf_path: str) -> Dict[str, Any]:
         # Try PDF metadata extraction
         loader = PyMuPDFLoader(pdf_path)
         document = loader.load([0])[0]  # First page only for metadata
-        return document.metadata
+        metadata = document.metadata.copy() if document.metadata else {}
+        
+        # Ensure file_type is always included
+        if "file_type" not in metadata:
+            metadata["file_type"] = "pdf"
+        
+        # Ensure file_name is included
+        if "file_name" not in metadata:
+            metadata["file_name"] = filepath.name
+        
+        return metadata
         
     except Exception as e:
         # Return minimal metadata on error

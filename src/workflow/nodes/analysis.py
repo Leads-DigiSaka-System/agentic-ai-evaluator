@@ -2,10 +2,10 @@
 from src.prompt.analysis_template import analysis_prompt_template_structured
 from src.utils.llm_helper import invoke_llm
 from src.utils.clean_logger import CleanLogger
-from typing import List
+from typing import List, Optional
 import traceback
 
-def analyze_demo_trial(markdown_data: str):
+def analyze_demo_trial(markdown_data: str, trace_id: Optional[str] = None):
     """
     Universal analyzer that adapts to ANY agricultural demo form
     
@@ -16,6 +16,7 @@ def analyze_demo_trial(markdown_data: str):
     
     Args:
         markdown_data: Extracted markdown content
+        trace_id: Optional Langfuse trace ID for observability
     
     Returns:
         Adaptive analysis results dict
@@ -35,7 +36,13 @@ def analyze_demo_trial(markdown_data: str):
         prompt = template.format(markdown_data=markdown_data)
         
         logger.llm_request("gemini", "universal_agricultural_demo_analysis")
-        result = invoke_llm(prompt, as_json=True)
+        result = invoke_llm(
+            prompt,
+            as_json=True,
+            trace_id=trace_id,
+            generation_name="agricultural_analysis",
+            metadata={"step": "analysis", "node": "analysis_node", "analysis_type": "universal_adaptive"}
+        )
         
         if not result:
             error_msg = "No response from LLM"

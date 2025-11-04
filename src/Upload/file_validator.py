@@ -26,7 +26,7 @@ class FileValidator:
     MIN_FILE_SIZE = 1024  # 1KB
     
     @staticmethod
-    def validate_file(file_content: bytes, filename: str) -> Dict[str, any]:
+    def validate_file(file_content: bytes, filename: str, trace_id: Optional[str] = None) -> Dict[str, any]:
         """
         Main validation function - validates file format and integrity
         
@@ -46,6 +46,20 @@ class FileValidator:
             }
         """
         logger = get_clean_logger(__name__)
+        
+        # Create span for file validation if trace_id provided
+        if trace_id:
+            try:
+                from src.utils.langfuse_helper import create_span
+                create_span(
+                    name="file_validation",
+                    trace_id=trace_id,
+                    input_data={"filename": filename, "file_size": len(file_content)},
+                    metadata={"operation": "file_validation", "step": "file_format_validation"}
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create file validation span: {e}")
+        
         result = {
             "is_valid": False,
             "file_type": None,
@@ -59,6 +73,20 @@ class FileValidator:
         size_valid, size_error = FileValidator._validate_file_size(file_content)
         if not size_valid:
             result["errors"].append(size_error)
+            
+            # Update span with error
+            if trace_id:
+                try:
+                    from src.utils.langfuse_helper import create_span
+                    create_span(
+                        name="file_validation",
+                        trace_id=trace_id,
+                        output_data={"is_valid": False, "errors": result["errors"]},
+                        metadata={"operation": "file_validation", "status": "failed"},
+                        level="ERROR"
+                    )
+                except Exception:
+                    pass
             return result
         
         # Step 2: Detect file type from extension
@@ -66,19 +94,39 @@ class FileValidator:
         
         if file_ext in FileValidator.SUPPORTED_PDF_EXTENSIONS:
             # Validate PDF
-            return FileValidator._validate_pdf(file_content, filename)
-            
+            result = FileValidator._validate_pdf(file_content, filename)
         elif file_ext in FileValidator.SUPPORTED_IMAGE_EXTENSIONS:
             # Validate Image
-            return FileValidator._validate_image(file_content, filename, file_ext)
-            
+            result = FileValidator._validate_image(file_content, filename, file_ext)
         else:
             # Unsupported format
             result["errors"].append(
                 f"Unsupported file format: {file_ext}. "
                 f"Supported formats: PDF, PNG, JPG, JPEG"
             )
-            return result
+        
+        # Update span with validation results
+        if trace_id:
+            try:
+                from src.utils.langfuse_helper import create_span
+                span_level = "WARNING" if result.get("warnings") else ("ERROR" if not result["is_valid"] else "DEFAULT")
+                create_span(
+                    name="file_validation",
+                    trace_id=trace_id,
+                    output_data={
+                        "is_valid": result["is_valid"],
+                        "file_type": result.get("file_type"),
+                        "format": result.get("format"),
+                        "errors": result.get("errors", []),
+                        "warnings": result.get("warnings", [])
+                    },
+                    metadata={"operation": "file_validation", "status": "success" if result["is_valid"] else "failed"},
+                    level=span_level
+                )
+            except Exception:
+                pass
+        
+        return result
     
     @staticmethod
     def _validate_file_size(file_content: bytes) -> Tuple[bool, Optional[str]]:
@@ -106,6 +154,7 @@ class FileValidator:
         3. PDF has readable pages
         4. PDF metadata is accessible
         """
+        logger = get_clean_logger(__name__)
         result = {
             "is_valid": False,
             "file_type": "pdf",
@@ -178,6 +227,7 @@ class FileValidator:
         3. Image has valid dimensions
         4. Image format matches extension
         """
+        logger = get_clean_logger(__name__)
         result = {
             "is_valid": False,
             "file_type": "image",

@@ -55,9 +55,27 @@ def extraction_node(state: ProcessingState) -> ProcessingState:
         
         # NEW: Extract with validation
         logger.processing_start("file_extraction", f"File: {state['file_name']}")
+        
+        # Get trace_id for Langfuse tracking
+        trace_id = state.get("_langfuse_trace_id")
+        
+        # Create span for extraction node
+        if trace_id:
+            try:
+                from src.utils.langfuse_helper import create_span
+                create_span(
+                    name="extraction_node",
+                    trace_id=trace_id,
+                    input_data={"file_name": state["file_name"], "file_path": state["file_path"]},
+                    metadata={"node": "extraction", "step": "file_extraction"}
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create extraction span: {e}")
+        
         extraction_result = extract_with_gemini(
             state["file_path"], 
-            validate_format=True  # Enable format validation
+            validate_format=True,  # Enable format validation
+            trace_id=trace_id
         )
         
         # Store validation results in state
@@ -116,6 +134,23 @@ def extraction_node(state: ProcessingState) -> ProcessingState:
         
         logger.processing_success("file_extraction", f"File type: {state['metadata'].get('file_type', 'unknown')}")
         
+        # Update span with output data
+        if trace_id and extraction_result["success"]:
+            try:
+                from src.utils.langfuse_helper import create_span
+                create_span(
+                    name="extraction_node",
+                    trace_id=trace_id,
+                    output_data={
+                        "file_type": extraction_result.get("file_type"),
+                        "extraction_success": True,
+                        "content_length": len(extraction_result.get("extracted_text", ""))
+                    },
+                    metadata={"node": "extraction", "step": "file_extraction", "status": "success"}
+                )
+            except Exception:
+                pass  # Span already created, just updating if possible
+        
         return state
         
     except Exception as e:
@@ -146,6 +181,22 @@ def analysis_node(state: ProcessingState) -> ProcessingState:
             state["errors"].append("No extracted content available for analysis")
             return state
         
+        # Get trace_id for Langfuse tracking
+        trace_id = state.get("_langfuse_trace_id")
+        
+        # Create span for analysis node
+        if trace_id:
+            try:
+                from src.utils.langfuse_helper import create_span
+                create_span(
+                    name="analysis_node",
+                    trace_id=trace_id,
+                    input_data={"file_name": state.get("file_name"), "content_length": len(state["extracted_markdown"])},
+                    metadata={"node": "analysis", "step": "analysis"}
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create analysis span: {e}")
+        
         # Extract form type
         logger.processing_start("form_type_extraction", "Extracting form type from content")
         form_type = extract_form_type_from_content(state["extracted_markdown"])
@@ -154,7 +205,7 @@ def analysis_node(state: ProcessingState) -> ProcessingState:
         
         # Perform analysis with better error handling
         logger.analysis_start("demo_trial_analysis")
-        analysis_result = analyze_demo_trial(state["extracted_markdown"])
+        analysis_result = analyze_demo_trial(state["extracted_markdown"], trace_id=trace_id)
         state["analysis_result"] = analysis_result
         
         # Check analysis status
@@ -167,6 +218,23 @@ def analysis_node(state: ProcessingState) -> ProcessingState:
             # Log analysis summary if available
             if analysis_result.get("executive_summary"):
                 logger.info(f"Executive Summary: {analysis_result.get('executive_summary')}")
+            
+            # Update span with output data
+            if trace_id:
+                try:
+                    from src.utils.langfuse_helper import create_span
+                    create_span(
+                        name="analysis_node",
+                        trace_id=trace_id,
+                        output_data={
+                            "form_type": form_type,
+                            "analysis_status": "success",
+                            "metrics_count": len(analysis_result.get("metrics_detected", []))
+                        },
+                        metadata={"node": "analysis", "step": "analysis", "status": "success"}
+                    )
+                except Exception:
+                    pass  # Span already created
         
         return state
         
@@ -188,6 +256,22 @@ def chunking_node(state: ProcessingState) -> ProcessingState:
             state["errors"].append("No extracted content available for chunking")
             return state
         
+        # Get trace_id for Langfuse tracking
+        trace_id = state.get("_langfuse_trace_id")
+        
+        # Create span for chunking node
+        if trace_id:
+            try:
+                from src.utils.langfuse_helper import create_span
+                create_span(
+                    name="chunking_node",
+                    trace_id=trace_id,
+                    input_data={"content_length": len(state["extracted_markdown"])},
+                    metadata={"node": "chunking", "step": "chunking"}
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create chunking span: {e}")
+        
         # Generate chunks
         logger.chunking_start("markdown_content", len(state["extracted_markdown"]))
         chunks = chunk_markdown_safe(state["extracted_markdown"])
@@ -197,7 +281,26 @@ def chunking_node(state: ProcessingState) -> ProcessingState:
             return state
             
         state["chunks"] = chunks
-        logger.chunking_result(len(chunks), sum(len(chunk.get("content", "")) for chunk in chunks), "Chunking completed successfully")
+        chunk_count = len(chunks)
+        total_chunk_size = sum(len(chunk.get("content", "")) for chunk in chunks)
+        logger.chunking_result(chunk_count, total_chunk_size, "Chunking completed successfully")
+        
+        # Update span with output data
+        if trace_id:
+            try:
+                from src.utils.langfuse_helper import create_span
+                create_span(
+                    name="chunking_node",
+                    trace_id=trace_id,
+                    output_data={
+                        "chunk_count": chunk_count,
+                        "total_chunk_size": total_chunk_size,
+                        "chunking_success": True
+                    },
+                    metadata={"node": "chunking", "step": "chunking", "status": "success"}
+                )
+            except Exception:
+                pass  # Span already created
         
         return state
         
@@ -211,8 +314,28 @@ def error_node(state: ProcessingState) -> ProcessingState:
     """Node 5: Handle errors"""
     logger = CleanLogger("workflow.nodes.error")
     
+    # Get trace_id for Langfuse tracking
+    trace_id = state.get("_langfuse_trace_id")
+    
     if state["errors"]:
-        logger.error(f"Processing completed with {len(state['errors'])} error(s)")
+        error_count = len(state["errors"])
+        logger.error(f"Processing completed with {error_count} error(s)")
+        
+        # Create span for error node
+        if trace_id:
+            try:
+                from src.utils.langfuse_helper import create_span
+                create_span(
+                    name="error_node",
+                    trace_id=trace_id,
+                    input_data={"error_count": error_count},
+                    output_data={"errors": state["errors"][:10]},  # Limit to first 10 errors
+                    metadata={"node": "error", "step": "error_handling", "level": "ERROR"},
+                    level="ERROR"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create error span: {e}")
+        
         for i, error in enumerate(state["errors"], 1):
             logger.error(f"Error {i}: {error}")
     return state

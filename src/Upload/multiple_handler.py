@@ -6,7 +6,18 @@ from src.workflow.state import ProcessingState
 from src.workflow.graph import processing_workflow
 from src.Upload.form_extractor import extract_pdf_with_gemini, extract_pdf_metadata
 from src.database.insert_analysis import analysis_storage 
-from src.utils.clean_logger import get_clean_logger 
+from src.utils.clean_logger import get_clean_logger
+# Import official Langfuse decorator - NO custom wrappers
+try:
+    from langfuse import observe  # Official Langfuse decorator only
+    LANGFUSE_OBSERVE_AVAILABLE = True
+except ImportError:
+    # Fallback if langfuse not available
+    def observe(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    LANGFUSE_OBSERVE_AVAILABLE = False 
 
 logger = get_clean_logger(__name__)
 class MultiReportHandler:
@@ -139,6 +150,7 @@ class MultiReportHandler:
         
         return result
 
+    @observe(as_root=True, name="process_single_report_direct")
     @staticmethod
     async def _process_single_report_direct(tmp_path: str, file_content: bytes, 
                                            original_filename: str, pdf_metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -149,11 +161,44 @@ class MultiReportHandler:
         - Workflow now includes content validation step
         - Better error messages from validation
         - File format already validated during extraction
+        
+        Uses official Langfuse @observe() decorator for tracing
         """
         logger = get_clean_logger(__name__)
         
         try:
             logger.info("Processing SINGLE REPORT with full validation")
+            
+            # Detect file_type from metadata or filename extension
+            file_type = pdf_metadata.get("file_type")
+            if not file_type or file_type == "unknown":
+                # Fallback: detect from filename extension
+                file_ext = original_filename.lower().split('.')[-1] if '.' in original_filename else ''
+                if file_ext == 'pdf':
+                    file_type = "pdf"
+                elif file_ext in ['png', 'jpg', 'jpeg']:
+                    file_type = "image"
+                else:
+                    file_type = file_ext or "unknown"
+            
+            # @observe() decorator automatically:
+            # - Creates root trace
+            # - Captures function inputs/outputs
+            # - Tracks execution time
+            # - Handles errors
+            # - Stores trace in OpenTelemetry context
+            
+            # Get trace_id from OpenTelemetry context (official way decorator stores it)
+            # This is needed to link CallbackHandler for LLM generations
+            trace_id = None
+            try:
+                from opentelemetry import trace as otel_trace
+                span = otel_trace.get_current_span()
+                if span and hasattr(span, 'context') and hasattr(span.context, 'trace_id'):
+                    trace_id = format(span.context.trace_id, '032x')
+                    logger.info(f"Langfuse trace ID: {trace_id}")
+            except Exception as e:
+                logger.debug(f"Could not get trace_id from OpenTelemetry context: {e}")
 
             # Initialize state WITHOUT pre-extracted markdown
             # Workflow will: extract → validate file → validate content → analyze
@@ -172,7 +217,10 @@ class MultiReportHandler:
                 "current_step": "start",
                 "errors": [],
                 
-                # NEW: Validation fields (populated by workflow)
+                # Langfuse trace ID for observability
+                "_langfuse_trace_id": trace_id,
+                
+                # Validation fields (populated by workflow)
                 "file_validation": None,
                 "is_valid_content": None,
                 "content_validation": None
@@ -217,12 +265,29 @@ class MultiReportHandler:
                 logger.processing_success(original_filename, f"Single report processed successfully with {chart_count} chart suggestions")
                 logger.storage_start("analysis storage", "ready for user approval")
 
+            # End trace span and flush Langfuse events
+            from src.utils.langfuse_helper import flush_langfuse
+            trace_id = final_state.get("_langfuse_trace_id")
+            if trace_id:
+                logger.debug(f"Finalizing trace: {trace_id}")
+            
+            flush_langfuse()
+            logger.info(f"✅ Workflow completed - trace available in Langfuse dashboard")
+
             return report_response
 
         except Exception as e:
             logger.processing_error(original_filename, f"Failed to process single report: {str(e)}")
             import traceback
             traceback.print_exc()
+            
+            # Flush Langfuse even on error to ensure trace is visible
+            try:
+                from src.utils.langfuse_helper import flush_langfuse
+                flush_langfuse()
+            except Exception as flush_err:
+                logger.warning(f"Failed to flush Langfuse on error: {flush_err}")
+            
             return {
                 "report_number": 1,
                 "file_name": original_filename,
@@ -268,6 +333,7 @@ class MultiReportHandler:
         logger.info("No clear report separators found, treating as SINGLE REPORT")
         return [markdown_content]
 
+    @observe(as_root=True, name="process_single_report")
     @staticmethod
     async def _process_single_report(report_md: str, file_content: bytes, original_filename: str,
                                    tmp_path: str, pdf_metadata: Dict[str, Any], 
@@ -279,11 +345,39 @@ class MultiReportHandler:
         - Pre-extracted markdown provided
         - Content validation still runs in workflow
         - If content is invalid, workflow will error out gracefully
+        
+        Uses official Langfuse @observe() decorator for tracing
         """
         logger = get_clean_logger(__name__)
         
         try:
             logger.info(f"Processing report {report_index + 1}/{total_reports}")
+
+            # Get trace_id from OpenTelemetry context (official way)
+            trace_id = None
+            try:
+                from opentelemetry import trace as otel_trace
+                span = otel_trace.get_current_span()
+                if span and hasattr(span, 'context') and hasattr(span.context, 'trace_id'):
+                    trace_id = format(span.context.trace_id, '032x')
+                    logger.info(f"Langfuse trace ID for report {report_index + 1}: {trace_id}")
+            except Exception as e:
+                logger.debug(f"Could not get trace_id from OpenTelemetry context: {e}")
+            
+            # Detect file_type from metadata or filename extension
+            file_type = pdf_metadata.get("file_type")
+            if not file_type or file_type == "unknown":
+                # Fallback: detect from filename extension
+                file_ext = original_filename.lower().split('.')[-1] if '.' in original_filename else ''
+                if file_ext == 'pdf':
+                    file_type = "pdf"
+                elif file_ext in ['png', 'jpg', 'jpeg']:
+                    file_type = "image"
+                else:
+                    file_type = file_ext or "unknown"
+            
+            # @observe() decorator already created trace automatically
+            # Trace is already created, just using trace_id for CallbackHandler linking
 
             # Initialize state with pre-extracted markdown
             # Workflow will: validate content → analyze → graphs → chunk → store
@@ -301,6 +395,9 @@ class MultiReportHandler:
                 "insertion_date": "",
                 "current_step": "start",
                 "errors": [],
+                
+                # Langfuse trace ID for observability
+                "_langfuse_trace_id": trace_id,
                 
                 # Validation fields (content validation will still run)
                 "file_validation": {"is_valid": True, "validation_skipped": True},
@@ -342,12 +439,29 @@ class MultiReportHandler:
                 logger.processing_success(f"Report {report_index + 1}", f"Report processed successfully with {chart_count} chart suggestions")
                 logger.storage_start("analysis storage", "ready for user approval")
 
+            # End trace span and flush Langfuse events
+            from src.utils.langfuse_helper import flush_langfuse
+            trace_id = final_state.get("_langfuse_trace_id")
+            if trace_id:
+                logger.debug(f"Finalizing trace for report {report_index + 1}: {trace_id}")
+            
+            flush_langfuse()
+            logger.info(f"✅ Report {report_index + 1} completed - trace available in Langfuse dashboard")
+
             return report_response
 
         except Exception as e:
             logger.processing_error(f"Report {report_index + 1}", f"Failed to process report: {str(e)}")
             import traceback
             traceback.print_exc()
+            
+            # Flush Langfuse even on error to ensure trace is visible
+            try:
+                from src.utils.langfuse_helper import flush_langfuse
+                flush_langfuse()
+            except Exception as flush_err:
+                logger.warning(f"Failed to flush Langfuse on error: {flush_err}")
+            
             return {
                 "report_number": report_index + 1,
                 "file_name": original_filename,

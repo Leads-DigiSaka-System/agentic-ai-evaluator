@@ -14,3 +14,9 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 
 CONNECTION_WEB = os.getenv("CONNECTION_WEB","http://localhost:8501").split(",")
 CONNECTION_MOBILE = os.getenv("CONNECTION_MOBILE")
+
+# Langfuse Configuration for Observability
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
+LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+

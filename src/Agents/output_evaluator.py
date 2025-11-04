@@ -1,12 +1,17 @@
 from src.utils.llm_helper import invoke_llm
 from src.utils.clean_logger import get_clean_logger
+from typing import Optional
 
-def validate_output(state: dict) -> dict:
+def validate_output(state: dict, trace_id: Optional[str] = None) -> dict:
     """
     INTELLIGENT QUALITY EVALUATOR
     
     Purpose: Use LLM to assess if outputs meet quality standards
     Does NOT decide workflow routing - only quality assessment
+    
+    Args:
+        state: Processing state dictionary
+        trace_id: Optional Langfuse trace ID for observability
     
     Returns quality metrics that evaluation_node uses to set flags
     """
@@ -152,7 +157,17 @@ Guidelines:
         # GET LLM QUALITY ASSESSMENT
         # ============================================
         
-        result = invoke_llm(prompt, as_json=True)
+        result = invoke_llm(
+            prompt,
+            as_json=True,
+            trace_id=trace_id,
+            generation_name=f"output_evaluation_{evaluation_context}",
+            metadata={
+                "step": "output_evaluation",
+                "evaluation_context": evaluation_context,
+                "attempts": attempts
+            }
+        )
         
         # Handle potential list returns
         if isinstance(result, list):

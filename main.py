@@ -61,6 +61,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Initialize Langfuse on startup (optional - graceful if keys not configured)
+@app.on_event("startup")
+async def startup_event():
+    """Initialize services on application startup"""
+    from src.utils.langfuse_helper import init_langfuse
+    init_langfuse()
+    logger.info("FastAPI application startup complete")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on application shutdown"""
+    logger.info("FastAPI application shutdown initiated")
+
 # Include routers
 # Secure all API routes with API key. Health and admin validate can remain open if desired.
 app.include_router(upload_router, prefix="/api", tags=["Upload"], dependencies=[Depends(require_api_key)])
