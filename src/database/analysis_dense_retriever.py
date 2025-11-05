@@ -6,7 +6,11 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 from src.generator.encoder import DenseEncoder
 from src.utils.clean_logger import get_clean_logger
 from pydantic import Field, PrivateAttr
-
+from src.monitoring.trace.langfuse_helper import (
+    observe_operation,
+    update_trace_with_metrics, 
+    update_trace_with_error
+    )
 
 class QdrantDenseRetriever(BaseRetriever):
     """
@@ -88,6 +92,8 @@ class QdrantDenseRetriever(BaseRetriever):
             self.logger.error(f"Collection '{self.collection_name}' does not exist")
             raise ValueError(f"Collection '{self.collection_name}' not found in Qdrant")
     
+    # ✅ ONLY NEW LINE - ADD THIS DECORATOR
+    @observe_operation(name="dense_vector_retrieval", capture_input=True, capture_output=True)
     def _get_relevant_documents(self, query: str) -> List[Document]:
         """
         Retrieve documents using dense vector search.
@@ -106,10 +112,23 @@ class QdrantDenseRetriever(BaseRetriever):
             return []
         
         try:
-            # Encode query to vector
+            # ✅ NEW: Log search parameters
+            update_trace_with_metrics({
+                "query_length": len(query),
+                "vector_name": self.vector_name,
+                "search_limit": self.search_limit,
+                "collection": self.collection_name
+            })
+            
+            # ORIGINAL CODE: Encode query to vector
             query_vector = self.dense_encoder.encode([query])[0]
             
-            # Perform search in Qdrant
+            # ✅ NEW: Log vector details
+            update_trace_with_metrics({
+                "vector_dimension": len(query_vector)
+            })
+            
+            # ORIGINAL CODE: Perform search in Qdrant
             search_results = self.client.search(
                 collection_name=self.collection_name,
                 query_vector=(self.vector_name, query_vector),
@@ -117,7 +136,16 @@ class QdrantDenseRetriever(BaseRetriever):
                 with_payload=True
             )
             
-            # Convert to LangChain Document format
+            # ✅ NEW: Log search results
+            if search_results:
+                scores = [result.score for result in search_results]
+                update_trace_with_metrics({
+                    "results_found": len(search_results),
+                    "top_score": scores[0],
+                    "avg_score": sum(scores) / len(scores)
+                })
+            
+            # ORIGINAL CODE: Convert to LangChain Document format
             documents = []
             for result in search_results:
                 doc = Document(
@@ -130,10 +158,14 @@ class QdrantDenseRetriever(BaseRetriever):
                 )
                 documents.append(doc)
             
+            # ORIGINAL CODE: Log and return
             self.logger.db_query("dense search", f"query: '{query[:50]}...'", len(documents))
             return documents
             
         except Exception as e:
+            # ✅ NEW: Log error to trace (1 new line added)
+            update_trace_with_error(e, {"operation": "dense_retrieval", "collection": self.collection_name})
+            # ORIGINAL CODE: Log error
             self.logger.db_error("dense search", str(e))
             raise
     

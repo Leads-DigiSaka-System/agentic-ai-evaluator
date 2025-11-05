@@ -7,6 +7,7 @@ from src.utils.config import QDRANT_LOCAL_URI, QDRANT_COLLECTION_ANALYSIS
 from src.generator.encoder import DenseEncoder
 from src.database.analysis_dense_retriever import QdrantDenseRetriever
 from src.utils.clean_logger import get_clean_logger
+from src.monitoring.trace.langfuse_helper import observe_operation, update_trace_with_metrics, update_trace_with_error
 
 
 class AnalysisHybridSearch:
@@ -48,6 +49,7 @@ class AnalysisHybridSearch:
             self.logger.storage_error("AnalysisHybridSearch initialization", str(e))
             raise
     
+    @observe_operation(name="analysis_hybrid_search")
     def search(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """
         Search for relevant analysis documents.
@@ -71,19 +73,40 @@ class AnalysisHybridSearch:
             top_k = 5
         
         try:
-            # Perform dense vector search
-            documents = self.dense_retriever.get_relevant_documents(query)
+            # ✅ Log search parameters
+            update_trace_with_metrics({
+                "search_query": query[:100],
+                "top_k": top_k,
+                "collection": self.collection_name
+            })
+            
+            # ✅ FIXED: Use invoke() instead of get_relevant_documents()
+            documents = self.dense_retriever.invoke(query)
+            
+            # ✅ Log retrieval results
+            update_trace_with_metrics({
+                "documents_retrieved": len(documents),
+                "documents_before_topk": len(documents)
+            })
             
             # Format and return top-k results
             formatted_results = self._format_analysis_results(documents[:top_k])
+            
+            # ✅ Log final results
+            update_trace_with_metrics({
+                "formatted_results_count": len(formatted_results),
+                "avg_score": sum(r.get("score", 0) for r in formatted_results) / len(formatted_results) if formatted_results else 0
+            })
             
             self.logger.db_query("analysis search", f"query: '{query[:50]}...'", len(formatted_results))
             return formatted_results
             
         except ValueError as e:
+            update_trace_with_error(e, {"operation": "analysis_search", "error_type": "validation"})
             self.logger.db_error("analysis search", str(e))
             return []
         except Exception as e:
+            update_trace_with_error(e, {"operation": "analysis_search", "error_type": "unexpected"})
             self.logger.db_error("analysis search", str(e))
             return []
     

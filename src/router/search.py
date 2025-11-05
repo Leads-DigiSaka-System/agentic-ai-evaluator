@@ -6,90 +6,18 @@ from src.utils.limiter_config import limiter
 from src.utils import constants 
 from src.utils.errors import ProcessingError, ValidationError
 from src.utils.clean_logger import get_clean_logger
+from src.utils.config import LANGFUSE_CONFIGURED
+from src.monitoring.trace.langfuse_helper import (
+    observe_operation, 
+    update_trace_with_metrics, 
+    update_trace_with_error,
+    get_langfuse_client
+)
+from src.monitoring.scores.search_score import log_search_scores
 
 router = APIRouter()
 search_engine = LangChainHybridSearch()
 logger = get_clean_logger(__name__)
-
-class HybridSearchRequest(BaseModel):
-    query: str = Field(..., min_length=1, max_length=500, description="Search query")
-    top_k: int = Field(constants.DEFAULT_SEARCH_TOP_K, ge=1, le=constants.MAX_SEARCH_TOP_K, description="Number of results")
-    dense_weight: float = Field(constants.DENSE_WEIGHT_DEFAULT, ge=0.0, le=1.0, description="Dense vector weight")
-    sparse_weight: float = Field(constants.SPARSE_WEIGHT_DEFAULT, ge=0.0, le=1.0, description="Sparse vector weight")
-    
-    @validator('query')
-    def validate_query(cls, v):
-        if not v or not v.strip():
-            raise ValueError('Query cannot be empty')
-        return v.strip()
-    
-    @validator('top_k')
-    def validate_top_k(cls, v):
-        if v > constants.MAX_SEARCH_TOP_K:
-            raise ValueError(f"top_k cannot exceed {constants.MAX_SEARCH_TOP_K}")
-        if v < 1:
-            raise ValueError("top_k must be at least 1")
-        return v
-
-@router.post("/hybrid-search")
-@limiter.limit("60/minute")
-async def hybrid_search_endpoint(request: Request, search_request: HybridSearchRequest):
-    """Enhanced search with validation and error handling"""
-    try:
-        logger.db_query("hybrid search", f"query: '{search_request.query[:50]}'", search_request.top_k)
-        
-        results = search_engine.search_with_custom_weights(
-            query=search_request.query,
-            top_k=search_request.top_k,
-            dense_weight=search_request.dense_weight,
-            sparse_weight=search_request.sparse_weight
-        )
-        
-        if not results:
-            logger.info(f"No results found for: '{search_request.query[:50]}'")
-            return {
-                "message": "No results found",
-                "query": search_request.query,
-                "results": []
-            }
-        
-        logger.db_query("hybrid search", f"query: '{search_request.query[:50]}'", len(results))
-        return {
-            "query": search_request.query,
-            "total_results": len(results),
-            "results": results
-        }
-        
-    except ValidationError:
-        raise
-    except Exception as e:
-        logger.db_error("hybrid search", str(e))
-        raise ProcessingError(
-            detail="Search operation failed",
-            step="hybrid_search",
-            query=search_request.query[:50],
-            error=str(e)[:200]
-        )
-
-class SimpleSearchRequest(BaseModel):
-    query: str
-    top_k: int = constants.DEFAULT_SEARCH_TOP_K
-    
-    @validator('top_k')
-    def validate_top_k(cls, v):
-        if v > constants.MAX_SEARCH_TOP_K:
-            raise ValueError(f"top_k cannot exceed {constants.MAX_SEARCH_TOP_K}")
-        if v < 1:
-            raise ValueError("top_k must be at least 1")
-        return v
-
-@router.post("/hybrid-search/balanced")
-async def balanced_search(request: SimpleSearchRequest):
-    try:
-        results = search_engine.search_balanced(request.query, top_k=request.top_k)
-        return {"results": results}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 class AnalysisSearchRequest(BaseModel):
@@ -104,27 +32,78 @@ class AnalysisSearchRequest(BaseModel):
             raise ValueError("top_k must be at least 1")
         return v
 
+
 @router.post("/analysis-search")
 @limiter.limit("60/minute")
-async def analysis_search(request: AnalysisSearchRequest):
+@observe_operation(name="analysis_search")
+async def analysis_search(
+    request: Request,  #  REQUIRED: For SlowAPI rate limiter
+    body: AnalysisSearchRequest  #  RENAMED: Your request body (was 'request')
+):
     try:
+        # Add tags to trace
+        if LANGFUSE_CONFIGURED:
+            try:
+                client = get_langfuse_client()
+                if client:
+                    client.update_current_trace(
+                        tags=["search", "analysis_search", "api"]
+                    )
+            except Exception as e:
+                logger.debug(f"Could not add tags to trace: {e}")
+        
         results = analysis_searcher.search(
-            query=request.query,
-            top_k=request.top_k
+            query=body.query,  #  Changed from request.query to body.query
+            top_k=body.top_k   #  Changed from request.top_k to body.top_k
         )
+        
+        # Calculate search quality metrics for metadata
+        has_results = len(results) > 0
+        results_count = len(results)
+        
+        # Calculate metrics for trace metadata (if needed)
+        if has_results:
+            relevance_scores = [r.get("score", 0.0) for r in results if isinstance(r.get("score"), (int, float))]
+            data_quality_scores = [r.get("data_quality_score", 0.0) for r in results if isinstance(r.get("data_quality_score"), (int, float))]
+            avg_relevance = sum(relevance_scores) / len(relevance_scores) if relevance_scores else 0.0
+            avg_data_quality = sum(data_quality_scores) / len(data_quality_scores) if data_quality_scores else 0.0
+            search_efficiency = min(1.0, results_count / body.top_k) if body.top_k > 0 else 1.0
+        else:
+            avg_relevance = 0.0
+            avg_data_quality = 0.0
+            search_efficiency = 0.0
+        
+        # Log metrics to trace
+        update_trace_with_metrics({
+            "query_length": len(body.query),
+            "top_k_requested": body.top_k,
+            "results_returned": results_count,
+            "has_results": has_results,
+            "avg_relevance_score": avg_relevance if has_results else 0.0,
+            "avg_data_quality": avg_data_quality if has_results else 0.0,
+            "search_efficiency": search_efficiency
+        })
+        
+        # Log scores using dedicated score module
+        log_search_scores(results, body.top_k)
         
         if not results:
             return {
                 "message": "No analysis results found",
-                "query": request.query,
+                "query": body.query,  #  Changed
                 "results": []
             }
         
         return {
-            "query": request.query,
-            "total_results": len(results),
+            "query": body.query,  #  Changed
+            "total_results": results_count,
             "results": results
         }
         
     except Exception as e:
+        #  Log error to trace
+        update_trace_with_error(e, {
+            "endpoint": "analysis_search",
+            "query": body.query[:100]  #  Changed
+        })
         raise HTTPException(status_code=500, detail=f"Analysis search failed: {str(e)}")

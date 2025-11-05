@@ -314,16 +314,37 @@ Tailor recommendations to:
 SECTION 9: EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════
 
-Write a compelling 2-3 sentence summary that adapts to the data:
+Write a COMPREHENSIVE executive summary (1-2 paragraphs) that synthesizes ALL key insights from the entire report.
+This should be a concise but complete narrative overview that captures the essential story of the trial.
 
-For RATING SCALE data, use this format:
-"[Product] achieved an average rating of [X] compared to [Y] for control ([difference] points higher on [scale] scale). [Cooperator feedback if available]. [Commercial results if available]."
+STRUCTURE THE EXECUTIVE SUMMARY AS FOLLOWS:
 
-For PERCENTAGE data, use this format:
-"[Product] achieved [X]% control compared to [Y]% for control ([difference] percentage points higher, representing [relative]% improvement). [Cooperator feedback if available]. [Commercial results if available]."
+PARAGRAPH 1: TRIAL OVERVIEW & PERFORMANCE HIGHLIGHTS
+- Start with product name, category, location, crop, and trial date
+- Key performance metrics with specific numbers and comparisons to control
+- Statistical significance assessment (highly significant/significant/moderate/marginal)
+- Performance dynamics: speed of action, trend over time, consistency
+- Use appropriate format based on metric type:
+  * Rating scales: "achieved average rating of X vs Y (Z points higher, representing W% improvement on scale)"
+  * Percentages: "achieved X% vs Y% control (Z percentage points higher, W% relative improvement)"
+  * Counts/Measurements: "produced X vs Y (Z units difference, W% improvement)"
+- Include yield impact if available (with specific numbers and economic significance)
 
-For COUNT/MEASUREMENT data, use this format:
-"[Product] produced [X] compared to [Y] for control ([absolute difference] [units], [percentage]% improvement). [Cooperator feedback if available]. [Commercial results if available]."
+PARAGRAPH 2: VALIDATION, COMMERCIAL POTENTIAL & STRATEGIC ASSESSMENT
+- Real-world validation: cooperator feedback sentiment, key highlights, timeline of visible results
+- Commercial performance: demo results (participants, sales), market reception, commercial potential
+- Risk & opportunity: top 1-2 most significant risks (if any) and top 1-2 most promising opportunities
+- Overall assessment: confidence level, top priority recommendation, and recommended path forward
+
+WRITING GUIDELINES:
+- Write in narrative form, not bullet points
+- Use specific numbers and data from all sections
+- Connect insights across different sections (e.g., "Performance improvements align with positive cooperator feedback")
+- Be concise but comprehensive - aim for 1-2 paragraphs total (approximately 200-400 words)
+- Use professional but accessible language
+- Highlight both strengths and any important limitations
+- End with actionable conclusion about product viability and recommended path forward
+- Make every sentence count - synthesize, don't list
 
 ═══════════════════════════════════════════════════════════════
 RETURN FLEXIBLE JSON STRUCTURE (ONLY JSON, NO OTHER TEXT)
@@ -476,7 +497,7 @@ RETURN FLEXIBLE JSON STRUCTURE (ONLY JSON, NO OTHER TEXT)
     }}
   ],
   
-  "executive_summary": ""
+  "executive_summary": "Comprehensive 1-2 paragraph narrative summary (200-400 words) synthesizing all sections: trial overview, performance highlights with numbers, trends, yield impact, cooperator feedback, commercial metrics, risks/opportunities, and strategic recommendations. Must be concise but complete story of the trial with specific data and actionable insights."
 }}
 
 ═══════════════════════════════════════════════════════════════

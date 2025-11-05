@@ -5,7 +5,7 @@ from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from qdrant_client.http import models
 from pydantic import Field
 from src.utils.clean_logger import get_clean_logger
-
+from src.monitoring.trace.langfuse_helper import observe_operation,update_trace_with_metrics, update_trace_with_error       
 class QdrantDenseRetriever(BaseRetriever):
     """
     Custom dense vector retriever for Qdrant that performs semantic similarity search.

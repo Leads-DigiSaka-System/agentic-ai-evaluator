@@ -6,7 +6,9 @@ from src.utils.config import (
     LANGFUSE_HOST
 )
 from src.utils.clean_logger import get_clean_logger
-
+from functools import wraps
+from typing import Callable, Any, TypeVar, ParamSpec
+import inspect
 logger = get_clean_logger(__name__)
 
 # Initialize Langfuse client (v3 uses singleton pattern)
@@ -132,6 +134,107 @@ def update_trace_with_metrics(metrics: Dict[str, Any]):
         logger.warning(f"Failed to log metrics to Langfuse: {e}")
 
 
+def create_score(
+    name: str,
+    value: float,
+    trace_id: str = None,
+    observation_id: str = None,
+    data_type: str = "NUMERIC",
+    comment: str = None
+):
+    """
+    Create a score for a trace or observation (visible in dashboard)
+    
+    Based on Langfuse Custom Scores documentation:
+    https://langfuse.com/docs/evaluation/evaluation-methods/custom-scores
+    
+    Args:
+        name: Name of the score (e.g., "data_quality", "evaluation_confidence")
+        value: Score value (float for NUMERIC, string for CATEGORICAL, 0/1 for BOOLEAN)
+        trace_id: Optional trace ID (if not provided, uses current trace)
+        observation_id: Optional observation ID to score a specific observation
+        data_type: "NUMERIC", "CATEGORICAL", or "BOOLEAN" (defaults to NUMERIC)
+        comment: Optional comment explaining the score
+    """
+    if not LANGFUSE_CONFIGURED:
+        return
+    
+    try:
+        client = get_langfuse_client()
+        if not client:
+            return
+        
+        # If trace_id not provided, get current trace ID
+        if not trace_id:
+            try:
+                trace_id = client.get_trace_id()
+            except Exception:
+                logger.debug("Could not get current trace ID for scoring")
+                return
+        
+        if not trace_id:
+            logger.warning("No trace ID available for scoring")
+            return
+        
+        # Create score using Langfuse API
+        client.create_score(
+            name=name,
+            value=value,
+            trace_id=trace_id,
+            observation_id=observation_id,
+            data_type=data_type,
+            comment=comment
+        )
+        logger.debug(f"Score created: {name} = {value} (type: {data_type})")
+    except Exception as e:
+        logger.warning(f"Failed to create score in Langfuse: {e}")
+
+
+def score_current_trace(
+    name: str,
+    value: float,
+    data_type: str = "NUMERIC",
+    comment: str = None
+):
+    """
+    Score the current trace (convenience method)
+    
+    Based on Langfuse Custom Scores documentation:
+    https://langfuse.com/docs/evaluation/evaluation-methods/custom-scores
+    """
+    if not LANGFUSE_CONFIGURED:
+        return
+    
+    try:
+        client = get_langfuse_client()
+        if not client:
+            return
+        
+        # Use score_current_trace method if available, otherwise use create_score
+        try:
+            client.score_current_trace(
+                name=name,
+                value=value,
+                data_type=data_type,
+                comment=comment
+            )
+        except AttributeError:
+            # Fallback to create_score if score_current_trace not available
+            trace_id = client.get_trace_id()
+            if trace_id:
+                create_score(
+                    name=name,
+                    value=value,
+                    trace_id=trace_id,
+                    data_type=data_type,
+                    comment=comment
+                )
+        
+        logger.debug(f"Trace scored: {name} = {value}")
+    except Exception as e:
+        logger.warning(f"Failed to score current trace: {e}")
+
+
 def get_trace_url() -> Optional[str]:
     """Get the URL of the current trace (v3 API)"""
     if not LANGFUSE_CONFIGURED:
@@ -172,3 +275,85 @@ def update_current_span(metadata: Dict[str, Any] = None, **kwargs):
                 client.update_current_observation(metadata=metadata)
     except Exception as e:
         logger.warning(f"Failed to update current span: {e}")
+
+P = ParamSpec('P')
+T = TypeVar('T')
+
+def observe_operation(
+    name: str = None,
+    capture_input: bool = True,
+    capture_output: bool = True,
+    metadata: Dict[str, Any] = None
+) -> Callable[[Callable[P, T]], Callable[P, T]]:
+    """
+    Decorator to trace function execution with Langfuse v3.
+    
+    This wraps the Langfuse @observe decorator with proper error handling
+    and configuration checks.
+    
+    Args:
+        name: Custom name for the trace/span (defaults to function name)
+        capture_input: Whether to capture function inputs
+        capture_output: Whether to capture function outputs
+        metadata: Additional metadata to attach to the trace
+    
+    Usage:
+        @observe_operation(name="analysis_search_endpoint")
+        async def analysis_search(request: AnalysisSearchRequest):
+            ...
+            
+        @observe_operation(name="vector_search", metadata={"type": "dense"})
+        def search(self, query: str, top_k: int):
+            ...
+    """
+    def decorator(func: Callable[P, T]) -> Callable[P, T]:
+        # If Langfuse not configured, return original function
+        if not LANGFUSE_CONFIGURED:
+            return func
+        
+        try:
+            from langfuse import observe
+            
+            # Build observe kwargs
+            observe_kwargs = {
+                "capture_input": capture_input,
+                "capture_output": capture_output
+            }
+            
+            if name:
+                observe_kwargs["name"] = name
+            
+            # Apply Langfuse @observe decorator
+            observed_func = observe(**observe_kwargs)(func)
+            
+            # If metadata provided, wrap to add it
+            if metadata:
+                if inspect.iscoroutinefunction(func):
+                    @wraps(observed_func)
+                    async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+                        try:
+                            update_trace_with_metrics(metadata)
+                        except Exception as e:
+                            logger.warning(f"Failed to add metadata: {e}")
+                        return await observed_func(*args, **kwargs)
+                    return async_wrapper
+                else:
+                    @wraps(observed_func)
+                    def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+                        try:
+                            update_trace_with_metrics(metadata)
+                        except Exception as e:
+                            logger.warning(f"Failed to add metadata: {e}")
+                        return observed_func(*args, **kwargs)
+                    return sync_wrapper
+            
+            return observed_func
+            
+        except ImportError:
+            logger.warning("Langfuse decorators not available, tracing disabled")
+            return func
+        except Exception as e:
+            logger.warning(f"Failed to apply tracing decorator: {e}")
+            return func
+    
+    return decorator

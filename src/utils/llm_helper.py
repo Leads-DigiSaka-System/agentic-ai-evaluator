@@ -90,16 +90,19 @@ def invoke_llm(prompt: str, as_json: bool = False, trace_name: str = None):
                     token_usage = metadata.get('token_usage', {})
                     
                     if token_usage:
-                        # v3: Update via current observation (if in context)
+                        # v3: Update via current observation with model for cost calculation
+                        # Langfuse automatically calculates cost if model name is set
                         try:
                             client.update_current_observation(
                                 usage={
                                     "input": token_usage.get('prompt_tokens', 0),
                                     "output": token_usage.get('completion_tokens', 0),
-                                    "total": token_usage.get('total_tokens', 0)
-                                }
+                                    "total": token_usage.get('total_tokens', 0),
+                                    "unit": "TOKENS"
+                                },
+                                model=GEMINI_MODEL  # Set model name for automatic cost calculation
                             )
-                            logger.debug(f"Token usage logged: {token_usage.get('total_tokens', 0)} tokens")
+                            logger.debug(f"Token usage logged: {token_usage.get('total_tokens', 0)} tokens | Model: {GEMINI_MODEL}")
                         except Exception as update_err:
                             logger.debug(f"Could not update observation with tokens: {update_err}")
             except Exception as e:

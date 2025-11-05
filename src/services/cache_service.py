@@ -34,12 +34,13 @@ class AgentOutputCache:
         except:
             return True  # If we can't parse the date, consider it expired
     
-    def save_agent_output(self, agent_response: Dict[str, Any]) -> str:
+    def save_agent_output(self, agent_response: Dict[str, Any], session_id: Optional[str] = None) -> str:
         """
         Save agent output to cache and return cache ID
         
         Args:
             agent_response: Response from /api/agent endpoint
+            session_id: Optional session ID to link storage approval to original session
             
         Returns:
             cache_id: Unique identifier for retrieving cached data
@@ -55,6 +56,10 @@ class AgentOutputCache:
                 "agent_response": agent_response,
                 "status": "pending_storage"
             }
+            
+            # Store session_id if provided (for linking storage approval to original session)
+            if session_id:
+                cache_data["session_id"] = session_id
             
             # Save to file
             cache_file_path = self._get_cache_file_path(cache_id)
@@ -100,7 +105,8 @@ class AgentOutputCache:
                 return None
             
             logger.info(f"Retrieved cached output: {cache_id}")
-            return cache_data.get("agent_response")
+            # Return the full cache_data so we can access session_id and other metadata
+            return cache_data
             
         except Exception as e:
             logger.error(f"Failed to retrieve cache {cache_id}: {str(e)}")

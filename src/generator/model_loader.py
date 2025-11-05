@@ -1,6 +1,6 @@
 # file: src/utils/model_loader.py
 from functools import lru_cache
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.text_splitter import SentenceTransformersTokenTextSplitter
 from src.utils.config import EMBEDDING_MODEL
 from src.utils.clean_logger import get_clean_logger

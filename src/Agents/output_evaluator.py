@@ -1,18 +1,62 @@
 from src.utils.llm_helper import invoke_llm
 from src.utils.clean_logger import get_clean_logger
+from src.utils.config import LANGFUSE_CONFIGURED
 
+# Import Langfuse decorator if available
+if LANGFUSE_CONFIGURED:
+    try:
+        from langfuse import observe
+        from src.monitoring.trace.langfuse_helper import get_langfuse_client
+        LANGFUSE_AVAILABLE = True
+    except ImportError:
+        LANGFUSE_AVAILABLE = False
+        def observe(*args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
+        def get_langfuse_client():
+            return None
+else:
+    LANGFUSE_AVAILABLE = False
+    def observe(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def get_langfuse_client():
+        return None
+
+
+@observe(name="output_evaluator_agent")
 def validate_output(state: dict) -> dict:
     """
-    INTELLIGENT QUALITY EVALUATOR
+    INTELLIGENT QUALITY EVALUATOR AGENT
     
     Purpose: Use LLM to assess if outputs meet quality standards
-    Does NOT decide workflow routing - only quality assessment
+    This is a proper agent that evaluates quality and returns assessment
+    The routing decision is made by evaluation_node based on this assessment
     
     Returns quality metrics that evaluation_node uses to set flags
     """
     logger = get_clean_logger(__name__)
     
     try:
+        # Log agent start for tracing
+        logger.agent_start("output_evaluator_agent", "Starting quality evaluation")
+        
+        # Update Langfuse trace with agent metadata
+        if LANGFUSE_AVAILABLE:
+            client = get_langfuse_client()
+            if client:
+                try:
+                    client.update_current_observation(
+                        metadata={
+                            "agent": "output_evaluator",
+                            "agent_type": "quality_assessor",
+                            "step": "evaluation"
+                        }
+                    )
+                except Exception:
+                    pass  # Silently fail if not in observation context
         # Extract state data
         analysis = state.get("analysis_result", {})
         graphs = state.get("graph_suggestions", {})
@@ -152,7 +196,9 @@ Guidelines:
         # GET LLM QUALITY ASSESSMENT
         # ============================================
         
+        logger.llm_request("evaluator_agent", f"Evaluating {evaluation_context} quality")
         result = invoke_llm(prompt, as_json=True)
+        logger.llm_response("evaluator_agent", "received", "Quality assessment received")
         
         # Handle potential list returns
         if isinstance(result, list):
@@ -180,10 +226,38 @@ Guidelines:
             logger.warning(f"Invalid confidence value: {result['confidence']}, clamping to 0.5")
             result["confidence"] = 0.5
         
+        # Log agent completion with decision
+        logger.agent_success(
+            "output_evaluator_agent", 
+            f"Evaluation complete - Confidence: {result['confidence']:.2f}, Decision: {result['decision']}, Issue: {result['issue_type']}"
+        )
+        
+        # Update Langfuse with final assessment
+        if LANGFUSE_AVAILABLE:
+            client = get_langfuse_client()
+            if client:
+                try:
+                    client.update_current_observation(
+                        metadata={
+                            "evaluation_confidence": result["confidence"],
+                            "evaluation_decision": result["decision"],
+                            "issue_type": result["issue_type"],
+                            "evaluation_context": evaluation_context
+                        }
+                    )
+                except Exception:
+                    pass  # Silently fail if not in observation context
+        
         return result
 
     except Exception as e:
-        logger.error(f"Quality validation failed: {str(e)}")
+        logger.agent_error("output_evaluator_agent", f"Quality validation failed: {str(e)}")
+        
+        # Update Langfuse with error
+        if LANGFUSE_AVAILABLE:
+            from src.monitoring.trace.langfuse_helper import update_trace_with_error
+            update_trace_with_error(e, {"agent": "output_evaluator", "step": "evaluation"})
+        
         return {
             "confidence": 0.5,
             "feedback": f"Validation error: {str(e)}",

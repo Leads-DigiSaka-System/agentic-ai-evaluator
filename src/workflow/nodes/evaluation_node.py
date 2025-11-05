@@ -77,21 +77,23 @@ def evaluation_node(state: dict) -> dict:
                 except Exception:
                     pass  # Silently fail if not in observation context
             
-        # Run intelligent output evaluation (LLM-based quality assessment)
-        logger.agent_start("output_evaluator", f"Evaluating {evaluation_context}")
+        # Run intelligent output evaluation via AGENT
+        # The validate_output function is a proper agent with @observe decorator
+        # This will show up as a separate agent step in Langfuse traces
+        logger.info(f"Invoking output_evaluator_agent to evaluate {evaluation_context} quality")
         evaluation_result = validate_output(state)
         
         # Handle potential list returns from LLM
         if isinstance(evaluation_result, list):
             evaluation_result = evaluation_result[0] if evaluation_result else {}
         
-        # Extract evaluation metrics
+        # Extract evaluation metrics from agent response
         confidence = evaluation_result.get("confidence", 0.5)
         decision = evaluation_result.get("decision", "store")
         feedback = evaluation_result.get("feedback", "No feedback")
         issue_type = evaluation_result.get("issue_type", "no_issue")
         
-        logger.agent_success("output_evaluator", f"Confidence: {confidence:.2f}, Decision: {decision}")
+        logger.info(f"Agent evaluation received - Confidence: {confidence:.2f}, Decision: {decision}")
         logger.info(f"Issue Type: {issue_type}")
         logger.info(f"Feedback: {feedback[:100]}...")
         

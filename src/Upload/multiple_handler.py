@@ -270,16 +270,44 @@ class MultiReportHandler:
                 "storage_message": "Analysis completed. Use /api/storage/preview to review and /api/storage/approve to store."
             }
 
-            # Log final metrics to Langfuse
+            # Log final metrics and scores to Langfuse
             if LANGFUSE_AVAILABLE:
+                from src.monitoring.trace.langfuse_helper import get_trace_url
+                from src.monitoring.scores.workflow_score import log_workflow_scores
+                
+                # Calculate metrics for metadata
+                workflow_success = len(final_state.get("errors", [])) == 0
+                error_count = len(final_state.get("errors", []))
+                
+                # Get evaluation confidence and data quality for metadata
+                evaluation = final_state.get("output_evaluation", {})
+                if isinstance(evaluation, list) and evaluation:
+                    evaluation = evaluation[0]
+                evaluation_confidence = (
+                    evaluation.get("confidence", 0.5) 
+                    if isinstance(evaluation, dict) else 0.5
+                )
+                
+                analysis = final_state.get("analysis_result", {})
+                data_quality_score = (
+                    analysis.get("data_quality", {}).get("completeness_score", 0) 
+                    if analysis else 0
+                )
+                
+                # Log scores using dedicated score module
+                log_workflow_scores(final_state)
+                
+                # Add metrics to metadata
                 update_trace_with_metrics({
-                    "success": len(final_state["errors"]) == 0,
-                    "error_count": len(final_state["errors"]),
+                    "success": workflow_success,
+                    "error_count": error_count,
                     "chunk_count": len(final_state.get("chunks", [])),
                     "chart_count": len(final_state.get("graph_suggestions", {}).get("suggested_charts", [])),
                     "form_type": final_state.get("form_type", ""),
                     "is_valid_content": final_state.get("is_valid_content", False),
-                    "final_step": final_state.get("current_step", "")
+                    "final_step": final_state.get("current_step", ""),
+                    "evaluation_confidence": evaluation_confidence,
+                    "data_quality_score": data_quality_score
                 })
                 
                 trace_url = get_trace_url()
@@ -428,8 +456,14 @@ class MultiReportHandler:
                 "storage_message": "Analysis completed. Use /api/storage/preview to review and /api/storage/approve to store."
             }
 
-            # Log metrics
+            # Log metrics and scores
             if LANGFUSE_AVAILABLE:
+                from src.monitoring.scores.workflow_score import log_workflow_scores
+                
+                # Log workflow scores for this report
+                log_workflow_scores(final_state)
+                
+                # Log metrics
                 update_trace_with_metrics({
                     "report_number": report_index + 1,
                     "success": len(final_state["errors"]) == 0,

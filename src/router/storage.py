@@ -7,14 +7,61 @@ from src.utils.limiter_config import limiter
 from src.utils.errors import ProcessingError, ValidationError
 from src.utils.clean_logger import get_clean_logger
 from src.workflow.models import SimpleStorageApprovalRequest
+from src.utils.config import LANGFUSE_CONFIGURED
 from datetime import datetime
 
 router = APIRouter()
 logger = get_clean_logger(__name__)
 
+# Import Langfuse decorator if available (v3 API)
+if LANGFUSE_CONFIGURED:
+    try:
+        from langfuse import observe, get_client
+        import functools
+        LANGFUSE_AVAILABLE = True
+        
+        # Wrapper to preserve function signature for slowapi compatibility
+        def observe_with_signature_preservation(*args, **kwargs):
+            """Wrapper for @observe that preserves function signature for slowapi"""
+            def decorator(func):
+                # Apply observe decorator
+                observed_func = observe(*args, **kwargs)(func)
+                # Preserve original function signature metadata and attributes
+                functools.update_wrapper(observed_func, func)
+                # Preserve __signature__ for slowapi inspection
+                import inspect
+                if hasattr(func, '__signature__'):
+                    observed_func.__signature__ = func.__signature__
+                else:
+                    try:
+                        observed_func.__signature__ = inspect.signature(func)
+                    except (ValueError, TypeError):
+                        pass
+                return observed_func
+            return decorator
+    except ImportError:
+        LANGFUSE_AVAILABLE = False
+        def observe_with_signature_preservation(*args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
+        def get_client():
+            return None
+        observe = observe_with_signature_preservation
+else:
+    LANGFUSE_AVAILABLE = False
+    def observe_with_signature_preservation(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def get_client():
+        return None
+    observe = observe_with_signature_preservation
+
 
 @router.post("/storage/approve-simple")
 @limiter.limit("10/minute")
+@observe_with_signature_preservation(name="approve_storage_simple")
 async def approve_storage_simple(request: Request, approval_request: SimpleStorageApprovalRequest):
     """
     Simplified storage approval using cached agent output
@@ -33,15 +80,43 @@ async def approve_storage_simple(request: Request, approval_request: SimpleStora
         logger.cache_retrieve(approval_request.cache_id, "processing")
         logger.info(f"User approval: {approval_request.approved}")
         
-        # Get cached agent output
-        cached_output = agent_cache.get_cached_output(approval_request.cache_id)
+        # Update trace with approval metadata and tags
+        if LANGFUSE_AVAILABLE:
+            try:
+                client = get_client()
+                if client:
+                    # Add tags to trace
+                    client.update_current_trace(
+                        tags=["storage", "approval", "api"]
+                    )
+                    client.update_current_observation(
+                        metadata={
+                            "cache_id": approval_request.cache_id[:50],
+                            "approved": approval_request.approved,
+                            "storage_type": "simple_approval"
+                        }
+                    )
+            except Exception as e:
+                logger.debug(f"Could not update observation: {e}")
         
-        if not cached_output:
+        # Get cached agent output
+        cached_data = agent_cache.get_cached_output(approval_request.cache_id)
+        
+        if not cached_data:
             raise ProcessingError(
                 detail="Cached agent output not found or expired",
                 step="cache_retrieval",
                 file_name="cached_output"
             )
+        
+        # Get the actual cached output (agent_response)
+        cached_output = cached_data.get("agent_response", cached_data) if isinstance(cached_data, dict) else cached_data
+        
+        # Retrieve session_id from cache to link storage approval to original session
+        original_session_id = None
+        if isinstance(cached_data, dict):
+            # Check if session_id is stored directly in cache_data (we store it there)
+            original_session_id = cached_data.get("session_id")
         
         # Check if storage is ready
         reports = cached_output.get("reports", [])
@@ -62,9 +137,65 @@ async def approve_storage_simple(request: Request, approval_request: SimpleStora
                 file_name=first_report.get("file_name", "unknown")
             )
         
+        # Link storage approval to original session if session_id is available
+        # This will group storage approval trace with the original file upload session
+        if LANGFUSE_AVAILABLE and original_session_id:
+            try:
+                from src.monitoring.session.langfuse_session_helper import propagate_session_id
+                from src.monitoring.trace.langfuse_helper import get_langfuse_client
+                from src.utils.config import LANGFUSE_CONFIGURED
+                
+                if LANGFUSE_CONFIGURED:
+                    client = get_langfuse_client()
+                    if client:
+                        # Set session_id on trace to link to original session
+                        client.update_current_trace(
+                            session_id=original_session_id,
+                            metadata={
+                                "linked_to_original_session": True,
+                                "original_session_id": original_session_id,
+                                "cache_id": approval_request.cache_id[:50]
+                            }
+                        )
+                        logger.info(f"Storage approval linked to session: {original_session_id}")
+            except Exception as e:
+                logger.debug(f"Could not link to original session: {e}")
+        
         # Handle rejection
         if not approval_request.approved:
             logger.info(f"Storage rejected by user for cache: {approval_request.cache_id[:8]}...")
+            
+            # Update trace with rejection - make it clear in the trace
+            if LANGFUSE_AVAILABLE:
+                try:
+                    from src.monitoring.scores.storage_score import log_storage_rejection_scores
+                    
+                    client = get_client()
+                    if client:
+                        # Update trace with rejection tags and metadata
+                        client.update_current_trace(
+                            tags=["storage", "approval", "api", "rejected"],
+                            metadata={
+                                "status": "rejected",
+                                "reason": "user_rejection",
+                                "cache_id": approval_request.cache_id[:50],
+                                "approved": False
+                            }
+                        )
+                        # Update observation with rejection details
+                        client.update_current_observation(
+                            metadata={
+                                "status": "rejected",
+                                "reason": "user_rejection",
+                                "action": "cache_deleted",
+                                "approved": False
+                            }
+                        )
+                        
+                        # Log rejection scores using dedicated score module
+                        log_storage_rejection_scores()
+                except Exception as e:
+                    logger.debug(f"Could not update observation: {e}")
             
             # Clean up cache
             agent_cache.delete_cache(approval_request.cache_id)
@@ -77,12 +208,73 @@ async def approve_storage_simple(request: Request, approval_request: SimpleStora
             }
         
         # Process storage for single or multiple reports
-        if len(reports) == 1:
-            # Single report
-            result = await _process_single_report_storage(first_report)
+        # Wrap in propagate_session_id context to ensure all child operations inherit session_id
+        if original_session_id and LANGFUSE_AVAILABLE:
+            try:
+                from src.monitoring.session.langfuse_session_helper import propagate_session_id
+                from src.utils.config import LANGFUSE_CONFIGURED
+                
+                if LANGFUSE_CONFIGURED:
+                    # Process storage within session context
+                    with propagate_session_id(original_session_id, cache_id=approval_request.cache_id[:50]):
+                        if len(reports) == 1:
+                            # Single report
+                            result = await _process_single_report_storage(first_report)
+                        else:
+                            # Multiple reports - use batch storage
+                            result = await _process_multiple_reports_storage(reports)
+                else:
+                    # Fallback if Langfuse not configured
+                    if len(reports) == 1:
+                        result = await _process_single_report_storage(first_report)
+                    else:
+                        result = await _process_multiple_reports_storage(reports)
+            except Exception as e:
+                logger.debug(f"Could not propagate session_id in storage: {e}")
+                # Fallback to normal processing
+                if len(reports) == 1:
+                    result = await _process_single_report_storage(first_report)
+                else:
+                    result = await _process_multiple_reports_storage(reports)
         else:
-            # Multiple reports - use batch storage
-            result = await _process_multiple_reports_storage(reports)
+            # No session_id available, process normally
+            if len(reports) == 1:
+                # Single report
+                result = await _process_single_report_storage(first_report)
+            else:
+                # Multiple reports - use batch storage
+                result = await _process_multiple_reports_storage(reports)
+        
+        # Update trace with storage results, tags, and scores
+        if LANGFUSE_AVAILABLE:
+            try:
+                from src.monitoring.scores.storage_score import log_storage_scores
+                
+                client = get_client()
+                if client:
+                    storage_type = "single" if len(reports) == 1 else "batch"
+                    storage_status = result.get("status", "unknown")
+                    
+                    # Update trace with tags
+                    client.update_current_trace(
+                        tags=["storage", "approval", "api", storage_type, storage_status]
+                    )
+                    
+                    # Log scores using dedicated score module
+                    log_storage_scores(reports, cached_output, result, storage_type)
+                    
+                    # Update metadata
+                    metadata = {
+                        "status": storage_status,
+                        "reports_count": len(reports),
+                        "storage_type": storage_type
+                    }
+                    if "successful_items" in result:
+                        metadata["successful_items"] = result.get("successful_items")
+                        metadata["failed_items"] = result.get("failed_items")
+                    client.update_current_observation(metadata=metadata)
+            except Exception as e:
+                logger.debug(f"Could not update observation: {e}")
         
         # Clean up cache after successful storage
         if result.get("status") == "success":
@@ -96,6 +288,18 @@ async def approve_storage_simple(request: Request, approval_request: SimpleStora
         raise
     except Exception as e:
         logger.error(f"Unexpected error during simple storage approval: {str(e)[:100]}")
+        
+        # Update trace with error
+        if LANGFUSE_AVAILABLE:
+            try:
+                from src.monitoring.trace.langfuse_helper import update_trace_with_error
+                update_trace_with_error(e, {
+                    "step": "simple_storage_approval",
+                    "cache_id": approval_request.cache_id[:50]
+                })
+            except Exception as langfuse_err:
+                logger.debug(f"Failed to log error to Langfuse: {langfuse_err}")
+        
         raise ProcessingError(
             detail="Unexpected error during simple storage approval",
             step="simple_storage_approval",
