@@ -6,9 +6,77 @@ from src.utils.clean_logger import get_clean_logger
 logger = get_clean_logger(__name__)
 
 
+def repair_json_string(json_str: str) -> str:
+    """
+    Attempts to repair common JSON syntax errors in LLM responses.
+    
+    Uses a simple, iterative approach to fix:
+    - Missing commas between object properties
+    - Trailing commas before closing braces/brackets
+    
+    Args:
+        json_str: Potentially malformed JSON string
+        
+    Returns:
+        Repaired JSON string (may still be invalid)
+    """
+    if not json_str:
+        return json_str
+    
+    # Step 1: Remove trailing commas before closing braces/brackets
+    json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+    
+    # Step 2: Fix missing commas between object properties
+    # Look for pattern: "key": value (whitespace) "key"
+    # This is the most common error - missing comma between properties
+    lines = json_str.split('\n')
+    repaired_lines = []
+    
+    for i, line in enumerate(lines):
+        current_line = line.rstrip()
+        
+        # Check if line ends with a value (not comma, not closing brace) and next line starts with a key
+        if i < len(lines) - 1:
+            next_line = lines[i + 1].lstrip()
+            
+            # If current line doesn't end with comma, }, ], and next line starts with "
+            # and current line contains a colon (indicating it's a key-value pair)
+            if (current_line and 
+                not current_line.endswith(',') and 
+                not current_line.endswith('{') and
+                not current_line.endswith('[') and
+                not current_line.endswith('}') and
+                not current_line.endswith(']') and
+                ':' in current_line and
+                next_line.startswith('"')):
+                # Add comma at end of current line
+                current_line = current_line.rstrip() + ','
+        
+        repaired_lines.append(current_line)
+    
+    json_str = '\n'.join(repaired_lines)
+    
+    # Step 3: Fix missing commas after closing braces/brackets when followed by a key
+    # Pattern: } "key" or ] "key" -> }, "key" or ], "key"
+    json_str = re.sub(r'([}\]])"', r'\1, "', json_str)
+    
+    # Step 4: More aggressive fix for missing commas between properties (single-line case)
+    # Pattern: "key": value "key" -> "key": value, "key"
+    # This handles cases where properties are on the same line
+    json_str = re.sub(
+        r'("(?:[^"\\]|\\.)*"\s*:\s*[^,}\]]+?)\s+("(?:[^"\\]|\\.)*"\s*:)',
+        r'\1, \2',
+        json_str
+    )
+    
+    return json_str
+
+
 def clean_json_from_llm_response(response: Any) -> Optional[dict]:
     """
     Cleans markdown-wrapped JSON (e.g., ```json {...} ```) from an LLM response and parses it.
+    Includes JSON repair attempts for common syntax errors.
+    
     Args:
         response: Either a string or an object with `.content` containing JSON-like text.
     Returns:
@@ -23,7 +91,14 @@ def clean_json_from_llm_response(response: Any) -> Optional[dict]:
             parsed = json.loads(raw)
             return parsed if isinstance(parsed, dict) else (parsed[0] if parsed and isinstance(parsed, list) else None)
         except json.JSONDecodeError:
-            pass
+            # Try repairing and parsing again
+            try:
+                repaired = repair_json_string(raw)
+                parsed = json.loads(repaired)
+                logger.debug("Successfully repaired and parsed raw JSON")
+                return parsed if isinstance(parsed, dict) else (parsed[0] if parsed and isinstance(parsed, list) else None)
+            except (json.JSONDecodeError, Exception):
+                pass
 
     # 2) Extract JSON inside markdown backticks (object or array)
     fenced = re.search(r"```(?:json)?\s*([\[{].*?[\]}])\s*```", response_text, re.DOTALL)
@@ -34,7 +109,31 @@ def clean_json_from_llm_response(response: Any) -> Optional[dict]:
             return parsed if isinstance(parsed, dict) else (parsed[0] if parsed and isinstance(parsed, list) else None)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to decode fenced JSON: {str(e)}")
-            logger.debug(f"Fenced JSON: {candidate[:200]}...")
+            logger.debug(f"Fenced JSON (first 200 chars): {candidate[:200]}...")
+            # Log error position if available
+            if hasattr(e, 'pos') and e.pos is not None:
+                error_pos = e.pos
+                start = max(0, error_pos - 150)
+                end = min(len(candidate), error_pos + 150)
+                logger.debug(f"Error at position {error_pos}: ...{candidate[start:end]}...")
+                # Also log the line number if available
+                if hasattr(e, 'lineno'):
+                    logger.debug(f"Error at line {e.lineno}, column {getattr(e, 'colno', 'unknown')}")
+            
+            # Try repairing
+            try:
+                repaired = repair_json_string(candidate)
+                parsed = json.loads(repaired)
+                logger.info("✅ Successfully repaired and parsed fenced JSON")
+                return parsed if isinstance(parsed, dict) else (parsed[0] if parsed and isinstance(parsed, list) else None)
+            except (json.JSONDecodeError, Exception) as repair_err:
+                logger.debug(f"JSON repair also failed: {str(repair_err)}")
+                # Log more context around the repair error location
+                if hasattr(repair_err, 'pos') and repair_err.pos is not None:
+                    error_pos = repair_err.pos
+                    start = max(0, error_pos - 150)
+                    end = min(len(repaired), error_pos + 150)
+                    logger.debug(f"Repair error context (pos {error_pos}): ...{repaired[start:end]}...")
 
     # 3) Fallback: find first JSON object heuristically
     obj_match = re.search(r"\{[\s\S]*\}", response_text)
@@ -44,10 +143,34 @@ def clean_json_from_llm_response(response: Any) -> Optional[dict]:
             return json.loads(candidate)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to decode heuristic JSON object: {str(e)}")
-            logger.debug(f"Heuristic JSON: {candidate[:200]}...")
+            logger.debug(f"Heuristic JSON (first 200 chars): {candidate[:200]}...")
+            # Log error position if available
+            if hasattr(e, 'pos') and e.pos is not None:
+                error_pos = e.pos
+                start = max(0, error_pos - 150)
+                end = min(len(candidate), error_pos + 150)
+                logger.debug(f"Error at position {error_pos}: ...{candidate[start:end]}...")
+                # Also log the line number if available
+                if hasattr(e, 'lineno'):
+                    logger.debug(f"Error at line {e.lineno}, column {getattr(e, 'colno', 'unknown')}")
+            
+            # Try repairing
+            try:
+                repaired = repair_json_string(candidate)
+                parsed = json.loads(repaired)
+                logger.info("✅ Successfully repaired and parsed heuristic JSON")
+                return parsed
+            except (json.JSONDecodeError, Exception) as repair_err:
+                logger.debug(f"JSON repair also failed: {str(repair_err)}")
+                # Log more context around the repair error location
+                if hasattr(repair_err, 'pos') and repair_err.pos is not None:
+                    error_pos = repair_err.pos
+                    start = max(0, error_pos - 150)
+                    end = min(len(repaired), error_pos + 150)
+                    logger.debug(f"Repair error context (pos {error_pos}): ...{repaired[start:end]}...")
 
     logger.warning("No valid JSON found in LLM response after cleanup attempts")
-    logger.debug(f"Response text: {response_text[:300]}...")
+    logger.debug(f"Response text (first 300 chars): {response_text[:300]}...")
     return None
 
 

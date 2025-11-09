@@ -60,6 +60,7 @@ SECTION 1: BASIC DATA EXTRACTION
 ═══════════════════════════════════════════════════════════════
 
 Extract ALL available fields (adapt field names as needed):
+- applicant: Name  
 - cooperator: Name of Cooperator / Demo Cooperator
 - product: Leads Agri Product / Product Name / Treatment Product
 - location: Farm Location / Site Location / Location
@@ -369,6 +370,8 @@ RETURN FLEXIBLE JSON STRUCTURE (ONLY JSON, NO OTHER TEXT)
   }},
   
   "basic_info": {{
+    "applicant": "",
+    "date_of_application": "",
     "cooperator": "",
     "product": "",
     "location": "",

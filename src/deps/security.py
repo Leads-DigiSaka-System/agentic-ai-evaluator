@@ -10,6 +10,7 @@ api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 def require_api_key(api_key: str = Security(api_key_header)) -> APIKey:
     server_key: Optional[str] = os.getenv("API_KEY")
+    
     if not server_key:
         # Misconfiguration on server side
         raise HTTPException(
@@ -23,6 +24,7 @@ def require_api_key(api_key: str = Security(api_key_header)) -> APIKey:
             detail="Invalid or missing API key",
             headers={"WWW-Authenticate": "API key"},
         )
+    
     return api_key
 
 

@@ -97,10 +97,10 @@ app.add_middleware(
 # Include routers
 # Secure all API routes with API key. Health and admin validate can remain open if desired.
 app.include_router(upload_router, prefix="/api", tags=["Upload"], dependencies=[Depends(require_api_key)])
-app.include_router(agent_router, prefix="/api", tags=["agent"], dependencies=[Depends(require_api_key)])
+app.include_router(agent_router, prefix="/api", tags=["agent"], dependencies=[Depends(require_api_key)])  # Re-enabled with debug
 app.include_router(search_router, prefix="/api", tags=["search"], dependencies=[Depends(require_api_key)])
 #app.include_router(delete_router, prefix="/api", tags=["delete"], dependencies=[Depends(require_api_key)])
-app.include_router(storage_router, prefix="/api", tags=["storage"], dependencies=[Depends(require_api_key)])
+app.include_router(storage_router, prefix="/api", tags=["storage"], dependencies=[Depends(require_api_key)])  # Re-enabled with debug
 
 # Health check endpoint
 @app.get("/")

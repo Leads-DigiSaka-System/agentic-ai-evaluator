@@ -59,7 +59,20 @@ def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
         
         # Get complete chart suggestions from LLM (including chart data)
         prompt_template = graph_suggestion_prompt()
-        prompt = prompt_template.format(analysis_data=json.dumps(analysis_data, indent=2))
+        
+        # Safely format the prompt with error handling
+        try:
+            analysis_json = json.dumps(analysis_data, indent=2)
+            # Limit analysis data size to prevent prompt overflow
+            if len(analysis_json) > 30000:
+                logger.debug(f"Analysis data too large ({len(analysis_json)} chars), truncating...")
+                analysis_json = analysis_json[:30000] + "\n... (truncated for prompt size)"
+            prompt = prompt_template.format(analysis_data=analysis_json)
+        except Exception as e:
+            logger.graph_error(f"Failed to format prompt: {str(e)}")
+            state["errors"].append(f"Prompt formatting error: {str(e)}")
+            state["graph_suggestions"] = _generate_fallback_charts(analysis_data)
+            return state
         
         # Get LLM response (prefer structured JSON)
         logger.llm_request("gemini", "graph_suggestion")
@@ -156,7 +169,8 @@ def _generate_fallback_charts(analysis_data: dict) -> dict:
     control_data = raw_data.get("control", {})
     leads_data = raw_data.get("leads_agri", {})
     
-    improvement = calculated.get("improvement_percent", 0)
+    # Try both field names for compatibility
+    improvement = calculated.get("relative_improvement_percent", calculated.get("improvement_percent", 0))
     
     fallback_charts = {
         "suggested_charts": [
