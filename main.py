@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from src.router.upload import router as upload_router 
 from src.router.search import router as search_router
-#from src.router.delete_extract import router as delete_router
+from src.router.delete_extract import router as delete_router
 from src.router.agent import router as agent_router
 from src.router.storage import router as storage_router
 from src.deps.security import require_api_key
@@ -99,7 +99,7 @@ app.add_middleware(
 app.include_router(upload_router, prefix="/api", tags=["Upload"], dependencies=[Depends(require_api_key)])
 app.include_router(agent_router, prefix="/api", tags=["agent"], dependencies=[Depends(require_api_key)])  # Re-enabled with debug
 app.include_router(search_router, prefix="/api", tags=["search"], dependencies=[Depends(require_api_key)])
-#app.include_router(delete_router, prefix="/api", tags=["delete"], dependencies=[Depends(require_api_key)])
+app.include_router(delete_router, prefix="/api", tags=["delete"], dependencies=[Depends(require_api_key)])
 app.include_router(storage_router, prefix="/api", tags=["storage"], dependencies=[Depends(require_api_key)])  # Re-enabled with debug
 
 # Health check endpoint

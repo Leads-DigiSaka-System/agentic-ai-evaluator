@@ -180,7 +180,6 @@ class AnalysisStorage:
             performance = analysis.get("performance_analysis", {})
             calculated = performance.get("calculated_metrics", {})
             cooperator_feedback = analysis.get("cooperator_feedback", {})
-            commercial = analysis.get("commercial_metrics", {})
             
             # Create searchable summary
             summary_text = self._create_summary_text(
@@ -210,7 +209,7 @@ class AnalysisStorage:
             # Prepare comprehensive payload
             payload = self._prepare_report_payload(
                 report, analysis, graph_suggestions, basic_info,
-                calculated, performance, cooperator_feedback, commercial,
+                calculated, performance, cooperator_feedback,
                 form_id, full_response, summary_text
             )
             
@@ -252,7 +251,6 @@ class AnalysisStorage:
         calculated: Dict,
         performance: Dict,
         cooperator_feedback: Dict,
-        commercial: Dict,
         form_id: str,
         full_response: Dict,
         summary_text: str
@@ -310,13 +308,6 @@ class AnalysisStorage:
             "metrics_detected": analysis.get("metrics_detected", []),
             "measurement_intervals": analysis.get("measurement_intervals", []),
             "metric_type": performance.get("metric_type", ""),
-            
-            # Commercial Metrics (safe conversion)
-            "demo_date": commercial.get("demo_date", ""),
-            "demo_participants": int(commercial.get("participants", 0)),
-            "total_sales": self._safe_float(commercial.get("total_sales", 0)),
-            "sales_per_participant": self._safe_float(commercial.get("sales_per_participant", 0)),
-            "demo_conducted": bool(commercial.get("demo_conducted", False)),
             
             # Treatment Info
             "control_product": control_product,

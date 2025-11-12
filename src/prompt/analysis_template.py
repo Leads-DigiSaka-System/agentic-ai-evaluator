@@ -69,8 +69,6 @@ Extract ALL available fields (adapt field names as needed):
 - crop: Crop/Variety / Crop Type
 - plot_size: Plot size / Area (sq meter or hectares)
 - contact: Contact Number (if available)
-- participants: No of Participants (if available)
-- total_sales: Total Move-out / Sales (if available)
 
 DATA QUALITY ASSESSMENT:
 - Completeness score: Calculate % of filled fields (0–100)
@@ -261,20 +259,7 @@ Sentiment Indicators:
 - Negative: "poor", "no difference", "disappointing"
 
 ═══════════════════════════════════════════════════════════════
-SECTION 6: COMMERCIAL PERFORMANCE (if available)
-═══════════════════════════════════════════════════════════════
-
-Extract commercial data if present:
-- Demo showcase date
-- Number of participants
-- Total sales/move-out value (in Php)
-- Sales per participant: (total_sales / participants)
-- Market reception indicators
-
-If data is N/A, note as "Demo not yet conducted"
-
-═══════════════════════════════════════════════════════════════
-SECTION 7: RISK & OPPORTUNITY ASSESSMENT
+SECTION 6: RISK & OPPORTUNITY ASSESSMENT
 ═══════════════════════════════════════════════════════════════
 
 Risk Factors (flag if present):
@@ -289,12 +274,11 @@ Opportunities (highlight if present):
 - Strong performance (use appropriate threshold for metric type)
 - Highly positive cooperator feedback
 - Quick visible results (<7 days)
-- Good commercial metrics (>Php 1,500 per participant)
 - Multiple metrics showing improvement
 - High data quality and completeness
 
 ═══════════════════════════════════════════════════════════════
-SECTION 8: ACTIONABLE RECOMMENDATIONS
+SECTION 7: ACTIONABLE RECOMMENDATIONS
 ═══════════════════════════════════════════════════════════════
 
 Provide 3-5 DATA-DRIVEN recommendations:
@@ -309,10 +293,9 @@ Tailor recommendations to:
 - Product type (herbicide vs biostimulant needs different strategies)
 - Performance level (strong vs moderate results)
 - Data completeness (recommend follow-up trials if data missing)
-- Commercial potential (scale up if metrics are strong)
 
 ═══════════════════════════════════════════════════════════════
-SECTION 9: EXECUTIVE SUMMARY
+SECTION 8: EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════
 
 Write a COMPREHENSIVE executive summary (1-2 paragraphs) that synthesizes ALL key insights from the entire report.
@@ -331,9 +314,8 @@ PARAGRAPH 1: TRIAL OVERVIEW & PERFORMANCE HIGHLIGHTS
   * Counts/Measurements: "produced X vs Y (Z units difference, W% improvement)"
 - Include yield impact if available (with specific numbers and economic significance)
 
-PARAGRAPH 2: VALIDATION, COMMERCIAL POTENTIAL & STRATEGIC ASSESSMENT
+PARAGRAPH 2: VALIDATION & STRATEGIC ASSESSMENT
 - Real-world validation: cooperator feedback sentiment, key highlights, timeline of visible results
-- Commercial performance: demo results (participants, sales), market reception, commercial potential
 - Risk & opportunity: top 1-2 most significant risks (if any) and top 1-2 most promising opportunities
 - Overall assessment: confidence level, top priority recommendation, and recommended path forward
 
@@ -379,9 +361,7 @@ RETURN FLEXIBLE JSON STRUCTURE (ONLY JSON, NO OTHER TEXT)
     "planting_date": "",
     "crop": "",
     "plot_size": "",
-    "contact": "",
-    "participants": 0,
-    "total_sales": 0
+    "contact": ""
   }},
   
   "treatment_comparison": {{
@@ -455,15 +435,6 @@ RETURN FLEXIBLE JSON STRUCTURE (ONLY JSON, NO OTHER TEXT)
     "visible_results_timeline": "",
     "concerns": []
   }},
-  
-  "commercial_metrics": {{
-    "demo_date": "",
-    "participants": 0,
-    "total_sales": 0,
-    "sales_per_participant": 0,
-    "demo_conducted": true,
-    "market_reception": ""
-  }},
 
   "privacy": {{
     "pii_detected": false,
@@ -500,7 +471,7 @@ RETURN FLEXIBLE JSON STRUCTURE (ONLY JSON, NO OTHER TEXT)
     }}
   ],
   
-  "executive_summary": "Comprehensive 1-2 paragraph narrative summary (200-400 words) synthesizing all sections: trial overview, performance highlights with numbers, trends, yield impact, cooperator feedback, commercial metrics, risks/opportunities, and strategic recommendations. Must be concise but complete story of the trial with specific data and actionable insights."
+  "executive_summary": "Comprehensive 1-2 paragraph narrative summary (200-400 words) synthesizing all sections: trial overview, performance highlights with numbers, trends, yield impact, cooperator feedback, risks/opportunities, and strategic recommendations. Must be concise but complete story of the trial with specific data and actionable insights."
 }}
 
 ═══════════════════════════════════════════════════════════════

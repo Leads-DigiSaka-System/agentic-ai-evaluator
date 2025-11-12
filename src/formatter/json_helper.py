@@ -257,9 +257,7 @@ def normalize_analysis_response(response_data: Dict[str, Any]) -> Dict[str, Any]
                 "planting_date": "",
                 "crop": "",
                 "plot_size": "",
-                "contact": "",
-                "participants": 0,
-                "total_sales": 0
+                "contact": ""
             }
         
         # Ensure recommendations is always a list

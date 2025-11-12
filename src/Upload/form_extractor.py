@@ -4,7 +4,7 @@ from google import genai
 from google.genai import types
 from src.utils.config import GOOGLE_API_KEY, GEMINI_MODEL
 from langchain_community.document_loaders import PyMuPDFLoader
-from src.prompt.prompt_template import formatting_template
+from src.prompt.prompt_template import formatting_template, handwritten_form_template
 from src.Upload.file_validator import FileValidator
 from src.utils.clean_logger import get_clean_logger
 
@@ -77,14 +77,23 @@ def extract_with_gemini(
                 logger.file_error(filename, result['error'])
                 return result
         
-        # Step 2: Extract content with Gemini
+        # Step 2: Detect content type (handwritten form, typed, or mixed)
+        # Works for both images AND PDFs (PDFs can contain images of handwritten forms)
+        content_type = _detect_content_type(file_content, filepath, result["file_type"], logger)
+        logger.info(f"Detected content type: {content_type} (file type: {result['file_type']})")
+        
+        # Step 3: Extract content with Gemini (with automatic prompt selection)
         logger.file_extraction(filename, result["file_type"], len(file_content))
-        extracted_text = _extract_with_gemini_api(file_content, filepath, result["file_type"])
+        extracted_text = _extract_with_gemini_api(
+            file_content, 
+            filepath, 
+            result["file_type"],
+            content_type
+        )
         
         if extracted_text:
             result["success"] = True
             result["extracted_text"] = extracted_text
-            # Log completion without passing an extra argument to file_extraction
             logger.file_extraction(filename, result["file_type"], len(extracted_text))
             logger.info("Extraction completed successfully")
         else:
@@ -101,20 +110,89 @@ def extract_with_gemini(
         return result
 
 
+def _detect_content_type(
+    file_content: bytes, 
+    filepath: pathlib.Path, 
+    file_type: str,
+    logger
+) -> str:
+    """
+    Detect if file contains handwritten forms
+    
+    Uses a lightweight Gemini call to classify content type
+    Returns: "handwritten_form", "typed", or "mixed"
+    """
+    try:
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        
+        # Detection prompt
+        if file_type == "pdf":
+            detection_prompt = """Analyze this PDF quickly. Does it contain:
+1. FORMS with HANDWRITTEN entries = "handwritten_form"
+2. TYPED/PRINTED text = "typed"
+3. MIXED (printed form with handwritten fields) = "mixed"
+
+Respond with ONLY: "handwritten_form", "typed", or "mixed"
+"""
+        else:
+            detection_prompt = """Analyze this image quickly. Is it:
+1. A FORM with HANDWRITTEN entries = "handwritten_form"
+2. TYPED/PRINTED document = "typed"
+3. MIXED (printed form with handwritten fields) = "mixed"
+
+Respond with ONLY: "handwritten_form", "typed", or "mixed"
+"""
+        
+        # Determine MIME type
+        if file_type == "pdf":
+            mime_type = 'application/pdf'
+        else:
+            ext = filepath.suffix.lower()
+            mime_type = 'image/png' if ext == '.png' else 'image/jpeg'
+        
+        # Use simple call without config for detection (lightweight)
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[
+                types.Part.from_bytes(data=file_content, mime_type=mime_type),
+                detection_prompt
+            ]
+        )
+        
+        if response.candidates and response.candidates[0].content.parts:
+            result = response.candidates[0].content.parts[0].text.strip().lower()
+            if "handwritten" in result or "form" in result:
+                return "handwritten_form"
+            elif "mixed" in result:
+                return "mixed"
+            else:
+                return "typed"
+        
+        # Default to handwritten_form for safety
+        return "handwritten_form"
+        
+    except Exception as e:
+        logger.warning(f"Content detection failed: {e}, defaulting to handwritten_form")
+        return "handwritten_form"
+
+
 def _extract_with_gemini_api(
     file_content: bytes, 
     filepath: pathlib.Path, 
-    file_type: str
+    file_type: str,
+    content_type: str
 ) -> Optional[str]:
     """
-    Internal function: Call Gemini API for extraction
+    Internal function: Call Gemini API for extraction with automatic prompt selection
     
     Handles both PDF and Image files using appropriate MIME types
+    Automatically selects prompt based on content type (handwritten vs typed)
     
     Args:
         file_content: Raw file bytes
         filepath: Path object for file
         file_type: "pdf" or "image"
+        content_type: "handwritten_form", "typed", or "mixed"
         
     Returns:
         Extracted text or None
@@ -126,15 +204,20 @@ def _extract_with_gemini_api(
         
         logger.info(f"File size: {file_size / (1024*1024):.2f} MB")
         
-        # Get extraction prompt template
-        prompt_template = formatting_template()
-        extraction_prompt = prompt_template.template
+        # Select appropriate prompt based on content type
+        if content_type == "handwritten_form" or content_type == "mixed":
+            prompt_template = handwritten_form_template()
+            extraction_prompt = prompt_template.template
+            logger.info(f"Using handwritten form prompt for {content_type}")
+        else:
+            prompt_template = formatting_template()
+            extraction_prompt = prompt_template.template
+            logger.info("Using structured extraction prompt")
         
         # Determine MIME type based on file type
         if file_type == "pdf":
             mime_type = 'application/pdf'
         elif file_type == "image":
-            # Detect image format from extension
             ext = filepath.suffix.lower()
             if ext == '.png':
                 mime_type = 'image/png'
@@ -146,16 +229,17 @@ def _extract_with_gemini_api(
             logger.error(f"Unsupported file type: {file_type}")
             return None
         
+        # VLM processes images directly - no separate OCR needed
+        # Note: Using default config (no GenerationConfig) due to SDK compatibility
+        # The specialized prompt is more important than config settings for VLM
+        
         # Choose processing method based on file size
         if file_size < 20 * 1024 * 1024:  # 20MB threshold
             logger.info("Processing with inline method")
             response = client.models.generate_content(
                 model=GEMINI_MODEL,
                 contents=[
-                    types.Part.from_bytes(
-                        data=file_content,
-                        mime_type=mime_type,
-                    ),
+                    types.Part.from_bytes(data=file_content, mime_type=mime_type),
                     extraction_prompt
                 ]
             )

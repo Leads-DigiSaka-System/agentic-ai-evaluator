@@ -81,6 +81,115 @@ You are working with retrieved chunks from a vector database search. Each chunk 
 """
 )
 
+# Handwritten Form Template
+def handwritten_form_template():
+    """
+    Specialized prompt for agricultural demo forms with handwritten entries
+    Designed for forms like "Leads Agri Foliar/Biostimulant Demo Form"
+    Focuses on OCR accuracy for handwritten text extraction
+    
+    Supports:
+    - Single image files (PNG, JPG, JPEG)
+    - PDF files containing images of handwritten forms (scanned pages, multi-page PDFs)
+    """
+    return PromptTemplate.from_template(
+        """You are extracting data from a HANDWRITTEN agricultural demo form. This may be:
+- A single image file with a handwritten form
+- A PDF file containing one or more images/pages of handwritten forms
+
+The form has PRINTED labels/headers and HANDWRITTEN data entries.
+
+CRITICAL INSTRUCTIONS:
+
+1. **READ ALL HANDWRITTEN TEXT ACCURATELY**:
+   - Read every handwritten character carefully using your vision capabilities
+   - Preserve exact spelling, even if handwriting is unclear
+   - Numbers must be extracted exactly as written (e.g., "50ml", "16", "18")
+   - Dates must be preserved in original format (e.g., "APRIL 4, 2025", "MARCH 4, 2025")
+
+2. **HANDLE MIXED CONTENT**:
+   - Printed labels (like "Name/Position/Area:", "Crop/Variety") are already clear
+   - Focus on extracting the HANDWRITTEN values next to these labels
+   - Distinguish between printed text (ignore or note as labels) and handwritten text (extract)
+
+3. **PRESERVE TABLE STRUCTURE**:
+   - If data is in tables (like Treatment table, Crop Vigor table), maintain the table structure
+   - Extract handwritten entries in correct cells
+   - Preserve column relationships (Treatment → Product → Rate → Application Method → Timing)
+
+4. **HANDLE CURSIVE HANDWRITING**:
+   - The "Remarks" section may have cursive handwriting - read it carefully
+   - If a word is unclear, provide best interpretation with "[?]" if uncertain
+   - Preserve sentence structure and punctuation
+
+5. **EXTRACT ALL SECTIONS**:
+   - Cooperator Information (name, location, contact, dates)
+   - Treatment details (products, rates, methods, timing)
+   - Crop Vigor observations (tiller counts, LCC values)
+   - Yield data (if present)
+   - Remarks/Feedback (full paragraph extraction)
+   - Signatures (mark as "[SIGNATURE]" if present)
+
+6. **HANDLE MULTIPLE PAGES/IMAGES**:
+   - If this is a PDF with multiple pages/images, extract each form separately
+   - Use '### REPORT_END ###' as separator between different forms/pages
+   - Each page/image should be treated as a separate form if it contains a complete form
+
+OUTPUT FORMAT:
+
+# Agricultural Demo Form Extraction
+
+## Cooperator Information
+- **Name/Position/Area**: [handwritten value]
+- **Leads Agri Product**: [handwritten value]
+- **Name of Cooperator**: [handwritten value]
+- **Farm Location**: [handwritten value]
+- **Contact Number**: [handwritten value]
+- **Plot size**: [handwritten value]
+- **Date of Application**: [handwritten value]
+- **Crop/Variety**: [handwritten value]
+- **Date of Planting**: [handwritten value]
+
+## Treatment Table
+| Treatment | Product | Rate | Application Method | Timing/s of application |
+|-----------|---------|------|-------------------|------------------------|
+| [printed] | [printed] | [handwritten] | [handwritten] | [handwritten] |
+| [printed] | [printed] | [handwritten] | [handwritten] | [handwritten] |
+
+## Crop Vigor Observations
+| Trt | Product | 10 DAA | 18 DAA |
+|-----|---------|--------|--------|
+| [printed] | [printed] | [handwritten] | [handwritten] |
+
+**LCC Values:**
+- 10 DAA: [handwritten]
+- 18 DAA: [handwritten]
+
+## Yield Data
+| Product | Yield (MT/Ha) |
+|---------|---------------|
+| [printed] | [handwritten or empty] |
+
+## Remarks/Cooperator Feedback
+[Extract the full handwritten paragraph exactly as written, preserving all details]
+
+## Signature Section
+- **Name**: [handwritten]
+- **Signature**: [SIGNATURE] or [handwritten signature text if readable]
+
+## Uncertain Text
+- [Field/Location]: "[text][?]" - [reason for uncertainty]
+- [If completely illegible]: "[UNREADABLE]" - [location/context]
+
+CRITICAL: 
+- Extract numbers EXACTLY as written (don't convert "50ml" to "50 ml")
+- Preserve dates in original format
+- For cursive text in Remarks, read carefully and preserve sentence structure
+- If you cannot read something, mark it explicitly rather than guessing
+"""
+    )
+
+
 #For Evaluator Meticts and Insight Summary of the Output
 
 def content_validation_template():
