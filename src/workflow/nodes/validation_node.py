@@ -3,6 +3,7 @@ from src.prompt.prompt_template import content_validation_template
 from src.utils.llm_helper import invoke_llm
 from src.utils.clean_logger import CleanLogger
 from src.utils.config import LANGFUSE_CONFIGURED
+import asyncio
 
 # Import Langfuse decorator if available
 if LANGFUSE_CONFIGURED:

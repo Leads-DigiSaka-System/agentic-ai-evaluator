@@ -1,6 +1,7 @@
 import os
 import tempfile
 import re
+import asyncio
 from typing import List, Dict, Any
 from src.workflow.state import ProcessingState
 from src.workflow.graph import processing_workflow
@@ -56,7 +57,11 @@ class MultiReportHandler:
     """Handler for processing PDFs with multiple reports including graph suggestions"""
     
     @staticmethod
-    async def process_multi_report_pdf(file_content: bytes, original_filename: str) -> Dict[str, Any]:
+    async def process_multi_report_pdf(
+        file_content: bytes, 
+        original_filename: str,
+        tracking_id: str = None
+    ) -> Dict[str, Any]:
         """
         Process a file that may contain multiple reports
         
@@ -99,7 +104,8 @@ class MultiReportHandler:
 
             # Split and process reports
             result = await MultiReportHandler._process_reports(
-                extracted_markdown, file_content, original_filename, tmp_path, pdf_metadata
+                extracted_markdown, file_content, original_filename, tmp_path, pdf_metadata,
+                tracking_id=tracking_id
             )
 
             return result
@@ -115,8 +121,14 @@ class MultiReportHandler:
                     pass
 
     @staticmethod
-    async def _process_reports(extracted_markdown: str, file_content: bytes, 
-                             original_filename: str, tmp_path: str, pdf_metadata: Dict[str, Any]) -> Dict[str, Any]:
+    async def _process_reports(
+        extracted_markdown: str, 
+        file_content: bytes, 
+        original_filename: str, 
+        tmp_path: str, 
+        pdf_metadata: Dict[str, Any],
+        tracking_id: str = None
+    ) -> Dict[str, Any]:
         """
         Split markdown into individual reports using intelligent detection
         
@@ -134,7 +146,8 @@ class MultiReportHandler:
             # For SINGLE REPORT, use full workflow with validation
             logger.info("Processing as SINGLE REPORT (full validation enabled)")
             report_response = await MultiReportHandler._process_single_report_direct(
-                tmp_path, file_content, original_filename, pdf_metadata
+                tmp_path, file_content, original_filename, pdf_metadata,
+                tracking_id=tracking_id
             )
             
             # Check if content validation failed
@@ -181,8 +194,13 @@ class MultiReportHandler:
 
     @staticmethod
     @observe(as_type="generation", name="process_single_report_direct")
-    async def _process_single_report_direct(tmp_path: str, file_content: bytes, 
-                                           original_filename: str, pdf_metadata: Dict[str, Any]) -> Dict[str, Any]:
+    async def _process_single_report_direct(
+        tmp_path: str, 
+        file_content: bytes, 
+        original_filename: str, 
+        pdf_metadata: Dict[str, Any],
+        tracking_id: str = None
+    ) -> Dict[str, Any]:
         """
         Process a SINGLE report PDF with FULL VALIDATION
         
@@ -239,11 +257,22 @@ class MultiReportHandler:
                 "errors": [],
                 "file_validation": None,
                 "is_valid_content": None,
-                "content_validation": None
+                "content_validation": None,
+                "_tracking_id": tracking_id
             }
 
             # Execute the workflow (now includes validation)
-            final_state = processing_workflow.invoke(initial_state)
+            logger.info(f"Invoking workflow for {original_filename} (tracking_id: {tracking_id})")
+            
+            try:
+                # Use LangGraph's native async method (ainvoke) instead of blocking invoke()
+                # This is the proper way to run workflows in async contexts
+                final_state = await processing_workflow.ainvoke(initial_state)
+                logger.info(f"Workflow completed successfully for {original_filename}")
+            except Exception as workflow_error:
+                logger.error(f"Workflow execution failed for {original_filename}: {str(workflow_error)}")
+                # Re-raise to be handled by outer try-except
+                raise
 
             # Build response with validation info
             report_response = {
@@ -431,7 +460,19 @@ class MultiReportHandler:
                 "content_validation": None
             }
 
-            final_state = processing_workflow.invoke(initial_state)
+            # FIX: Run synchronous invoke() in thread pool to avoid blocking async event loop
+            logger.info(f"Invoking workflow for report {report_index + 1}/{total_reports}")
+            try:
+                loop = asyncio.get_event_loop()
+                final_state = await loop.run_in_executor(
+                    None,  # Use default ThreadPoolExecutor
+                    processing_workflow.invoke,
+                    initial_state
+                )
+                logger.info(f"Workflow completed for report {report_index + 1}/{total_reports}")
+            except Exception as workflow_error:
+                logger.error(f"Workflow execution failed for report {report_index + 1}: {str(workflow_error)}")
+                raise
 
             report_response = {
                 "report_number": report_index + 1,

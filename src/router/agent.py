@@ -2,7 +2,6 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from src.Upload.multiple_handler import MultiReportHandler
 from src.utils import constants
 from src.utils.limiter_config import limiter
-from src.utils.config import REDIS_URL
 from src.utils.errors import ProcessingError, ValidationError
 from src.utils.clean_logger import get_clean_logger
 from src.utils.file_validator import validate_and_raise, FileValidator
@@ -20,8 +19,7 @@ from src.monitoring.trace.langfuse_helper import (
     get_trace_url
 )
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from arq import create_pool
-from arq.connections import RedisSettings
+from src.generator.redis_pool import get_shared_redis_pool
 import uuid
 import asyncio
 
@@ -32,11 +30,16 @@ logger = get_clean_logger(__name__)
 @router.post("/agent")
 @limiter.limit("10/minute")
 @observe_operation(name="agent_file_upload")
-async def upload_file(request: Request, file: UploadFile = File(...), background: bool = False):
+async def upload_file(
+    request: Request, 
+    file: UploadFile = File(...), 
+    background: bool = False  # ✅ Query parameter, not form field
+):
     """
     Upload and process files
     
     Args:
+        file: File to process
         background: If True, process in background and return job_id
     """
     try:
@@ -64,58 +67,44 @@ async def upload_file(request: Request, file: UploadFile = File(...), background
             except Exception as e:
                 logger.warning(f"Failed to set session_id on trace: {e}")
         
-        # ============================================
-        # NEW: Background processing with ARQ
-        # ============================================
-
-            
-        try:
-            # Import uuid for generating job tracking ID
-            
-            # Connect to Redis
-            redis_pool = await create_pool(RedisSettings.from_dsn(REDIS_URL))
-            
-            # Generate tracking ID for progress (we'll pass this to the function)
-            tracking_id = str(uuid.uuid4())
-            
-            # Enqueue job to ARQ (pass tracking_id as first param after ctx)
-            job = await redis_pool.enqueue_job(
-                "process_file_background",  # Function name
-                tracking_id,                # tracking_id (for progress)
-                content,                    # file_content
-                file.filename,              # filename
-                session_id                  # session_id
-            )
-            
-            # Store mapping: ARQ job_id -> tracking_id for progress lookup
-            await redis_pool.setex(
-                f"arq:tracking:{job.job_id}",
-                3600,
-                tracking_id
-            )
-            
-            await redis_pool.close()
-            
-            logger.info(f"Job queued: {job.job_id} (tracking_id: {tracking_id})")
-            
-            return {
-                "status": "queued",
-                "job_id": job.job_id,
-                "session_id": session_id,
-                "message": "Processing started in background",
-                "progress_url": f"/api/progress/{job.job_id}"
-            }
-        except Exception as e:
-            logger.error(f"Failed to queue job: {e}")
-            raise ProcessingError(
-                detail=f"Failed to start background processing: {str(e)}",
-                step="job_queuing",
-                file_name=file.filename[:50]
-            )
+        # ✅ Background processing with ARQ
+        if background:
+            try:
+                redis_pool = await get_shared_redis_pool()
+                tracking_id = str(uuid.uuid4())
+                
+                job = await redis_pool.enqueue_job(
+                    "process_file_background",
+                    tracking_id,
+                    content,
+                    file.filename,
+                    session_id
+                )
+                
+                await redis_pool.setex(
+                    f"arq:tracking:{job.job_id}",
+                    3600,
+                    tracking_id
+                )
+                
+                logger.info(f"Job queued: {job.job_id} (tracking_id: {tracking_id})")
+                
+                return {
+                    "status": "queued",
+                    "job_id": job.job_id,
+                    "session_id": session_id,
+                    "message": "Processing started in background",
+                    "progress_url": f"/api/progress/{job.job_id}"
+                }
+            except Exception as e:
+                logger.error(f"Failed to queue job: {e}")
+                raise ProcessingError(
+                    detail=f"Failed to start background processing: {str(e)}",
+                    step="job_queuing",
+                    file_name=file.filename[:50]
+                )
     
-        # ============================================
-        # EXISTING: Synchronous processing (keep for backward compatibility)
-        # ============================================
+        # ✅ Synchronous processing (keep for backward compatibility)
         try:
             with propagate_session_id(session_id, file_name=file.filename[:100]):
                 result = await asyncio.wait_for(
@@ -133,9 +122,17 @@ async def upload_file(request: Request, file: UploadFile = File(...), background
                     logger.warning(f"Failed to clean agent response: {str(e)}")
                 
                 # Cache result
+                cache_id = None
                 try:
-                    cache_id = agent_cache.save_agent_output(result, session_id=session_id)
+                    cache_id = await agent_cache.save_agent_output(result, session_id=session_id)
                     logger.cache_save(cache_id, "agent output")
+                    
+                    # ✅ Add cache_id to result for frontend
+                    if isinstance(result, dict):
+                        if "reports" in result and isinstance(result["reports"], list) and len(result["reports"]) > 0:
+                            # Add to first report
+                            result["reports"][0]["cache_id"] = cache_id
+                        result["cache_id"] = cache_id
                 except Exception as e:
                     logger.warning(f"Failed to cache agent output: {str(e)}")
                 

@@ -4,6 +4,7 @@ from src.workflow.state import ProcessingState
 from src.formatter.json_helper import clean_json_from_llm_response
 from src.utils.clean_logger import CleanLogger
 from src.utils.config import LANGFUSE_CONFIGURED
+import asyncio
 import json
 
 # Import Langfuse decorator if available (v3 API)
@@ -101,6 +102,7 @@ def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
             state["graph_suggestions"] = suggestions
             chart_count = len(suggestions["suggested_charts"])
             chart_types = [chart.get('chart_type', 'unknown') for chart in suggestions["suggested_charts"]]
+            
             logger.graph_generation(chart_count, chart_types)
             
             # Log graph metrics to Langfuse (v3 API)

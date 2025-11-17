@@ -100,7 +100,7 @@ async def approve_storage_simple(request: Request, approval_request: SimpleStora
                 logger.debug(f"Could not update observation: {e}")
         
         # Get cached agent output
-        cached_data = agent_cache.get_cached_output(approval_request.cache_id)
+        cached_data = await agent_cache.get_cached_output(approval_request.cache_id)
         
         if not cached_data:
             raise ProcessingError(
@@ -198,7 +198,7 @@ async def approve_storage_simple(request: Request, approval_request: SimpleStora
                     logger.debug(f"Could not update observation: {e}")
             
             # Clean up cache
-            agent_cache.delete_cache(approval_request.cache_id)
+            await agent_cache.delete_cache(approval_request.cache_id)
             
             return {
                 "status": "rejected",
@@ -278,7 +278,7 @@ async def approve_storage_simple(request: Request, approval_request: SimpleStora
         
         # Clean up cache after successful storage
         if result.get("status") == "success":
-            agent_cache.delete_cache(approval_request.cache_id)
+            await agent_cache.delete_cache(approval_request.cache_id)
             logger.cache_delete(approval_request.cache_id)
         
         return result

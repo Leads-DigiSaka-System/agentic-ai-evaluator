@@ -17,6 +17,7 @@ class ProcessingState(TypedDict):
     file_path: str
     file_name: str
     file_content: bytes
+    _tracking_id: Optional[str]
     
     # ============================================
     # PROCESSING OUTPUTS

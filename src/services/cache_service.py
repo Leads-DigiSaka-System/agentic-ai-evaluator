@@ -1,10 +1,9 @@
 import json
-import os
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 import logging
-
+from src.generator.redis_pool import get_shared_redis_pool
 logger = logging.getLogger(__name__)
 
 class AgentOutputCache:
@@ -12,18 +11,23 @@ class AgentOutputCache:
     Cache service for agent output with automatic cleanup
     """
     
-    def __init__(self, cache_dir: str = "cache"):
-        self.cache_dir = cache_dir
-        self.cache_expiry_hours = 24  # Cache expires after 24 hours
-        
-        # Ensure cache directory exists
-        os.makedirs(self.cache_dir, exist_ok=True)
-        
-        logger.info(f"📦 AgentOutputCache initialized with directory: {self.cache_dir}")
+    def __init__(self, redis_url: str = None):
+        self.cache_expiry_hours = 24  
+        self.cache_expiry_seconds = self.cache_expiry_hours * 3600
+        logger.info(f"AgentOutputCache initialized (using shared Redis pool)")
     
-    def _get_cache_file_path(self, cache_id: str) -> str:
-        """Get cache file path for a given cache ID"""
-        return os.path.join(self.cache_dir, f"{cache_id}.json")
+    def _get_cache_key(self, cache_id: str) -> str:
+        """Get Redis key for a given cache ID"""
+        return f"agent:cache:{cache_id}"
+    
+    async def _get_redis_pool(self):
+        """
+        Get shared Redis connection pool
+        
+        Uses the shared pool manager to avoid creating multiple connections.
+        This improves performance by reusing a single connection pool.
+        """
+        return await get_shared_redis_pool()
     
     def _is_cache_expired(self, cache_data: Dict[str, Any]) -> bool:
         """Check if cache data is expired"""
@@ -34,7 +38,7 @@ class AgentOutputCache:
         except:
             return True  # If we can't parse the date, consider it expired
     
-    def save_agent_output(self, agent_response: Dict[str, Any], session_id: Optional[str] = None) -> str:
+    async def save_agent_output(self, agent_response: Dict[str, Any], session_id: Optional[str] = None) -> str:
         """
         Save agent output to cache and return cache ID
         
@@ -60,11 +64,17 @@ class AgentOutputCache:
             # Store session_id if provided (for linking storage approval to original session)
             if session_id:
                 cache_data["session_id"] = session_id
+
+            redis_pool = await self._get_redis_pool()
             
-            # Save to file
-            cache_file_path = self._get_cache_file_path(cache_id)
-            with open(cache_file_path, 'w', encoding='utf-8') as f:
-                json.dump(cache_data, f, ensure_ascii=False, indent=2)
+            # Save to Redis
+            cache_key = self._get_cache_key(cache_id)
+            await redis_pool.setex(
+                cache_key,
+                self.cache_expiry_seconds,
+                json.dumps(cache_data, ensure_ascii=False)
+            )
+
             
             logger.info(f"Agent output cached with ID: {cache_id}")
             
@@ -77,7 +87,7 @@ class AgentOutputCache:
             logger.error(f"Failed to cache agent output: {str(e)}")
             raise Exception(f"Cache save failed: {str(e)}")
     
-    def get_cached_output(self, cache_id: str) -> Optional[Dict[str, Any]]:
+    async def get_cached_output(self, cache_id: str) -> Optional[Dict[str, Any]]:
         """
         Retrieve cached agent output
         
@@ -88,31 +98,44 @@ class AgentOutputCache:
             Cached agent response or None if not found/expired
         """
         try:
-            cache_file_path = self._get_cache_file_path(cache_id)
-            
-            if not os.path.exists(cache_file_path):
-                logger.warning(f"Cache file not found: {cache_id}")
+            redis_pool = await self._get_redis_pool()
+
+            cache_key = self._get_cache_key(cache_id)
+            cache_data_raw = await redis_pool.get(cache_key)
+            if not cache_data_raw:
+                logger.warning(f"Cache not found: {cache_id}")
                 return None
             
-            # Load cache data
-            with open(cache_file_path, 'r', encoding='utf-8') as f:
-                cache_data = json.load(f)
+            # Decode if bytes
+            if isinstance(cache_data_raw, bytes):
+                cache_data_raw = cache_data_raw.decode()
             
-            # Check if expired
+            cache_data = json.loads(cache_data_raw)
+            
             if self._is_cache_expired(cache_data):
                 logger.info(f"Cache expired, deleting: {cache_id}")
-                self.delete_cache(cache_id)
+                await redis_pool.delete(cache_key)
                 return None
             
             logger.info(f"Retrieved cached output: {cache_id}")
             # Return the full cache_data so we can access session_id and other metadata
             return cache_data
             
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse cache data {cache_id}: {str(e)}")
+            # Delete corrupted cache
+            try:
+                redis_pool = await self._get_redis_pool()
+                cache_key = self._get_cache_key(cache_id)
+                await redis_pool.delete(cache_key)
+            except:
+                pass
+            return None
         except Exception as e:
             logger.error(f"Failed to retrieve cache {cache_id}: {str(e)}")
             return None
     
-    def delete_cache(self, cache_id: str) -> bool:
+    async def delete_cache(self, cache_id: str) -> bool:
         """
         Delete cached data
         
@@ -123,55 +146,59 @@ class AgentOutputCache:
             True if deleted successfully, False otherwise
         """
         try:
-            cache_file_path = self._get_cache_file_path(cache_id)
+            redis_pool = await self._get_redis_pool()
+            cache_key = self._get_cache_key(cache_id)
             
-            if os.path.exists(cache_file_path):
-                os.remove(cache_file_path)
-                logger.info(f"Cache deleted: {cache_id}")
+            deleted = await redis_pool.delete(cache_key)
+
+            if deleted:
                 return True
             else:
-                logger.warning(f"Cache file not found for deletion: {cache_id}")
+                logger.warning(f"Cache not found for deletion: {cache_id}")
                 return False
-                
         except Exception as e:
             logger.error(f"Failed to delete cache {cache_id}: {str(e)}")
             return False
     
-    def cleanup_expired_caches(self) -> int:
+    async def cleanup_expired_caches(self) -> int:
         """
-        Clean up all expired cache files
+        Clean up all expired cache entries from Redis
+        Note: Redis TTL handles expiration automatically, but this can scan for any missed entries
         
         Returns:
-            Number of files cleaned up
+            Number of entries cleaned up
         """
         try:
+            redis_pool = await self._get_redis_pool()
+            cache_keys = await redis_pool.keys("agent:cache:*")
             cleaned_count = 0
             
-            if not os.path.exists(self.cache_dir):
-                return 0
-            
-            for filename in os.listdir(self.cache_dir):
-                if filename.endswith('.json'):
-                    cache_id = filename[:-5]  # Remove .json extension
+            for cache_key in cache_keys:
+                # Decode key if bytes
+                if isinstance(cache_key, bytes):
+                    cache_key = cache_key.decode()
+                
+                cache_data_raw = await redis_pool.get(cache_key)
+                if not cache_data_raw:
+                    continue
+                
+                # Decode if bytes
+                if isinstance(cache_data_raw, bytes):
+                    cache_data_raw = cache_data_raw.decode()
+                
+                try:
+                    cache_data = json.loads(cache_data_raw)
+                except json.JSONDecodeError:
+                    # Delete corrupted cache
+                    await redis_pool.delete(cache_key)
+                    cleaned_count += 1
+                    continue
                     
-                    try:
-                        cache_file_path = os.path.join(self.cache_dir, filename)
-                        with open(cache_file_path, 'r', encoding='utf-8') as f:
-                            cache_data = json.load(f)
-                        
-                        if self._is_cache_expired(cache_data):
-                            os.remove(cache_file_path)
-                            cleaned_count += 1
-                            logger.info(f"Cleaned expired cache: {cache_id}")
-                            
-                    except Exception as e:
-                        logger.warning(f"Error processing cache file {filename}: {str(e)}")
-                        # Remove corrupted files
-                        try:
-                            os.remove(os.path.join(self.cache_dir, filename))
-                            cleaned_count += 1
-                        except:
-                            pass
+                if self._is_cache_expired(cache_data):
+                    await redis_pool.delete(cache_key)
+                    cleaned_count += 1
+                    cache_id = cache_data.get("cache_id", "unknown")
+                    logger.info(f"Cleaned expired cache: {cache_id}")
             
             logger.info(f"Cleanup completed: {cleaned_count} expired caches removed")
             return cleaned_count
@@ -180,7 +207,7 @@ class AgentOutputCache:
             logger.error(f"Cache cleanup failed: {str(e)}")
             return 0
     
-    def get_cache_info(self, cache_id: str) -> Optional[Dict[str, Any]]:
+    async def get_cache_info(self, cache_id: str) -> Optional[Dict[str, Any]]:
         """
         Get cache metadata without loading full data
         
@@ -191,29 +218,42 @@ class AgentOutputCache:
             Cache metadata or None if not found
         """
         try:
-            cache_file_path = self._get_cache_file_path(cache_id)
+            redis_pool = await self._get_redis_pool()
+            cache_key = self._get_cache_key(cache_id)
             
-            if not os.path.exists(cache_file_path):
+            # Get TTL from Redis
+            ttl = await redis_pool.ttl(cache_key)
+            if ttl == -2:  # Key doesn't exist
                 return None
             
-            with open(cache_file_path, 'r', encoding='utf-8') as f:
-                cache_data = json.load(f)
+            cache_data_raw = await redis_pool.get(cache_key)
+            if not cache_data_raw:
+                return None
+            
+            # Decode if bytes
+            if isinstance(cache_data_raw, bytes):
+                cache_data_raw = cache_data_raw.decode()
+            
+            cache_data = json.loads(cache_data_raw)
+            
+            # Calculate expiry time
+            created_at = datetime.fromisoformat(cache_data.get("created_at", ""))
+            expires_at = created_at + timedelta(hours=self.cache_expiry_hours)
             
             # Return metadata only
             return {
                 "cache_id": cache_data.get("cache_id"),
                 "created_at": cache_data.get("created_at"),
                 "status": cache_data.get("status"),
-                "expires_at": (
-                    datetime.fromisoformat(cache_data.get("created_at", "")) + 
-                    timedelta(hours=self.cache_expiry_hours)
-                ).isoformat(),
+                "expires_at": expires_at.isoformat(),
+                "ttl_seconds": ttl if ttl > 0 else 0,
                 "is_expired": self._is_cache_expired(cache_data)
             }
             
         except Exception as e:
             logger.error(f"Failed to get cache info {cache_id}: {str(e)}")
             return None
+    
 
 
 # Global cache instance

@@ -1,6 +1,7 @@
 from src.Agents.output_evaluator import validate_output
 from src.utils.clean_logger import CleanLogger
 from src.utils.config import LANGFUSE_CONFIGURED
+import asyncio
 
 # Import Langfuse decorator if available
 if LANGFUSE_CONFIGURED:
