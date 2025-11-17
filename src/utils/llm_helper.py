@@ -53,7 +53,7 @@ def create_llm():
 llm = create_llm()
 
 
-def invoke_llm(prompt: str, as_json: bool = False, trace_name: str = None):
+def invoke_llm(prompt: str, as_json: bool = False, trace_name: str = None, model: str = GEMINI_MODEL):
     """
     Send a prompt to Gemini and return the response with Langfuse tracking (v3).
 
@@ -61,6 +61,7 @@ def invoke_llm(prompt: str, as_json: bool = False, trace_name: str = None):
         prompt (str): Prompt string to send
         as_json (bool): If True, tries to clean and return parsed JSON
         trace_name (str): Optional name for the LLM call (for better tracing)
+        model (str): Model name to use (defaults to GEMINI_MODEL)
 
     Returns:
         str or dict: Raw string response or parsed dict
@@ -71,10 +72,22 @@ def invoke_llm(prompt: str, as_json: bool = False, trace_name: str = None):
         if trace_name:
             operation = f"{trace_name} ({operation})"
         
-        logger.llm_request(GEMINI_MODEL, operation)
+        logger.llm_request(model, operation)
         
-        # Invoke LLM (Langfuse automatically captures this via callback)
-        response = llm.invoke(prompt)
+        # Create LLM instance with specified model
+        callbacks = []
+        handler = get_langfuse_handler()
+        if handler:
+            callbacks.append(handler)
+        
+        llm_instance = ChatGoogleGenerativeAI(
+            model=model,  # ✅ GAMITIN ANG MODEL PARAMETER
+            google_api_key=GOOGLE_API_KEY,
+            callbacks=callbacks if callbacks else None
+        )
+        
+        # Invoke LLM with the specified model
+        response = llm_instance.invoke(prompt)  # ✅ GAMITIN ANG BAGONG INSTANCE
         result_text = response.content if hasattr(response, "content") else str(response)
         
         # Track token usage if available (v3 API)
@@ -100,9 +113,9 @@ def invoke_llm(prompt: str, as_json: bool = False, trace_name: str = None):
                                     "total": token_usage.get('total_tokens', 0),
                                     "unit": "TOKENS"
                                 },
-                                model=GEMINI_MODEL  # Set model name for automatic cost calculation
+                                model=model  # Set model name for automatic cost calculation
                             )
-                            logger.debug(f"Token usage logged: {token_usage.get('total_tokens', 0)} tokens | Model: {GEMINI_MODEL}")
+                            logger.debug(f"Token usage logged: {token_usage.get('total_tokens', 0)} tokens | Model: {model}")
                         except Exception as update_err:
                             logger.debug(f"Could not update observation with tokens: {update_err}")
             except Exception as e:
@@ -111,98 +124,23 @@ def invoke_llm(prompt: str, as_json: bool = False, trace_name: str = None):
         # Parse JSON if requested
         if as_json:
             parsed = clean_json_from_llm_response(result_text)
-            logger.llm_response(GEMINI_MODEL, "json parsed", "success")
+            logger.llm_response(model, "json parsed", "success")
             return parsed
         
-        logger.llm_response(GEMINI_MODEL, "text generated", "success")
+        logger.llm_response(model, "text generated", "success")
         return result_text
         
     except Exception as e:
-        logger.llm_error(GEMINI_MODEL, str(e))
+        logger.llm_error(model, str(e))
         
         # Log error to Langfuse if configured (v3 API)
         if LANGFUSE_CONFIGURED:
             try:
                 from src.monitoring.trace.langfuse_helper import update_trace_with_error
-                update_trace_with_error(e, {"operation": operation, "model": GEMINI_MODEL})
+                update_trace_with_error(e, {"operation": operation, "model": model})
             except Exception as langfuse_err:
                 logger.debug(f"Failed to log LLM error to Langfuse: {langfuse_err}")
         
         return None
 
-def large_llm(prompt: str, as_json: bool = False, trace_name: str = None):
-    """
-        Send a prompt to Gemini and return the response with Langfuse tracking (v3).
 
-    Args:
-        prompt (str): Prompt string to send
-        as_json (bool): If True, tries to clean and return parsed JSON
-        trace_name (str): Optional name for the LLM call (for better tracing)
-
-    Returns:
-        str or dict: Raw string response or parsed dict
-    """
-    try:
-        # Log request
-        operation = "json generation" if as_json else "text generation"
-        if trace_name:
-            operation = f"{trace_name} ({operation})"
-        
-        logger.llm_request(GEMINI_LARGE, operation)
-        
-        # Invoke LLM (Langfuse automatically captures this via callback)
-        response = llm.invoke(prompt)
-        result_text = response.content if hasattr(response, "content") else str(response)
-        
-        # Track token usage if available (v3 API)
-        if LANGFUSE_CONFIGURED and hasattr(response, 'response_metadata'):
-            try:
-                from src.monitoring.trace.langfuse_helper import get_langfuse_client
-                
-                client = get_langfuse_client()
-                if not client:
-                    logger.debug("Langfuse client not available for token tracking")
-                else:
-                    metadata = response.response_metadata
-                    token_usage = metadata.get('token_usage', {})
-                    
-                    if token_usage:
-                        # v3: Update via current observation with model for cost calculation
-                        # Langfuse automatically calculates cost if model name is set
-                        try:
-                            client.update_current_observation(
-                                usage={
-                                    "input": token_usage.get('prompt_tokens', 0),
-                                    "output": token_usage.get('completion_tokens', 0),
-                                    "total": token_usage.get('total_tokens', 0),
-                                    "unit": "TOKENS"
-                                },
-                                model=GEMINI_LARGE  # Set model name for automatic cost calculation
-                            )
-                            logger.debug(f"Token usage logged: {token_usage.get('total_tokens', 0)} tokens | Model: {GEMINI_LARGE}")
-                        except Exception as update_err:
-                            logger.debug(f"Could not update observation with tokens: {update_err}")
-            except Exception as e:
-                logger.debug(f"Could not log token usage: {e}")
-        
-        # Parse JSON if requested
-        if as_json:
-            parsed = clean_json_from_llm_response(result_text)
-            logger.llm_response(GEMINI_MODEL, "json parsed", "success")
-            return parsed
-        
-        logger.llm_response(GEMINI_MODEL, "text generated", "success")
-        return result_text
-        
-    except Exception as e:
-        logger.llm_error(GEMINI_MODEL, str(e))
-        
-        # Log error to Langfuse if configured (v3 API)
-        if LANGFUSE_CONFIGURED:
-            try:
-                from src.monitoring.trace.langfuse_helper import update_trace_with_error
-                update_trace_with_error(e, {"operation": operation, "model": GEMINI_MODEL})
-            except Exception as langfuse_err:
-                logger.debug(f"Failed to log LLM error to Langfuse: {langfuse_err}")
-        
-        return None

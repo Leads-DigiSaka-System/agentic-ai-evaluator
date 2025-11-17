@@ -2,6 +2,7 @@ from src.prompt.analysis_template import analysis_prompt_template_structured
 from src.utils.llm_helper import invoke_llm
 from src.utils.clean_logger import CleanLogger
 from src.utils.config import LANGFUSE_CONFIGURED
+from src.utils import config
 from typing import List
 import traceback
 
@@ -71,7 +72,7 @@ def analyze_demo_trial(markdown_data: str):
         prompt = template.format(markdown_data=markdown_data)
         
         logger.llm_request("gemini", "universal_agricultural_demo_analysis")
-        result = invoke_llm(prompt, as_json=True, trace_name="agricultural_demo_analysis")
+        result = invoke_llm(prompt, as_json=True, trace_name="agricultural_demo_analysis",model=config.GEMINI_LARGE)
         
         if not result:
             error_msg = "No response from LLM"
@@ -171,9 +172,7 @@ def create_universal_error_response(message):
             "planting_date": "",
             "crop": "",
             "plot_size": "",
-            "contact": "",
-            "participants": 0,
-            "total_sales": 0
+            "contact": ""
         },
         
         "treatment_comparison": {
@@ -236,15 +235,6 @@ def create_universal_error_response(message):
             "key_highlights": [],
             "visible_results_timeline": "",
             "concerns": []
-        },
-        
-        "commercial_metrics": {
-            "demo_date": "",
-            "participants": 0,
-            "total_sales": 0,
-            "sales_per_participant": 0,
-            "demo_conducted": False,
-            "market_reception": ""
         },
         
         "risk_factors": [],

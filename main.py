@@ -5,6 +5,7 @@ from src.router.search import router as search_router
 from src.router.delete_extract import router as delete_router
 from src.router.agent import router as agent_router
 from src.router.storage import router as storage_router
+from src.router.progress import router as progress_router
 from src.deps.security import require_api_key
 import os
 import signal
@@ -101,6 +102,7 @@ app.include_router(agent_router, prefix="/api", tags=["agent"], dependencies=[De
 app.include_router(search_router, prefix="/api", tags=["search"], dependencies=[Depends(require_api_key)])
 app.include_router(delete_router, prefix="/api", tags=["delete"], dependencies=[Depends(require_api_key)])
 app.include_router(storage_router, prefix="/api", tags=["storage"], dependencies=[Depends(require_api_key)])  # Re-enabled with debug
+app.include_router(progress_router, prefix="/api", tags=["progress"], dependencies=[Depends(require_api_key)])
 
 # Health check endpoint
 @app.get("/")

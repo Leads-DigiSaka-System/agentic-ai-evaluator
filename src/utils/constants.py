@@ -17,6 +17,9 @@ MAX_SEARCH_TOP_K = int(os.getenv("MAX_SEARCH_TOP_K", "100"))
 DENSE_WEIGHT_DEFAULT = float(os.getenv("DENSE_WEIGHT", "0.7"))
 SPARSE_WEIGHT_DEFAULT = float(os.getenv("SPARSE_WEIGHT", "0.3"))
 
+# Search Quality Thresholds
+MIN_SEARCH_SCORE_THRESHOLD = float(os.getenv("MIN_SEARCH_SCORE_THRESHOLD", "0.75"))  # Minimum similarity score (0.0-1.0), production-ready = 0.75
+
 # Retry & Timeout
 MAX_RETRY_ATTEMPTS = int(os.getenv("MAX_RETRY_ATTEMPTS", "2"))
 LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))

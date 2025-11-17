@@ -2,7 +2,7 @@ import pathlib
 from typing import Optional, Dict, Any
 from google import genai
 from google.genai import types
-from src.utils.config import GOOGLE_API_KEY, GEMINI_MODEL
+from src.utils.config import GOOGLE_API_KEY, GEMINI_LARGE
 from langchain_community.document_loaders import PyMuPDFLoader
 from src.prompt.prompt_template import formatting_template, handwritten_form_template
 from src.Upload.file_validator import FileValidator
@@ -152,7 +152,7 @@ Respond with ONLY: "handwritten_form", "typed", or "mixed"
         
         # Use simple call without config for detection (lightweight)
         response = client.models.generate_content(
-            model=GEMINI_MODEL,
+            model=GEMINI_LARGE,
             contents=[
                 types.Part.from_bytes(data=file_content, mime_type=mime_type),
                 detection_prompt
@@ -237,7 +237,7 @@ def _extract_with_gemini_api(
         if file_size < 20 * 1024 * 1024:  # 20MB threshold
             logger.info("Processing with inline method")
             response = client.models.generate_content(
-                model=GEMINI_MODEL,
+                model=GEMINI_LARGE,
                 contents=[
                     types.Part.from_bytes(data=file_content, mime_type=mime_type),
                     extraction_prompt
@@ -247,7 +247,7 @@ def _extract_with_gemini_api(
             logger.info("Processing with File API method (large file)")
             sample_file = client.files.upload(file=filepath)
             response = client.models.generate_content(
-                model=GEMINI_MODEL,
+                model=GEMINI_LARGE,
                 contents=[sample_file, extraction_prompt]
             )
         

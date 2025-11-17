@@ -2,7 +2,9 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from src.Upload.multiple_handler import MultiReportHandler
 from src.utils import constants
 from src.utils.limiter_config import limiter
+from src.utils.config import REDIS_URL
 from src.utils.errors import ProcessingError, ValidationError
+from src.utils.clean_logger import get_clean_logger
 from src.utils.file_validator import validate_and_raise, FileValidator
 from src.services.cache_service import agent_cache
 from src.formatter.json_helper import validate_and_clean_agent_response
@@ -17,9 +19,11 @@ from src.monitoring.trace.langfuse_helper import (
     flush_langfuse,
     get_trace_url
 )
-import asyncio
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from src.utils.clean_logger import get_clean_logger
+from arq import create_pool
+from arq.connections import RedisSettings
+import uuid
+import asyncio
 
 router = APIRouter()
 logger = get_clean_logger(__name__)
@@ -28,19 +32,12 @@ logger = get_clean_logger(__name__)
 @router.post("/agent")
 @limiter.limit("10/minute")
 @observe_operation(name="agent_file_upload")
-async def upload_file(request: Request, file: UploadFile = File(...)):
+async def upload_file(request: Request, file: UploadFile = File(...), background: bool = False):
     """
-    Upload and process agricultural demo reports
+    Upload and process files
     
-    Supports:
-    - PDF files (single or multi-report)
-    - Image files (PNG, JPG, JPEG)
-    
-    Security Features:
-    - File validation (type, size, filename security)
-    - Request timeout protection
-    - Rate limiting (10 requests/minute)
-    - Comprehensive error handling
+    Args:
+        background: If True, process in background and return job_id
     """
     try:
         # Read file content
@@ -51,13 +48,11 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         
         logger.file_upload(file.filename, len(content))
         
-        # Generate session ID for this file upload
-        # This will group all traces (extraction, validation, analysis per report, etc.)
-        # into one session for easy tracking
+        # Generate session ID
         session_id = generate_session_id(prefix="file_upload")
         logger.info(f"Generated session ID: {session_id}")
         
-        # Set session_id on the current trace (created by @observe_operation)
+        # Set session_id on trace
         if LANGFUSE_CONFIGURED:
             try:
                 client = get_langfuse_client()
@@ -66,52 +61,96 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
                         session_id=session_id,
                         metadata={"file_name": file.filename[:100], "session_id": session_id}
                     )
-                    logger.debug(f"Session ID set on trace: {session_id}")
             except Exception as e:
                 logger.warning(f"Failed to set session_id on trace: {e}")
         
-        # Process with timeout protection
-        # All traces created within this context will inherit the session_id
+        # ============================================
+        # NEW: Background processing with ARQ
+        # ============================================
+
+            
+        try:
+            # Import uuid for generating job tracking ID
+            
+            # Connect to Redis
+            redis_pool = await create_pool(RedisSettings.from_dsn(REDIS_URL))
+            
+            # Generate tracking ID for progress (we'll pass this to the function)
+            tracking_id = str(uuid.uuid4())
+            
+            # Enqueue job to ARQ (pass tracking_id as first param after ctx)
+            job = await redis_pool.enqueue_job(
+                "process_file_background",  # Function name
+                tracking_id,                # tracking_id (for progress)
+                content,                    # file_content
+                file.filename,              # filename
+                session_id                  # session_id
+            )
+            
+            # Store mapping: ARQ job_id -> tracking_id for progress lookup
+            await redis_pool.setex(
+                f"arq:tracking:{job.job_id}",
+                3600,
+                tracking_id
+            )
+            
+            await redis_pool.close()
+            
+            logger.info(f"Job queued: {job.job_id} (tracking_id: {tracking_id})")
+            
+            return {
+                "status": "queued",
+                "job_id": job.job_id,
+                "session_id": session_id,
+                "message": "Processing started in background",
+                "progress_url": f"/api/progress/{job.job_id}"
+            }
+        except Exception as e:
+            logger.error(f"Failed to queue job: {e}")
+            raise ProcessingError(
+                detail=f"Failed to start background processing: {str(e)}",
+                step="job_queuing",
+                file_name=file.filename[:50]
+            )
+    
+        # ============================================
+        # EXISTING: Synchronous processing (keep for backward compatibility)
+        # ============================================
         try:
             with propagate_session_id(session_id, file_name=file.filename[:100]):
                 result = await asyncio.wait_for(
                     MultiReportHandler.process_multi_report_pdf(content, file.filename),
                     timeout=constants.REQUEST_TIMEOUT_SECONDS
                 )
-            
-            logger.file_validation(file.filename, "success", "processed successfully")
-            
-            # Validate and clean the response structure
-            try:
-                cleaned_result = validate_and_clean_agent_response(result)
-                logger.info("Agent response validated and cleaned")
-                result = cleaned_result
-            except Exception as e:
-                logger.warning(f"Failed to clean agent response: {str(e)}")
-                # Continue with original result if cleaning fails
-            
-            # Automatically cache the result for storage (with session_id for linking)
-            try:
-                cache_id = agent_cache.save_agent_output(result, session_id=session_id)
-                logger.cache_save(cache_id, "agent output")
-                logger.debug(f"Cached with session_id: {session_id}")
-            except Exception as e:
-                logger.warning(f"Failed to cache agent output: {str(e)}")
-                # Don't fail the request if caching fails
-            
-            # Log session info and flush Langfuse
-            if LANGFUSE_CONFIGURED:
+                
+                logger.file_validation(file.filename, "success", "processed successfully")
+                
+                # Validate and clean response
                 try:
-                    trace_url = get_trace_url()
-                    if trace_url:
-                        logger.info(f"📊 Langfuse trace: {trace_url}")
-                    logger.info(f"📦 Session ID: {session_id}")
-                    flush_langfuse()
+                    cleaned_result = validate_and_clean_agent_response(result)
+                    result = cleaned_result
                 except Exception as e:
-                    logger.debug(f"Could not get trace URL: {e}")
-            
-            return result
-            
+                    logger.warning(f"Failed to clean agent response: {str(e)}")
+                
+                # Cache result
+                try:
+                    cache_id = agent_cache.save_agent_output(result, session_id=session_id)
+                    logger.cache_save(cache_id, "agent output")
+                except Exception as e:
+                    logger.warning(f"Failed to cache agent output: {str(e)}")
+                
+                # Flush Langfuse
+                if LANGFUSE_CONFIGURED:
+                    try:
+                        trace_url = get_trace_url()
+                        if trace_url:
+                            logger.info(f"📊 Langfuse trace: {trace_url}")
+                        flush_langfuse()
+                    except Exception as e:
+                        logger.debug(f"Could not get trace URL: {e}")
+                
+                return result
+                
         except FutureTimeoutError:
             raise ProcessingError(
                 detail="File processing timed out",
@@ -121,14 +160,11 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
             )
         
     except (ValidationError, ProcessingError):
-        # Re-raise custom errors as-is
         raise
     except HTTPException:
-        # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
-        # Catch unexpected errors and provide context
-        logger.error(f"Unexpected error processing file: {str(e)[:100]}")
+        logger.error(f"Unexpected error: {str(e)[:100]}")
         raise ProcessingError(
             detail=f"Unexpected error during file processing",
             step="file_upload",

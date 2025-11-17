@@ -22,3 +22,10 @@ LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
 
 # Auto-detect if Langfuse is configured (all required keys present)
 LANGFUSE_CONFIGURED = bool(LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY)
+
+#REdis
+# Redis Configuration for ARQ
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6380"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"

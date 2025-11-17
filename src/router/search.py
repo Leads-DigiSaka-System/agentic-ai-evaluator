@@ -89,9 +89,10 @@ async def analysis_search(
         
         if not results:
             return {
-                "message": "No analysis results found",
+                "message": "No relevant analysis results found. Try using more specific keywords related to products, crops, or locations.",
                 "query": body.query,  #  Changed
-                "results": []
+                "results": [],
+                "filtered": True  # Indicates results were filtered by relevance threshold
             }
         
         return {
@@ -102,8 +103,13 @@ async def analysis_search(
         
     except Exception as e:
         #  Log error to trace
+        error_msg = str(e)
+        logger.error(f"Analysis search failed: {error_msg}", exc_info=True)
         update_trace_with_error(e, {
             "endpoint": "analysis_search",
-            "query": body.query[:100]  #  Changed
+            "query": body.query[:100] if body.query else "N/A"  #  Changed
         })
-        raise HTTPException(status_code=500, detail=f"Analysis search failed: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Analysis search failed: {error_msg}. Please check the logs for more details."
+        )
