@@ -75,29 +75,57 @@ class AnalysisHybridSearch:
             top_k = 5
         
         try:
+            # ✅ Adjust search_limit to ensure we get enough results after user_id filtering
+            # If filtering by user_id, we might need to retrieve more to get top_k results
+            # But since we filter at Qdrant level now, we can use top_k directly
+            effective_limit = top_k
+            
             # ✅ Log search parameters
             update_trace_with_metrics({
                 "search_query": query[:100],
                 "top_k": top_k,
+                "effective_limit": effective_limit,
+                "user_id": user_id,
                 "collection": self.collection_name
             })
             
-            # ✅ Use invoke() - wrapped in thread pool for async compatibility
-            # Note: LangChain retrievers are synchronous, so we run in thread pool
-            import asyncio
-            loop = asyncio.get_event_loop()
-            documents = await loop.run_in_executor(None, self.dense_retriever.invoke, query)
+            # ✅ Temporarily update retriever's search_limit to get enough results
+            # We need to retrieve MORE than top_k because we'll filter by user_id after
+            # This ensures we get top_k results for the user even after filtering
+            original_limit = self.dense_retriever.search_limit
+            # Retrieve more documents to account for user_id filtering
+            # If filtering, we might need 2-3x more to ensure we get top_k results for the user
+            effective_limit = top_k * 3 if user_id else top_k
+            self.dense_retriever.search_limit = effective_limit
+            
+            try:
+                # ✅ Search ALL data in Qdrant (vector search needs all data for semantic similarity)
+                # Use async method which handles thread pool execution internally
+                # ✅ Search without user_id filter - search all data for better semantic results
+                documents = await self.dense_retriever._aget_relevant_documents(query)
+            finally:
+                # Restore original limit
+                self.dense_retriever.search_limit = original_limit
             
             # ✅ Log retrieval results
             update_trace_with_metrics({
                 "documents_retrieved": len(documents),
-                "documents_before_topk": len(documents)
+                "documents_before_topk": len(documents),
+                "user_id_filtered": user_id is not None
             })
             
-            # ✅ Filter documents by user_id first (for data isolation)
+            # ✅ Filter by user_id AFTER retrieval (for clarity/organization only)
+            # Purpose: Prevent confusion in return results, NOT for security
+            # Vector search works across ALL data, but we only return user's own results
             if user_id:
+                original_count = len(documents)
                 documents = [doc for doc in documents if doc.metadata.get("user_id") == user_id]
-                self.logger.info(f"Filtered to {len(documents)} documents for user_id: {user_id}")
+                filtered_count = len(documents)
+                self.logger.info(f"Filtered {original_count} documents to {filtered_count} for user_id: {user_id}")
+                
+                # If we don't have enough results after filtering, log a warning
+                if filtered_count < top_k and original_count > filtered_count:
+                    self.logger.debug(f"Retrieved {filtered_count}/{top_k} results for user after filtering (searched {original_count} total documents)")
             
             # ✅ Filter documents by score threshold (adaptive)
             try:

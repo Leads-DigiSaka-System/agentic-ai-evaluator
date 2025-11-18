@@ -1,7 +1,8 @@
-from typing import List, Any
+from typing import List, Any, Optional
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from qdrant_client import QdrantClient
+from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
 from src.generator.encoder import DenseEncoder
 from src.utils.clean_logger import get_clean_logger
@@ -128,7 +129,8 @@ class QdrantDenseRetriever(BaseRetriever):
                 "vector_dimension": len(query_vector)
             })
             
-            # ORIGINAL CODE: Perform search in Qdrant
+            # ✅ Search ALL data in Qdrant (no user_id filter - vector search needs all data)
+            # user_id filtering happens AFTER retrieval for clarity/organization only
             search_results = self.client.search(
                 collection_name=self.collection_name,
                 query_vector=(self.vector_name, query_vector),
@@ -172,8 +174,22 @@ class QdrantDenseRetriever(BaseRetriever):
             raise
     
     async def _aget_relevant_documents(self, query: str) -> List[Document]:
-        """Async version - delegates to sync method"""
-        return self._get_relevant_documents(query)
+        """
+        Async version of _get_relevant_documents.
+        
+        Runs the synchronous method in a thread pool executor to avoid blocking
+        the event loop during Qdrant operations and encoding.
+        
+        Args:
+            query: Search query string
+            
+        Returns:
+            List of Document objects with metadata and scores
+        """
+        import asyncio
+        loop = asyncio.get_event_loop()
+        # Run blocking operations (encoding + Qdrant search) in thread pool
+        return await loop.run_in_executor(None, self._get_relevant_documents, query)
     
     def __repr__(self) -> str:
         return (f"QdrantDenseRetriever(collection='{self.collection_name}', "

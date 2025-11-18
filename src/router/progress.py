@@ -137,8 +137,23 @@ def _extract_worker_result(raw_result: Any) -> Tuple[Optional[Dict[str, Any]], O
     # First, extract the actual return value from "r" field (ARQ's result field)
     if isinstance(raw_result, dict) and "r" in raw_result:
         logger.debug(f"[PROGRESS] Extracting from ARQ structure, keys before: {list(raw_result.keys())}")
-        raw_result = raw_result["r"]
-        logger.debug(f"[PROGRESS] Extracted from 'r' field, type: {type(raw_result)}, is_dict: {isinstance(raw_result, dict)}")
+        extracted_value = raw_result["r"]
+        logger.debug(f"[PROGRESS] Extracted from 'r' field, type: {type(extracted_value)}, is_dict: {isinstance(extracted_value, dict)}, is_exception: {isinstance(extracted_value, Exception)}")
+        
+        # ✅ FIX: Handle Exception objects in "r" field (ARQ sometimes stores exceptions here)
+        if isinstance(extracted_value, Exception):
+            # Extract error message from Exception
+            error_message = str(extracted_value)
+            # Get the original message if it's a chained exception
+            if hasattr(extracted_value, '__cause__') and extracted_value.__cause__:
+                original_error = str(extracted_value.__cause__)
+                if original_error and original_error != error_message:
+                    error_message = f"{error_message}: {original_error}"
+            logger.error(f"[PROGRESS] Job failed with exception in 'r' field: {error_message}")
+            return None, error_message
+        
+        # If not an Exception, use the extracted value
+        raw_result = extracted_value
         if isinstance(raw_result, dict):
             logger.debug(f"[PROGRESS] Keys after extraction: {list(raw_result.keys())}")
     
