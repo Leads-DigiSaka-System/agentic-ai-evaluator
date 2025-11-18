@@ -276,6 +276,29 @@ def update_current_span(metadata: Dict[str, Any] = None, **kwargs):
     except Exception as e:
         logger.warning(f"Failed to update current span: {e}")
 
+
+# NOTE: safe_update_observation and safe_update_trace have been moved to
+# src/utils/langfuse_utils.py for unified access. These functions are kept
+# here for backward compatibility but will be deprecated.
+# Please use: from src.utils.langfuse_utils import safe_update_observation, safe_update_trace
+
+def safe_update_observation(metadata: Dict[str, Any] = None) -> bool:
+    """
+    DEPRECATED: Use src.utils.langfuse_utils.safe_update_observation instead.
+    Kept for backward compatibility.
+    """
+    from src.utils.langfuse_utils import safe_update_observation as _safe_update
+    return _safe_update(metadata)
+
+
+def safe_update_trace(metadata: Dict[str, Any] = None, **kwargs) -> bool:
+    """
+    DEPRECATED: Use src.utils.langfuse_utils.safe_update_trace instead.
+    Kept for backward compatibility.
+    """
+    from src.utils.langfuse_utils import safe_update_trace as _safe_update
+    return _safe_update(metadata, **kwargs)
+
 P = ParamSpec('P')
 T = TypeVar('T')
 

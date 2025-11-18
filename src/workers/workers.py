@@ -130,6 +130,7 @@ class WorkerSettings:
     """
     functions = [process_file_background]  # List of functions to register (standalone functions)
     redis_settings = RedisSettings.from_dsn(REDIS_URL)  # Redis connection
-    max_jobs = 10  # Max concurrent jobs
-    job_timeout = 600  # 10 minutes timeout per job
-    keep_result = 86400  # Keep results in Redis for 24 hours (matches cache expiry for storage approval)
+    from src.utils.constants import ARQ_MAX_JOBS, ARQ_JOB_TIMEOUT_SECONDS, ARQ_KEEP_RESULT_SECONDS
+    max_jobs = ARQ_MAX_JOBS
+    job_timeout = ARQ_JOB_TIMEOUT_SECONDS
+    keep_result = ARQ_KEEP_RESULT_SECONDS

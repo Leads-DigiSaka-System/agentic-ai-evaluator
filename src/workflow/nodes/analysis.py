@@ -1,28 +1,17 @@
 from src.prompt.analysis_template import analysis_prompt_template_structured
 from src.utils.llm_helper import invoke_llm
 from src.utils.clean_logger import CleanLogger
-from src.utils.config import LANGFUSE_CONFIGURED
+# LANGFUSE_CONFIGURED is now handled in langfuse_utils
 from src.utils import config
 from typing import List
 import traceback
 
-# Import Langfuse decorator if available (v3 API)
-if LANGFUSE_CONFIGURED:
-    try:
-        from langfuse import observe, get_client
-        LANGFUSE_AVAILABLE = True
-    except ImportError:
-        LANGFUSE_AVAILABLE = False
-        def observe(*args, **kwargs):
-            def decorator(func):
-                return func
-            return decorator
-else:
-    LANGFUSE_AVAILABLE = False
-    def observe(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator
+# Unified Langfuse utilities - single import point
+from src.utils.langfuse_utils import (
+    LANGFUSE_AVAILABLE,
+    safe_observe as observe,
+    safe_get_client as get_client
+)
 
 
 @observe(name="analyze_demo_trial")
@@ -47,10 +36,11 @@ def analyze_demo_trial(markdown_data: str):
         logger.analysis_start("universal_adaptive_analysis")
         
         # Truncate if too long
+        from src.utils.constants import MAX_CONTENT_LENGTH
         original_length = len(markdown_data)
-        if original_length > 4000:
-            markdown_data = markdown_data[:4000] + "\n... (truncated)"
-            logger.info(f"Content truncated from {original_length} to 4000 characters")
+        if original_length > MAX_CONTENT_LENGTH:
+            markdown_data = markdown_data[:MAX_CONTENT_LENGTH] + "\n... (truncated)"
+            logger.info(f"Content truncated from {original_length} to {MAX_CONTENT_LENGTH} characters")
         
         # Update trace with input metadata (v3 API)
         if LANGFUSE_AVAILABLE:
@@ -60,7 +50,7 @@ def analyze_demo_trial(markdown_data: str):
                     client.update_current_observation(
                         metadata={
                             "input_length": original_length,
-                            "truncated": original_length > 4000,
+                            "truncated": original_length > MAX_CONTENT_LENGTH,
                             "template": "universal_adaptive_analysis"
                         }
                     )
@@ -148,101 +138,111 @@ def generate_adaptive_summary(analysis_data):
         return "Agricultural demo analysis completed. See detailed results for more information."
 
 
-def create_universal_error_response(message):
-    """Create standardized error response for universal template"""
-    return {
-        "status": "error",
-        "product_category": "unknown",
-        "metrics_detected": [],
-        "measurement_intervals": [],
-        
-        "data_quality": {
-            "completeness_score": 0,
-            "critical_data_present": False,
-            "sample_size_adequate": False,
-            "reliability_notes": message,
-            "missing_fields": ["all"]
-        },
-        
-        "basic_info": {
-            "cooperator": "",
+# Error response template structure
+_ERROR_RESPONSE_TEMPLATE = {
+    "status": "error",
+    "product_category": "unknown",
+    "metrics_detected": [],
+    "measurement_intervals": [],
+    "data_quality": {
+        "completeness_score": 0,
+        "critical_data_present": False,
+        "sample_size_adequate": False,
+        "reliability_notes": None,  # Will be set from message
+        "missing_fields": ["all"]
+    },
+    "basic_info": {
+        "cooperator": "",
+        "product": "",
+        "location": "",
+        "application_date": "",
+        "planting_date": "",
+        "crop": "",
+        "plot_size": "",
+        "contact": ""
+    },
+    "treatment_comparison": {
+        "control": {
+            "description": "",
             "product": "",
-            "location": "",
-            "application_date": "",
-            "planting_date": "",
-            "crop": "",
-            "plot_size": "",
-            "contact": ""
+            "rate": "",
+            "timing": "",
+            "method": "",
+            "applications": ""
         },
-        
-        "treatment_comparison": {
-            "control": {
-                "description": "",
-                "product": "",
-                "rate": "",
-                "timing": "",
-                "method": "",
-                "applications": ""
-            },
-            "leads_agri": {
-                "product": "",
-                "rate": "",
-                "timing": "",
-                "method": "",
-                "applications": ""
-            },
-            "protocol_assessment": ""
+        "leads_agri": {
+            "product": "",
+            "rate": "",
+            "timing": "",
+            "method": "",
+            "applications": ""
         },
-        
-        "performance_analysis": {
-            "metric_type": "unknown",
-            "rating_scale_info": "",
-            "raw_data": {
-                "control": {},
-                "leads_agri": {}
-            },
-            "calculated_metrics": {
-                "control_average": 0,
-                "leads_average": 0,
-                "improvement_value": 0,
-                "improvement_percent": 0,
-                "improvement_interpretation": ""
-            },
-            "statistical_assessment": {
-                "improvement_significance": "unknown",
-                "performance_consistency": "unknown",
-                "confidence_level": "low",
-                "notes": message
-            },
-            "trend_analysis": {
-                "control_trend": "unknown",
-                "leads_trend": "unknown",
-                "key_observation": "",
-                "speed_of_action": "unknown"
-            }
+        "protocol_assessment": ""
+    },
+    "performance_analysis": {
+        "metric_type": "unknown",
+        "rating_scale_info": "",
+        "raw_data": {
+            "control": {},
+            "leads_agri": {}
         },
-        
-        "yield_analysis": {
-            "control_yield": "",
-            "leads_yield": "",
-            "yield_improvement": 0,
-            "yield_status": "not_available"
+        "calculated_metrics": {
+            "control_average": 0,
+            "leads_average": 0,
+            "improvement_value": 0,
+            "improvement_percent": 0,
+            "improvement_interpretation": ""
         },
-        
-        "cooperator_feedback": {
-            "raw_feedback": "",
-            "sentiment": "unknown",
-            "key_highlights": [],
-            "visible_results_timeline": "",
-            "concerns": []
+        "statistical_assessment": {
+            "improvement_significance": "unknown",
+            "performance_consistency": "unknown",
+            "confidence_level": "low",
+            "notes": None  # Will be set from message
         },
-        
-        "risk_factors": [],
-        "opportunities": [],
-        "recommendations": [],
-        "executive_summary": "",
-        "error_message": message
-    }
+        "trend_analysis": {
+            "control_trend": "unknown",
+            "leads_trend": "unknown",
+            "key_observation": "",
+            "speed_of_action": "unknown"
+        }
+    },
+    "yield_analysis": {
+        "control_yield": "",
+        "leads_yield": "",
+        "yield_improvement": 0,
+        "yield_status": "not_available"
+    },
+    "cooperator_feedback": {
+        "raw_feedback": "",
+        "sentiment": "unknown",
+        "key_highlights": [],
+        "visible_results_timeline": "",
+        "concerns": []
+    },
+    "risk_factors": [],
+    "opportunities": [],
+    "recommendations": [],
+    "executive_summary": "",
+    "error_message": None  # Will be set from message
+}
+
+
+def _deep_copy_dict(d: dict) -> dict:
+    """Create a deep copy of a dictionary"""
+    import copy
+    return copy.deepcopy(d)
+
+
+def create_universal_error_response(message: str) -> dict:
+    """Create standardized error response for universal template"""
+    response = _deep_copy_dict(_ERROR_RESPONSE_TEMPLATE)
+    
+    # Inject error message into relevant fields
+    response["error_message"] = message
+    response["data_quality"]["reliability_notes"] = message
+    response["performance_analysis"]["statistical_assessment"]["notes"] = message
+    
+    return response
 
 
 # Alias for backward compatibility

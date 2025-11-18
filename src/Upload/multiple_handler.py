@@ -8,53 +8,164 @@ from src.workflow.graph import processing_workflow
 from src.Upload.form_extractor import extract_pdf_with_gemini, extract_pdf_metadata
 from src.database.insert_analysis import analysis_storage 
 from src.utils.clean_logger import get_clean_logger
-from src.utils.config import LANGFUSE_CONFIGURED
+# LANGFUSE_CONFIGURED is now handled in langfuse_utils
 
-# Import Langfuse decorator if available
-if LANGFUSE_CONFIGURED:
-    try:
-        from langfuse import observe
-        from src.monitoring.trace.langfuse_helper import (
-            flush_langfuse, 
-            update_trace_with_metrics, 
-            get_trace_url,
-            get_langfuse_client
-        )
-        LANGFUSE_AVAILABLE = True
-    except ImportError:
-        LANGFUSE_AVAILABLE = False
-        def observe(*args, **kwargs):
-            def decorator(func):
-                return func
-            return decorator
-        def flush_langfuse():
-            pass
-        def update_trace_with_metrics(*args, **kwargs):
-            pass
-        def get_trace_url():
-            return None
-        def get_langfuse_client():
-            return None
-else:
-    LANGFUSE_AVAILABLE = False
-    def observe(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator
-    def flush_langfuse():
-        pass
-    def update_trace_with_metrics(*args, **kwargs):
-        pass
-    def get_trace_url():
-        return None
-    def get_langfuse_client():
-        return None
+# Unified Langfuse utilities - single import point
+from src.utils.langfuse_utils import (
+    LANGFUSE_AVAILABLE,
+    safe_observe as observe,
+    safe_update_trace,
+    flush_langfuse,
+    update_trace_with_metrics,
+    get_trace_url,
+    update_trace_with_error
+)
 
 logger = get_clean_logger(__name__)
 
 
 class MultiReportHandler:
     """Handler for processing PDFs with multiple reports including graph suggestions"""
+    
+    @staticmethod
+    def _detect_file_type(pdf_metadata: Dict[str, Any], original_filename: str) -> str:
+        """Detect file type from metadata or filename extension"""
+        file_type = pdf_metadata.get("file_type")
+        if not file_type or file_type == "unknown":
+            file_ext = original_filename.lower().split('.')[-1] if '.' in original_filename else ''
+            if file_ext == 'pdf':
+                file_type = "pdf"
+            elif file_ext in ['png', 'jpg', 'jpeg']:
+                file_type = "image"
+            else:
+                file_type = file_ext or "unknown"
+        return file_type
+    
+    @staticmethod
+    def _build_initial_state(
+        tmp_path: str,
+        file_content: bytes,
+        original_filename: str,
+        pdf_metadata: Dict[str, Any],
+        tracking_id: str = None,
+        extracted_markdown: str = None
+    ) -> ProcessingState:
+        """Build initial processing state"""
+        return {
+            "file_path": tmp_path,
+            "file_name": original_filename,
+            "file_content": file_content,
+            "extracted_markdown": extracted_markdown,
+            "form_type": None,
+            "chunks": [],
+            "analysis_result": None,
+            "graph_suggestions": None,
+            "form_id": "",
+            "metadata": pdf_metadata,
+            "insertion_date": "",
+            "current_step": "start",
+            "errors": [],
+            "file_validation": {"is_valid": True, "validation_skipped": True} if extracted_markdown else None,
+            "is_valid_content": None,
+            "content_validation": None,
+            "_tracking_id": tracking_id
+        }
+    
+    @staticmethod
+    def _build_report_response(
+        final_state: ProcessingState,
+        original_filename: str,
+        report_number: int = 1
+    ) -> Dict[str, Any]:
+        """Build standardized report response from final state"""
+        return {
+            "report_number": report_number,
+            "file_name": original_filename,
+            "form_id": "",
+            "form_type": final_state.get("form_type", ""),
+            "extracted_content": final_state.get("extracted_markdown", ""),
+            "analysis": final_state.get("analysis_result", {}),
+            "graph_suggestions": final_state.get("graph_suggestions", {}),
+            "chunks": final_state.get("chunks", []),
+            "processing_metrics": {
+                "chunk_count": len(final_state.get("chunks", [])),
+                "processing_steps": final_state.get("current_step", ""),
+                "workflow_completed": True,
+                "storage_ready": True
+            },
+            "errors": final_state.get("errors", []),
+            "validation": {
+                "file_validation": final_state.get("file_validation"),
+                "content_validation": final_state.get("content_validation")
+            },
+            "storage_status": "ready_for_approval",
+            "storage_message": "Analysis completed. Use /api/storage/preview to review and /api/storage/approve to store."
+        }
+    
+    @staticmethod
+    def _build_error_response(original_filename: str, error: Exception, report_number: int = 1) -> Dict[str, Any]:
+        """Build standardized error response"""
+        return {
+            "report_number": report_number,
+            "file_name": original_filename,
+            "form_id": "",
+            "form_type": "",
+            "extracted_content": "",
+            "analysis": {},
+            "graph_suggestions": {},
+            "processing_metrics": {},
+            "errors": [f"Report processing failed: {str(error)}"],
+            "validation": {"file_validation": None, "content_validation": None},
+            "storage_status": "failed",
+            "storage_message": "Processing failed - cannot store"
+        }
+    
+    @staticmethod
+    def _log_workflow_metrics(final_state: ProcessingState, original_filename: str):
+        """Log workflow metrics and scores to Langfuse"""
+        if not LANGFUSE_AVAILABLE:
+            return
+        
+        from src.monitoring.scores.workflow_score import log_workflow_scores
+        
+        # Calculate metrics for metadata
+        workflow_success = len(final_state.get("errors", [])) == 0
+        error_count = len(final_state.get("errors", []))
+        
+        # Get evaluation confidence and data quality for metadata
+        evaluation = final_state.get("output_evaluation", {})
+        if isinstance(evaluation, list) and evaluation:
+            evaluation = evaluation[0]
+        evaluation_confidence = (
+            evaluation.get("confidence", 0.5) 
+            if isinstance(evaluation, dict) else 0.5
+        )
+        
+        analysis = final_state.get("analysis_result", {})
+        data_quality_score = (
+            analysis.get("data_quality", {}).get("completeness_score", 0) 
+            if analysis else 0
+        )
+        
+        # Log scores using dedicated score module
+        log_workflow_scores(final_state)
+        
+        # Add metrics to metadata
+        update_trace_with_metrics({
+            "success": workflow_success,
+            "error_count": error_count,
+            "chunk_count": len(final_state.get("chunks", [])),
+            "chart_count": len(final_state.get("graph_suggestions", {}).get("suggested_charts", [])),
+            "form_type": final_state.get("form_type", ""),
+            "is_valid_content": final_state.get("is_valid_content", False),
+            "final_step": final_state.get("current_step", ""),
+            "evaluation_confidence": evaluation_confidence,
+            "data_quality_score": data_quality_score
+        })
+        
+        trace_url = get_trace_url()
+        if trace_url:
+            logger.info(f"📊 Langfuse trace: {trace_url}")
     
     @staticmethod
     async def process_multi_report_pdf(
@@ -211,55 +322,25 @@ class MultiReportHandler:
         try:
             logger.info("Processing SINGLE REPORT with full validation")
             
-            # Detect file_type from metadata or filename extension
-            file_type = pdf_metadata.get("file_type")
-            if not file_type or file_type == "unknown":
-                file_ext = original_filename.lower().split('.')[-1] if '.' in original_filename else ''
-                if file_ext == 'pdf':
-                    file_type = "pdf"
-                elif file_ext in ['png', 'jpg', 'jpeg']:
-                    file_type = "image"
-                else:
-                    file_type = file_ext or "unknown"
+            # Detect file type
+            file_type = MultiReportHandler._detect_file_type(pdf_metadata, original_filename)
             
             # Log processing start to Langfuse
-            if LANGFUSE_AVAILABLE:
-                client = get_langfuse_client()
-                if client:
-                    try:
-                        client.update_current_trace(
-                            name="process_single_report",
-                            metadata={
-                                "file_name": original_filename,
-                                "file_type": file_type,
-                                "file_size": len(file_content),
-                                "processing_type": "single_report"
-                            },
-                            tags=["single_report", file_type, "agricultural_demo"]
-                        )
-                    except Exception:
-                        pass  # Silently fail if not in trace context
+            safe_update_trace(
+                metadata={
+                    "file_name": original_filename,
+                    "file_type": file_type,
+                    "file_size": len(file_content),
+                    "processing_type": "single_report"
+                },
+                name="process_single_report",
+                tags=["single_report", file_type, "agricultural_demo"]
+            )
 
             # Initialize state WITHOUT pre-extracted markdown
-            initial_state: ProcessingState = {
-                "file_path": tmp_path,
-                "file_name": original_filename,
-                "file_content": file_content,
-                "extracted_markdown": None,
-                "form_type": None,
-                "chunks": [],
-                "analysis_result": None,
-                "graph_suggestions": None,
-                "form_id": "",
-                "metadata": {},
-                "insertion_date": "",
-                "current_step": "start",
-                "errors": [],
-                "file_validation": None,
-                "is_valid_content": None,
-                "content_validation": None,
-                "_tracking_id": tracking_id
-            }
+            initial_state = MultiReportHandler._build_initial_state(
+                tmp_path, file_content, original_filename, pdf_metadata, tracking_id, extracted_markdown=None
+            )
 
             # Execute the workflow (now includes validation)
             logger.info(f"Invoking workflow for {original_filename} (tracking_id: {tracking_id})")
@@ -275,73 +356,10 @@ class MultiReportHandler:
                 raise
 
             # Build response with validation info
-            report_response = {
-                "report_number": 1,
-                "file_name": original_filename,
-                "form_id": "",
-                "form_type": final_state.get("form_type", ""),
-                "extracted_content": final_state.get("extracted_markdown", ""),
-                "analysis": final_state.get("analysis_result", {}),
-                "graph_suggestions": final_state.get("graph_suggestions", {}),
-                "chunks": final_state.get("chunks", []),
-                "processing_metrics": {
-                    "chunk_count": len(final_state.get("chunks", [])),
-                    "processing_steps": final_state.get("current_step", ""),
-                    "workflow_completed": True,
-                    "storage_ready": True
-                },
-                "errors": final_state.get("errors", []),
-                "validation": {
-                    "file_validation": final_state.get("file_validation"),
-                    "content_validation": final_state.get("content_validation")
-                },
-                "storage_status": "ready_for_approval",
-                "storage_message": "Analysis completed. Use /api/storage/preview to review and /api/storage/approve to store."
-            }
+            report_response = MultiReportHandler._build_report_response(final_state, original_filename, report_number=1)
 
             # Log final metrics and scores to Langfuse
-            if LANGFUSE_AVAILABLE:
-                from src.monitoring.trace.langfuse_helper import get_trace_url
-                from src.monitoring.scores.workflow_score import log_workflow_scores
-                
-                # Calculate metrics for metadata
-                workflow_success = len(final_state.get("errors", [])) == 0
-                error_count = len(final_state.get("errors", []))
-                
-                # Get evaluation confidence and data quality for metadata
-                evaluation = final_state.get("output_evaluation", {})
-                if isinstance(evaluation, list) and evaluation:
-                    evaluation = evaluation[0]
-                evaluation_confidence = (
-                    evaluation.get("confidence", 0.5) 
-                    if isinstance(evaluation, dict) else 0.5
-                )
-                
-                analysis = final_state.get("analysis_result", {})
-                data_quality_score = (
-                    analysis.get("data_quality", {}).get("completeness_score", 0) 
-                    if analysis else 0
-                )
-                
-                # Log scores using dedicated score module
-                log_workflow_scores(final_state)
-                
-                # Add metrics to metadata
-                update_trace_with_metrics({
-                    "success": workflow_success,
-                    "error_count": error_count,
-                    "chunk_count": len(final_state.get("chunks", [])),
-                    "chart_count": len(final_state.get("graph_suggestions", {}).get("suggested_charts", [])),
-                    "form_type": final_state.get("form_type", ""),
-                    "is_valid_content": final_state.get("is_valid_content", False),
-                    "final_step": final_state.get("current_step", ""),
-                    "evaluation_confidence": evaluation_confidence,
-                    "data_quality_score": data_quality_score
-                })
-                
-                trace_url = get_trace_url()
-                if trace_url:
-                    logger.info(f"📊 Langfuse trace: {trace_url}")
+            MultiReportHandler._log_workflow_metrics(final_state, original_filename)
 
             if final_state["errors"]:
                 logger.processing_error(original_filename, f"Single report completed with errors: {final_state['errors']}")
@@ -361,30 +379,15 @@ class MultiReportHandler:
             traceback.print_exc()
             
             # Log error to Langfuse
-            if LANGFUSE_AVAILABLE:
-                from src.monitoring.trace.langfuse_helper import update_trace_with_error
-                update_trace_with_error(e, {
-                    "file_name": original_filename,
-                    "processing_type": "single_report"
-                })
+            update_trace_with_error(e, {
+                "file_name": original_filename,
+                "processing_type": "single_report"
+            })
             
             # Flush even on error
             flush_langfuse()
             
-            return {
-                "report_number": 1,
-                "file_name": original_filename,
-                "form_id": "",
-                "form_type": "",
-                "extracted_content": "",
-                "analysis": {},
-                "graph_suggestions": {},
-                "processing_metrics": {},
-                "errors": [f"Single report processing failed: {str(e)}"],
-                "validation": {"file_validation": None, "content_validation": None},
-                "storage_status": "failed",
-                "storage_message": "Processing failed - cannot store"
-            }
+            return MultiReportHandler._build_error_response(original_filename, e, report_number=1)
 
     @staticmethod
     def _split_reports_intelligently(markdown_content: str) -> List[str]:
@@ -421,44 +424,24 @@ class MultiReportHandler:
         try:
             logger.info(f"Processing report {report_index + 1}/{total_reports}")
 
-            file_type = pdf_metadata.get("file_type", "pdf")
+            file_type = MultiReportHandler._detect_file_type(pdf_metadata, original_filename)
             
             # Log to Langfuse
-            if LANGFUSE_AVAILABLE:
-                client = get_langfuse_client()
-                if client:
-                    try:
-                        client.update_current_trace(
-                            name=f"process_report_{report_index + 1}",
-                            metadata={
-                                "report_number": report_index + 1,
-                                "total_reports": total_reports,
-                                "file_name": original_filename,
-                                "file_type": file_type
-                            },
-                            tags=["multi_report", file_type, f"report_{report_index + 1}"]
-                        )
-                    except Exception:
-                        pass  # Silently fail if not in trace context
+            safe_update_trace(
+                metadata={
+                    "report_number": report_index + 1,
+                    "total_reports": total_reports,
+                    "file_name": original_filename,
+                    "file_type": file_type
+                },
+                name=f"process_report_{report_index + 1}",
+                tags=["multi_report", file_type, f"report_{report_index + 1}"]
+            )
 
-            initial_state: ProcessingState = {
-                "file_path": tmp_path,
-                "file_name": f"{original_filename}_report_{report_index + 1}",
-                "file_content": file_content,
-                "extracted_markdown": report_md,
-                "form_type": None,
-                "chunks": [],
-                "analysis_result": None,
-                "graph_suggestions": None,
-                "form_id": "",
-                "metadata": pdf_metadata,
-                "insertion_date": "",
-                "current_step": "start",
-                "errors": [],
-                "file_validation": {"is_valid": True, "validation_skipped": True},
-                "is_valid_content": None,
-                "content_validation": None
-            }
+            initial_state = MultiReportHandler._build_initial_state(
+                tmp_path, file_content, f"{original_filename}_report_{report_index + 1}", 
+                pdf_metadata, tracking_id=None, extracted_markdown=report_md
+            )
 
             # FIX: Run synchronous invoke() in thread pool to avoid blocking async event loop
             logger.info(f"Invoking workflow for report {report_index + 1}/{total_reports}")
@@ -474,28 +457,9 @@ class MultiReportHandler:
                 logger.error(f"Workflow execution failed for report {report_index + 1}: {str(workflow_error)}")
                 raise
 
-            report_response = {
-                "report_number": report_index + 1,
-                "file_name": original_filename,
-                "form_id": "",
-                "form_type": final_state.get("form_type", ""),
-                "extracted_content": final_state.get("extracted_markdown", ""),
-                "analysis": final_state.get("analysis_result", {}),
-                "graph_suggestions": final_state.get("graph_suggestions", {}),
-                "chunks": final_state.get("chunks", []),
-                "processing_metrics": {
-                    "chunk_count": len(final_state.get("chunks", [])),
-                    "processing_steps": final_state.get("current_step", ""),
-                    "workflow_completed": True,
-                    "storage_ready": True
-                },
-                "errors": final_state.get("errors", []),
-                "validation": {
-                    "content_validation": final_state.get("content_validation")
-                },
-                "storage_status": "ready_for_approval",
-                "storage_message": "Analysis completed. Use /api/storage/preview to review and /api/storage/approve to store."
-            }
+            report_response = MultiReportHandler._build_report_response(
+                final_state, original_filename, report_number=report_index + 1
+            )
 
             # Log metrics and scores
             if LANGFUSE_AVAILABLE:
@@ -524,29 +488,14 @@ class MultiReportHandler:
         except Exception as e:
             logger.processing_error(f"Report {report_index + 1}", f"Failed: {str(e)}")
             
-            if LANGFUSE_AVAILABLE:
-                from src.monitoring.trace.langfuse_helper import update_trace_with_error
-                update_trace_with_error(e, {
-                    "report_number": report_index + 1,
-                    "file_name": original_filename
-                })
+            update_trace_with_error(e, {
+                "report_number": report_index + 1,
+                "file_name": original_filename
+            })
             
             flush_langfuse()
             
-            return {
-                "report_number": report_index + 1,
-                "file_name": original_filename,
-                "form_id": "",
-                "form_type": "",
-                "extracted_content": "",
-                "analysis": {},
-                "graph_suggestions": {},
-                "processing_metrics": {},
-                "errors": [f"Report processing failed: {str(e)}"],
-                "validation": {"content_validation": None},
-                "storage_status": "failed",
-                "storage_message": "Processing failed - cannot store"
-            }
+            return MultiReportHandler._build_error_response(original_filename, e, report_number=report_index + 1)
 
     @staticmethod
     def _generate_cross_report_suggestions(all_reports: List[Dict[str, Any]]) -> Dict[str, Any]:

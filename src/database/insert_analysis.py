@@ -10,13 +10,15 @@ from datetime import datetime, date
 import json
 import re
 
-class AnalysisStorage:
+# Import constants from centralized constants file
+from src.utils.constants import (
+    SUMMARY_PREVIEW_LENGTH,
+    EXECUTIVE_SUMMARY_MAX_LENGTH,
+    MAX_ERROR_LIST_SIZE,
+    MIN_SUMMARY_LENGTH
+)
 
-    # Configuration constants
-    SUMMARY_PREVIEW_LENGTH = 200
-    EXECUTIVE_SUMMARY_MAX_LENGTH = 500
-    MAX_ERROR_LIST_SIZE = 10
-    MIN_SUMMARY_LENGTH = 10
+class AnalysisStorage:
     
     def __init__(self):
         self.logger = get_clean_logger(__name__)

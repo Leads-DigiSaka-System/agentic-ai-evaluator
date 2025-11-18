@@ -37,3 +37,41 @@ CORS_ORIGINS = [origin.strip() for origin in CORS_ORIGINS_STR.split(",")]
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 DEBUG_MODE = os.getenv("DEBUG", "false").lower() == "true"
+
+# ============================================================================
+# Cache & Storage Constants
+# ============================================================================
+CACHE_EXPIRY_HOURS = 24
+CACHE_EXPIRY_SECONDS = CACHE_EXPIRY_HOURS * 3600
+
+# ============================================================================
+# Analysis & Processing Constants
+# ============================================================================
+SUMMARY_PREVIEW_LENGTH = 200
+EXECUTIVE_SUMMARY_MAX_LENGTH = 500
+MAX_ERROR_LIST_SIZE = 10
+MIN_SUMMARY_LENGTH = 10
+MAX_CONTENT_LENGTH = 4000  # For truncation
+
+# ============================================================================
+# Redis & Background Job Constants
+# ============================================================================
+REDIS_TRACKING_TTL_SECONDS = 3600  # 1 hour
+REDIS_PROGRESS_TTL_SECONDS = 3600  # 1 hour
+ARQ_JOB_TIMEOUT_SECONDS = 600  # 10 minutes
+ARQ_MAX_JOBS = 10
+ARQ_KEEP_RESULT_SECONDS = 86400  # 24 hours
+
+# ============================================================================
+# Workflow Constants
+# ============================================================================
+MAX_EVALUATION_ATTEMPTS = 2
+MIN_CONFIDENCE_FOR_RETRY = 0.3
+SOURCE_LIMITATION_CONFIDENCE_THRESHOLD = 0.5
+
+# ============================================================================
+# File Processing Constants
+# ============================================================================
+TEMP_FILE_SUFFIX_PDF = ".pdf"
+TEMP_FILE_SUFFIX_IMAGE = ".png"
+SUPPORTED_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg']

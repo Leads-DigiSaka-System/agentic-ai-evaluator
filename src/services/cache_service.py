@@ -12,8 +12,9 @@ class AgentOutputCache:
     """
     
     def __init__(self, redis_url: str = None):
-        self.cache_expiry_hours = 24  
-        self.cache_expiry_seconds = self.cache_expiry_hours * 3600
+        from src.utils.constants import CACHE_EXPIRY_HOURS, CACHE_EXPIRY_SECONDS
+        self.cache_expiry_hours = CACHE_EXPIRY_HOURS
+        self.cache_expiry_seconds = CACHE_EXPIRY_SECONDS
         logger.info(f"AgentOutputCache initialized (using shared Redis pool)")
     
     def _get_cache_key(self, cache_id: str) -> str:

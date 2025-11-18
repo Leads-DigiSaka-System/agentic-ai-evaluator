@@ -32,12 +32,12 @@ logger = get_clean_logger(__name__)
 try:
     from src.monitoring.trace.langfuse_helper import initialize_langfuse
     if initialize_langfuse():
-        logger.info("✅ Langfuse v3 initialized successfully")
+        logger.info("Langfuse v3 initialized successfully")
     else:
-        logger.info("ℹ️ Langfuse not configured or initialization skipped")
+        logger.info("ℹLangfuse not configured or initialization skipped")
 except Exception as e:
-    logger.warning(f"⚠️ Langfuse initialization failed: {e}")
-    logger.info("ℹ️ Continuing without Langfuse observability")
+    logger.warning(f"Langfuse initialization failed: {e}")
+    logger.info("ℹContinuing without Langfuse observability")
 
 # Graceful shutdown handler
 def shutdown_handler():
@@ -45,12 +45,31 @@ def shutdown_handler():
     logger.info("Shutting down gracefully...")
     logger.info("Closing database connections...")
     
+    # Close shared Redis pool (sync version for atexit)
+    try:
+        import asyncio
+        from src.generator.redis_pool import close_shared_redis_pool
+        # Try to close if event loop exists
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If loop is running, schedule the close
+                asyncio.create_task(close_shared_redis_pool())
+            else:
+                loop.run_until_complete(close_shared_redis_pool())
+        except RuntimeError:
+            # No event loop, skip
+            pass
+        logger.info("Shared Redis pool closed on shutdown")
+    except Exception as e:
+        logger.debug(f"Redis pool shutdown error (non-critical): {e}")
+    
     # Flush and shutdown Langfuse
     try:
         from src.monitoring.trace.langfuse_helper import flush_langfuse, shutdown_langfuse
         flush_langfuse()
         shutdown_langfuse()
-        logger.info("✅ Langfuse flushed and shutdown")
+        logger.info("Langfuse flushed and shutdown")
     except Exception as e:
         logger.debug(f"Langfuse shutdown error (non-critical): {e}")
     
@@ -70,15 +89,24 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 app = FastAPI()
 
-# Add FastAPI shutdown event for Langfuse
+# Add FastAPI shutdown event for cleanup
 @app.on_event("shutdown")
 async def shutdown_event():
-    """FastAPI shutdown event - flush Langfuse before shutdown"""
+    """FastAPI shutdown event - cleanup resources before shutdown"""
+    # Close shared Redis pool
+    try:
+        from src.generator.redis_pool import close_shared_redis_pool
+        await close_shared_redis_pool()
+        logger.info("Shared Redis pool closed on FastAPI shutdown")
+    except Exception as e:
+        logger.debug(f"Redis pool shutdown error (non-critical): {e}")
+    
+    # Flush Langfuse
     try:
         from src.monitoring.trace.langfuse_helper import flush_langfuse, shutdown_langfuse
         flush_langfuse()
         shutdown_langfuse()
-        logger.info("✅ Langfuse flushed on FastAPI shutdown")
+        logger.info("Langfuse flushed on FastAPI shutdown")
     except Exception as e:
         logger.debug(f"Langfuse shutdown error (non-critical): {e}")
 

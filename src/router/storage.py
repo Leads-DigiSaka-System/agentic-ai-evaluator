@@ -13,50 +13,33 @@ from datetime import datetime
 router = APIRouter()
 logger = get_clean_logger(__name__)
 
-# Import Langfuse decorator if available (v3 API)
-if LANGFUSE_CONFIGURED:
-    try:
-        from langfuse import observe, get_client
-        import functools
-        LANGFUSE_AVAILABLE = True
-        
-        # Wrapper to preserve function signature for slowapi compatibility
-        def observe_with_signature_preservation(*args, **kwargs):
-            """Wrapper for @observe that preserves function signature for slowapi"""
-            def decorator(func):
-                # Apply observe decorator
-                observed_func = observe(*args, **kwargs)(func)
-                # Preserve original function signature metadata and attributes
-                functools.update_wrapper(observed_func, func)
-                # Preserve __signature__ for slowapi inspection
-                import inspect
-                if hasattr(func, '__signature__'):
-                    observed_func.__signature__ = func.__signature__
-                else:
-                    try:
-                        observed_func.__signature__ = inspect.signature(func)
-                    except (ValueError, TypeError):
-                        pass
-                return observed_func
-            return decorator
-    except ImportError:
-        LANGFUSE_AVAILABLE = False
-        def observe_with_signature_preservation(*args, **kwargs):
-            def decorator(func):
-                return func
-            return decorator
-        def get_client():
-            return None
-        observe = observe_with_signature_preservation
-else:
-    LANGFUSE_AVAILABLE = False
-    def observe_with_signature_preservation(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator
-    def get_client():
-        return None
-    observe = observe_with_signature_preservation
+# Unified Langfuse utilities - single import point
+from src.utils.langfuse_utils import (
+    LANGFUSE_AVAILABLE,
+    safe_get_client as get_client,
+    safe_observe
+)
+import functools
+import inspect
+
+# Wrapper to preserve function signature for slowapi compatibility
+def observe_with_signature_preservation(*args, **kwargs):
+    """Wrapper for @observe that preserves function signature for slowapi"""
+    def decorator(func):
+        # Apply observe decorator
+        observed_func = safe_observe(*args, **kwargs)(func)
+        # Preserve original function signature metadata and attributes
+        functools.update_wrapper(observed_func, func)
+        # Preserve __signature__ for slowapi inspection
+        if hasattr(func, '__signature__'):
+            observed_func.__signature__ = func.__signature__
+        else:
+            try:
+                observed_func.__signature__ = inspect.signature(func)
+            except (ValueError, TypeError):
+                pass
+        return observed_func
+    return decorator
 
 
 @router.post("/storage/approve-simple")

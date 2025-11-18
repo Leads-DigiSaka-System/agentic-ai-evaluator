@@ -11,13 +11,14 @@ from src.monitoring.session.langfuse_session_helper import (
     generate_session_id,
     propagate_session_id
 )
-from src.monitoring.trace.langfuse_helper import (
+from src.utils.langfuse_utils import (
     observe_operation,
-    get_langfuse_client,
-    LANGFUSE_CONFIGURED,
+    safe_get_client as get_langfuse_client,
     flush_langfuse,
-    get_trace_url
+    get_trace_url,
+    LANGFUSE_AVAILABLE
 )
+from src.utils.config import LANGFUSE_CONFIGURED
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from src.generator.redis_pool import get_shared_redis_pool
 import uuid
@@ -56,16 +57,11 @@ async def upload_file(
         logger.info(f"Generated session ID: {session_id}")
         
         # Set session_id on trace
-        if LANGFUSE_CONFIGURED:
-            try:
-                client = get_langfuse_client()
-                if client:
-                    client.update_current_trace(
-                        session_id=session_id,
-                        metadata={"file_name": file.filename[:100], "session_id": session_id}
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to set session_id on trace: {e}")
+        from src.utils.langfuse_utils import safe_update_trace
+        safe_update_trace(
+            metadata={"file_name": file.filename[:100], "session_id": session_id},
+            session_id=session_id
+        )
         
         # ✅ Background processing with ARQ
         if background:
@@ -137,14 +133,10 @@ async def upload_file(
                     logger.warning(f"Failed to cache agent output: {str(e)}")
                 
                 # Flush Langfuse
-                if LANGFUSE_CONFIGURED:
-                    try:
-                        trace_url = get_trace_url()
-                        if trace_url:
-                            logger.info(f"📊 Langfuse trace: {trace_url}")
-                        flush_langfuse()
-                    except Exception as e:
-                        logger.debug(f"Could not get trace URL: {e}")
+                trace_url = get_trace_url()
+                if trace_url:
+                    logger.info(f"📊 Langfuse trace: {trace_url}")
+                flush_langfuse()
                 
                 return result
                 
