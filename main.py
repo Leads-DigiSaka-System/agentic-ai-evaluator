@@ -1,3 +1,6 @@
+import os
+import signal
+import atexit
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from src.router.upload import router as upload_router 
@@ -6,10 +9,9 @@ from src.router.delete_extract import router as delete_router
 from src.router.agent import router as agent_router
 from src.router.storage import router as storage_router
 from src.router.progress import router as progress_router
+from src.router.cache import router as cache_router
+from src.router.worker import router as worker_router
 from src.deps.security import require_api_key
-import os
-import signal
-import atexit
 from dotenv import load_dotenv
 from datetime import datetime
 from src.utils.config import CONNECTION_WEB
@@ -27,7 +29,7 @@ load_dotenv()
 setup_clean_logging("INFO")
 logger = get_clean_logger(__name__)
 
-# ⚠️ CRITICAL: Initialize Langfuse v3 BEFORE importing routes
+# CRITICAL: Initialize Langfuse v3 BEFORE importing routes
 # This ensures Langfuse is ready when nodes are imported
 try:
     from src.monitoring.trace.langfuse_helper import initialize_langfuse
@@ -90,9 +92,39 @@ signal.signal(signal.SIGTERM, signal_handler)
 app = FastAPI()
 
 # Add FastAPI shutdown event for cleanup
+@app.on_event("startup")
+async def startup_event():
+    """FastAPI startup event - initialize services and cleanup"""
+    logger.info("Application starting up...")
+    
+    # Clean up expired cache entries on startup
+    try:
+        from src.services.cache_service import agent_cache
+        cleaned_count = await agent_cache.cleanup_expired_caches()
+        if cleaned_count > 0:
+            logger.info(f"Cleaned up {cleaned_count} expired cache entries on startup")
+        else:
+            logger.info("No expired cache entries to clean up")
+    except Exception as e:
+        logger.warning(f"Cache cleanup on startup failed (non-critical): {e}")
+    
+    logger.info("Startup complete")
+
+
 @app.on_event("shutdown")
 async def shutdown_event():
     """FastAPI shutdown event - cleanup resources before shutdown"""
+    logger.info("Application shutting down...")
+    
+    # Clean up expired cache entries on shutdown
+    try:
+        from src.services.cache_service import agent_cache
+        cleaned_count = await agent_cache.cleanup_expired_caches()
+        if cleaned_count > 0:
+            logger.info(f"🧹 Cleaned up {cleaned_count} expired cache entries on shutdown")
+    except Exception as e:
+        logger.debug(f"Cache cleanup on shutdown failed (non-critical): {e}")
+    
     # Close shared Redis pool
     try:
         from src.generator.redis_pool import close_shared_redis_pool
@@ -109,6 +141,8 @@ async def shutdown_event():
         logger.info("Langfuse flushed on FastAPI shutdown")
     except Exception as e:
         logger.debug(f"Langfuse shutdown error (non-critical): {e}")
+    
+    logger.info("Shutdown complete")
 
 
 app.state.limiter = limiter
@@ -128,9 +162,13 @@ app.add_middleware(
 app.include_router(upload_router, prefix="/api", tags=["Upload"], dependencies=[Depends(require_api_key)])
 app.include_router(agent_router, prefix="/api", tags=["agent"], dependencies=[Depends(require_api_key)])  # Re-enabled with debug
 app.include_router(search_router, prefix="/api", tags=["search"], dependencies=[Depends(require_api_key)])
-app.include_router(delete_router, prefix="/api", tags=["delete"], dependencies=[Depends(require_api_key)])
 app.include_router(storage_router, prefix="/api", tags=["storage"], dependencies=[Depends(require_api_key)])  # Re-enabled with debug
 app.include_router(progress_router, prefix="/api", tags=["progress"], dependencies=[Depends(require_api_key)])
+
+#This router is not open for production for debugging only
+app.include_router(cache_router, prefix="/api", tags=["cache"], dependencies=[Depends(require_api_key)])
+app.include_router(worker_router, prefix="/api", tags=["worker"], dependencies=[Depends(require_api_key)])
+app.include_router(delete_router, prefix="/api", tags=["delete"], dependencies=[Depends(require_api_key)])
 
 # Health check endpoint
 @app.get("/")

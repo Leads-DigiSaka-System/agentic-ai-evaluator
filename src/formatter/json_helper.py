@@ -13,6 +13,7 @@ def repair_json_string(json_str: str) -> str:
     Uses a simple, iterative approach to fix:
     - Missing commas between object properties
     - Trailing commas before closing braces/brackets
+    - Invalid escape sequences (e.g., \escape -> \\escape)
     
     Args:
         json_str: Potentially malformed JSON string
@@ -22,6 +23,16 @@ def repair_json_string(json_str: str) -> str:
     """
     if not json_str:
         return json_str
+    
+    # Step 0: Fix invalid escape sequences
+    # Replace invalid escape sequences like \escape with \\escape
+    # But preserve valid escapes like \n, \t, \", etc.
+    import re
+    # Pattern to find invalid escape sequences (not followed by valid escape char)
+    # Valid escapes: \n, \t, \r, \b, \f, \", \', \\, \/, \uXXXX
+    valid_escapes = r'[nrtbf"\'/\\u]'
+    # Replace invalid escapes (backslash not followed by valid escape or digit)
+    json_str = re.sub(r'\\(?![nrtbf"\'/\\u0-9])', r'\\\\', json_str)
     
     # Step 1: Remove trailing commas before closing braces/brackets
     json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
@@ -135,40 +146,62 @@ def clean_json_from_llm_response(response: Any) -> Optional[dict]:
                     end = min(len(repaired), error_pos + 150)
                     logger.debug(f"Repair error context (pos {error_pos}): ...{repaired[start:end]}...")
 
-    # 3) Fallback: find first JSON object heuristically
-    obj_match = re.search(r"\{[\s\S]*\}", response_text)
-    if obj_match:
-        candidate = obj_match.group(0)
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to decode heuristic JSON object: {str(e)}")
-            logger.debug(f"Heuristic JSON (first 200 chars): {candidate[:200]}...")
-            # Log error position if available
-            if hasattr(e, 'pos') and e.pos is not None:
-                error_pos = e.pos
-                start = max(0, error_pos - 150)
-                end = min(len(candidate), error_pos + 150)
-                logger.debug(f"Error at position {error_pos}: ...{candidate[start:end]}...")
-                # Also log the line number if available
-                if hasattr(e, 'lineno'):
-                    logger.debug(f"Error at line {e.lineno}, column {getattr(e, 'colno', 'unknown')}")
-            
-            # Try repairing
-            try:
-                repaired = repair_json_string(candidate)
-                parsed = json.loads(repaired)
-                logger.info("✅ Successfully repaired and parsed heuristic JSON")
-                return parsed
-            except (json.JSONDecodeError, Exception) as repair_err:
-                logger.debug(f"JSON repair also failed: {str(repair_err)}")
-                # Log more context around the repair error location
-                if hasattr(repair_err, 'pos') and repair_err.pos is not None:
-                    error_pos = repair_err.pos
-                    start = max(0, error_pos - 150)
-                    end = min(len(repaired), error_pos + 150)
-                    logger.debug(f"Repair error context (pos {error_pos}): ...{repaired[start:end]}...")
-
+    # 3) Fallback: find first JSON object heuristically using brace counting
+    # This handles "Extra data" errors by extracting only the first complete object
+    start_idx = response_text.find('{')
+    if start_idx != -1:
+        # Use brace counting to find the exact end of the first JSON object
+        brace_count = 0
+        for i in range(start_idx, len(response_text)):
+            if response_text[i] == '{':
+                brace_count += 1
+            elif response_text[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    # Found complete first object - extract only this part
+                    candidate = response_text[start_idx:i+1]
+                    try:
+                        parsed = json.loads(candidate)
+                        logger.debug("✅ Successfully parsed first JSON object using brace counting")
+                        return parsed if isinstance(parsed, dict) else None
+                    except json.JSONDecodeError as e:
+                        # Check if it's an "Extra data" error - means we got valid JSON but there's more
+                        if "Extra data" in str(e):
+                            # Try to parse just the valid part before the extra data
+                            error_pos = getattr(e, 'pos', None)
+                            if error_pos and error_pos < len(candidate):
+                                try:
+                                    # Parse only up to the error position
+                                    partial_candidate = candidate[:error_pos].rstrip()
+                                    # Find the last complete object before error
+                                    last_brace = partial_candidate.rfind('}')
+                                    if last_brace != -1:
+                                        partial_candidate = partial_candidate[:last_brace+1]
+                                        parsed = json.loads(partial_candidate)
+                                        logger.info("✅ Successfully parsed JSON object (removed extra data)")
+                                        return parsed if isinstance(parsed, dict) else None
+                                except:
+                                    pass
+                        
+                        logger.debug(f"Failed to decode heuristic JSON object: {str(e)}")
+                        logger.debug(f"Heuristic JSON (first 200 chars): {candidate[:200]}...")
+                        
+                        # Try repairing
+                        try:
+                            repaired = repair_json_string(candidate)
+                            parsed = json.loads(repaired)
+                            logger.info("✅ Successfully repaired and parsed heuristic JSON")
+                            return parsed if isinstance(parsed, dict) else None
+                        except (json.JSONDecodeError, Exception) as repair_err:
+                            logger.debug(f"JSON repair also failed: {str(repair_err)}")
+                            # Log more context around the repair error location
+                            if hasattr(repair_err, 'pos') and repair_err.pos is not None:
+                                error_pos = repair_err.pos
+                                start = max(0, error_pos - 150)
+                                end = min(len(repaired), error_pos + 150)
+                                logger.debug(f"Repair error context (pos {error_pos}): ...{repaired[start:end]}...")
+    
+    # If all parsing attempts fail, return None
     logger.warning("No valid JSON found in LLM response after cleanup attempts")
     logger.debug(f"Response text (first 300 chars): {response_text[:300]}...")
     return None

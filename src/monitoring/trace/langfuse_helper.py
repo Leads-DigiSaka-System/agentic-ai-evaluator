@@ -164,12 +164,22 @@ def create_score(
         if not client:
             return
         
-        # If trace_id not provided, get current trace ID
+        # If trace_id not provided, try to get current trace ID
+        # Note: Langfuse v3 doesn't have get_trace_id() method directly
+        # We need to get it from the current context or observation
         if not trace_id:
             try:
-                trace_id = client.get_trace_id()
-            except Exception:
-                logger.debug("Could not get current trace ID for scoring")
+                # Try to get trace ID from current observation context
+                # In Langfuse v3, trace ID is typically in the context
+                if hasattr(client, 'get_current_observation'):
+                    obs = client.get_current_observation()
+                    if obs and hasattr(obs, 'trace_id'):
+                        trace_id = obs.trace_id
+                # Fallback: try get_trace_id if it exists (some versions might have it)
+                elif hasattr(client, 'get_trace_id'):
+                    trace_id = client.get_trace_id()
+            except Exception as e:
+                logger.debug(f"Could not get current trace ID for scoring: {e}")
                 return
         
         if not trace_id:
@@ -220,7 +230,19 @@ def score_current_trace(
             )
         except AttributeError:
             # Fallback to create_score if score_current_trace not available
-            trace_id = client.get_trace_id()
+            trace_id = None
+            try:
+                # Try to get trace ID from current observation context
+                if hasattr(client, 'get_current_observation'):
+                    obs = client.get_current_observation()
+                    if obs and hasattr(obs, 'trace_id'):
+                        trace_id = obs.trace_id
+                # Fallback: try get_trace_id if it exists
+                elif hasattr(client, 'get_trace_id'):
+                    trace_id = client.get_trace_id()
+            except Exception:
+                pass
+            
             if trace_id:
                 create_score(
                     name=name,
@@ -246,7 +268,19 @@ def get_trace_url() -> Optional[str]:
             return None
         
         # v3: Get trace ID from current context
-        trace_id = client.get_trace_id()
+        trace_id = None
+        try:
+            # Try to get trace ID from current observation context
+            if hasattr(client, 'get_current_observation'):
+                obs = client.get_current_observation()
+                if obs and hasattr(obs, 'trace_id'):
+                    trace_id = obs.trace_id
+            # Fallback: try get_trace_id if it exists (some versions might have it)
+            elif hasattr(client, 'get_trace_id'):
+                trace_id = client.get_trace_id()
+        except Exception:
+            pass
+        
         if trace_id:
             return f"{LANGFUSE_HOST}/trace/{trace_id}"
     except Exception as e:

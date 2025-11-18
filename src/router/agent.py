@@ -69,26 +69,46 @@ async def upload_file(
                 redis_pool = await get_shared_redis_pool()
                 tracking_id = str(uuid.uuid4())
                 
+                # Get job priority from query params (optional)
+                priority = request.query_params.get("priority", "normal")
+                from src.utils.constants import (
+                    ARQ_JOB_PRIORITY_HIGH,
+                    ARQ_JOB_PRIORITY_NORMAL,
+                    ARQ_JOB_PRIORITY_LOW,
+                    REDIS_TRACKING_TTL_SECONDS
+                )
+                
+                # Map priority string to numeric value
+                priority_map = {
+                    "high": ARQ_JOB_PRIORITY_HIGH,
+                    "normal": ARQ_JOB_PRIORITY_NORMAL,
+                    "low": ARQ_JOB_PRIORITY_LOW
+                }
+                job_priority = priority_map.get(priority.lower(), ARQ_JOB_PRIORITY_NORMAL)
+                
+                # Enqueue job with priority (ARQ uses _job_id for priority-based ordering)
                 job = await redis_pool.enqueue_job(
                     "process_file_background",
                     tracking_id,
                     content,
                     file.filename,
-                    session_id
+                    session_id,
+                    _job_id=f"{job_priority}-{tracking_id}"  # Lower number = higher priority
                 )
                 
                 await redis_pool.setex(
                     f"arq:tracking:{job.job_id}",
-                    3600,
+                    REDIS_TRACKING_TTL_SECONDS,
                     tracking_id
                 )
                 
-                logger.info(f"Job queued: {job.job_id} (tracking_id: {tracking_id})")
+                logger.info(f"Job queued: {job.job_id} (tracking_id: {tracking_id}, priority: {priority})")
                 
                 return {
                     "status": "queued",
                     "job_id": job.job_id,
                     "session_id": session_id,
+                    "priority": priority,
                     "message": "Processing started in background",
                     "progress_url": f"/api/progress/{job.job_id}"
                 }

@@ -35,27 +35,15 @@ async def update_progress(ctx, job_id: str, progress: int, message: str):
                 "progress": progress,
                 "message": message
             }
+            from src.utils.constants import REDIS_PROGRESS_TTL_SECONDS
             progress_key = f"arq:progress:{job_id}"
             await redis.setex(
                 progress_key,
-                3600,  # 1 hour TTL
+                REDIS_PROGRESS_TTL_SECONDS,
                 json.dumps(progress_data)
             )
-            # Verify the write was successful
-            try:
-                stored_data = await redis.get(progress_key)
-                if stored_data:
-                    if isinstance(stored_data, bytes):
-                        stored_data = stored_data.decode('utf-8')
-                    stored_progress = json.loads(stored_data).get("progress", 0)
-                    if stored_progress == progress:
-                        logger.info(f"[WORKER] Progress updated: {progress}% - {message} (tracking_id: {job_id})")
-                    else:
-                        logger.warning(f"[WORKER] Progress write mismatch: wrote {progress}% but Redis has {stored_progress}% (tracking_id: {job_id})")
-                else:
-                    logger.error(f"[WORKER] Progress write failed: key not found after write (tracking_id: {job_id})")
-            except Exception as verify_error:
-                logger.warning(f"[WORKER] Could not verify progress write: {verify_error} (tracking_id: {job_id})")
+            # Simplified logging - removed verification overhead
+            logger.info(f"[WORKER] Progress updated: {progress}% - {message} (tracking_id: {job_id})")
         else:
             logger.error(f"[WORKER] No Redis connection available (context or pool)")
     except Exception as e:
@@ -118,19 +106,40 @@ async def process_file_background(ctx, tracking_id: str, file_content: bytes, fi
         }
         
     except Exception as e:
-        logger.error(f"Background processing failed: {e}")
-        raise  # Re-raise to mark job as failed
+        error_message = str(e)
+        logger.error(f"Background processing failed for {filename} (tracking_id: {tracking_id}): {error_message}", exc_info=True)
+        
+        # Import user-friendly error utility
+        from src.utils.user_friendly_errors import get_user_friendly_error
+        
+        # Create a user-friendly error message
+        # ARQ will store the exception in the "e" field, which our progress endpoint will extract
+        user_friendly_error = get_user_friendly_error(error_message)
+        
+        # Raise exception so ARQ marks job as failed and can retry
+        # The exception message will be stored and can be retrieved by progress endpoint
+        raise Exception(user_friendly_error) from e
 
 # ARQ Worker Settings
 class WorkerSettings:
     """
-    ARQ Worker Configuration
+    ARQ Worker Configuration with retry mechanism
     
     IMPORTANT: Class name dapat "WorkerSettings" (required by ARQ)
     """
     functions = [process_file_background]  # List of functions to register (standalone functions)
     redis_settings = RedisSettings.from_dsn(REDIS_URL)  # Redis connection
-    from src.utils.constants import ARQ_MAX_JOBS, ARQ_JOB_TIMEOUT_SECONDS, ARQ_KEEP_RESULT_SECONDS
+    from src.utils.constants import (
+        ARQ_MAX_JOBS, 
+        ARQ_JOB_TIMEOUT_SECONDS, 
+        ARQ_KEEP_RESULT_SECONDS,
+        ARQ_MAX_RETRIES,
+        ARQ_RETRY_DELAY
+    )
     max_jobs = ARQ_MAX_JOBS
     job_timeout = ARQ_JOB_TIMEOUT_SECONDS
     keep_result = ARQ_KEEP_RESULT_SECONDS
+    # Retry configuration
+    retry_jobs = True  # Enable automatic retries for failed jobs
+    max_retries = ARQ_MAX_RETRIES  # Maximum number of retry attempts
+    retry_delay = ARQ_RETRY_DELAY  # Delay between retries (seconds)

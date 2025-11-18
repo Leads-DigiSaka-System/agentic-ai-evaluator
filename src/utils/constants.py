@@ -61,6 +61,11 @@ REDIS_PROGRESS_TTL_SECONDS = 3600  # 1 hour
 ARQ_JOB_TIMEOUT_SECONDS = 600  # 10 minutes
 ARQ_MAX_JOBS = 10
 ARQ_KEEP_RESULT_SECONDS = 86400  # 24 hours
+ARQ_MAX_RETRIES = int(os.getenv("ARQ_MAX_RETRIES", "3"))  # Max retry attempts for failed jobs
+ARQ_RETRY_DELAY = float(os.getenv("ARQ_RETRY_DELAY", "5.0"))  # Delay between retries in seconds
+ARQ_JOB_PRIORITY_HIGH = 1
+ARQ_JOB_PRIORITY_NORMAL = 5
+ARQ_JOB_PRIORITY_LOW = 10
 
 # ============================================================================
 # Workflow Constants

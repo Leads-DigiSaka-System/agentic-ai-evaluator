@@ -478,14 +478,48 @@ def validate_output_with_crew(state: dict) -> dict:
             
             # Now parse the actual result (string, dict, or other)
             if isinstance(crew_result, str):
-                # Try to find JSON in the string
+                # Try to find and extract the first valid JSON object from the string
                 import re
-                json_match = re.search(r'\{.*\}', crew_result, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                    final_decision = json.loads(json_str)
+                from src.formatter.json_helper import repair_json_string, clean_json_from_llm_response
+                
+                # First, try using the existing JSON cleaner (handles markdown, etc.)
+                cleaned_result = clean_json_from_llm_response(crew_result)
+                if cleaned_result and isinstance(cleaned_result, dict):
+                    final_decision = cleaned_result
                 else:
-                    raise ValueError("No JSON found in crew result")
+                    # Fallback: find first JSON object manually
+                    # Use non-greedy match to find the first complete JSON object
+                    json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', crew_result, re.DOTALL)
+                    if json_match:
+                        json_str = json_match.group(0)
+                        # Repair JSON string to handle invalid escape sequences
+                        json_str = repair_json_string(json_str)
+                        # Parse only the first JSON object (stop at first valid parse)
+                        try:
+                            final_decision = json.loads(json_str)
+                        except json.JSONDecodeError:
+                            # If still fails, try to extract just the first object more carefully
+                            # Find the first { and match it with its closing }
+                            brace_count = 0
+                            start_idx = crew_result.find('{')
+                            if start_idx != -1:
+                                for i in range(start_idx, len(crew_result)):
+                                    if crew_result[i] == '{':
+                                        brace_count += 1
+                                    elif crew_result[i] == '}':
+                                        brace_count -= 1
+                                        if brace_count == 0:
+                                            # Found complete first object
+                                            json_str = crew_result[start_idx:i+1]
+                                            json_str = repair_json_string(json_str)
+                                            final_decision = json.loads(json_str)
+                                            break
+                                else:
+                                    raise ValueError("No complete JSON object found in crew result")
+                            else:
+                                raise ValueError("No JSON found in crew result")
+                    else:
+                        raise ValueError("No JSON found in crew result")
             elif isinstance(crew_result, dict):
                 final_decision = crew_result
             elif hasattr(crew_result, '__dict__'):
@@ -497,12 +531,33 @@ def validate_output_with_crew(state: dict) -> dict:
                 result_str = str(crew_result)
                 logger.debug(f"Attempting to parse string representation: {result_str[:200]}...")
                 import re
-                json_match = re.search(r'\{.*\}', result_str, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                    final_decision = json.loads(json_str)
+                from src.formatter.json_helper import repair_json_string, clean_json_from_llm_response
+                
+                # Try using the existing JSON cleaner first
+                cleaned_result = clean_json_from_llm_response(result_str)
+                if cleaned_result and isinstance(cleaned_result, dict):
+                    final_decision = cleaned_result
                 else:
-                    raise ValueError(f"Could not extract JSON from result type: {type(crew_result)}")
+                    # Fallback: find first JSON object manually
+                    # Find the first { and match it with its closing }
+                    brace_count = 0
+                    start_idx = result_str.find('{')
+                    if start_idx != -1:
+                        for i in range(start_idx, len(result_str)):
+                            if result_str[i] == '{':
+                                brace_count += 1
+                            elif result_str[i] == '}':
+                                brace_count -= 1
+                                if brace_count == 0:
+                                    # Found complete first object
+                                    json_str = result_str[start_idx:i+1]
+                                    json_str = repair_json_string(json_str)
+                                    final_decision = json.loads(json_str)
+                                    break
+                        else:
+                            raise ValueError(f"Could not extract complete JSON from result type: {type(crew_result)}")
+                    else:
+                        raise ValueError(f"Could not extract JSON from result type: {type(crew_result)}")
                 
             # ============================================
             # VALIDATE CONFIDENCE SCORE FROM AGENTS

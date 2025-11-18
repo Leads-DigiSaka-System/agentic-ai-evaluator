@@ -162,9 +162,10 @@ def update_progress_sync(tracking_id: str, progress: int, message: str):
         }
         
         # Use setex for synchronous operation
+        from src.utils.constants import REDIS_PROGRESS_TTL_SECONDS
         redis_client.setex(
             f"arq:progress:{tracking_id}",
-            3600,  # 1 hour TTL
+            REDIS_PROGRESS_TTL_SECONDS,
             json.dumps(progress_data)
         )
         
