@@ -1,6 +1,6 @@
 from src.workflow.state import ProcessingState
 from src.prompt.prompt_template import content_validation_template
-from src.utils.llm_helper import invoke_llm
+from src.utils.llm_helper import ainvoke_llm
 from src.utils.clean_logger import CleanLogger
 from src.utils.config import LANGFUSE_CONFIGURED
 import asyncio
@@ -30,9 +30,11 @@ else:
 
 
 @observe(name="content_validation")
-def content_validation_node(state: ProcessingState) -> ProcessingState:
+async def content_validation_node(state: ProcessingState) -> ProcessingState:
     """
     Node: Validate if extracted content is a product demo
+    
+    ✅ MULTI-USER READY: Now async with ainvoke_llm() for non-blocking concurrent requests.
     
     Purpose:
     - Prevents processing of non-demo documents
@@ -74,17 +76,21 @@ def content_validation_node(state: ProcessingState) -> ProcessingState:
         text_preview = extracted_text[:3000] if len(extracted_text) > 3000 else extracted_text
         
         # Log input metadata to Langfuse
+        # ✅ Include user_id for multi-user tracking and isolation
         if LANGFUSE_AVAILABLE:
             client = get_langfuse_client()
             if client:
                 try:
-                    client.update_current_observation(
-                        metadata={
-                            "content_length": len(extracted_text),
-                            "preview_length": len(text_preview),
-                            "truncated": len(extracted_text) > 3000
-                        }
-                    )
+                    metadata = {
+                        "content_length": len(extracted_text),
+                        "preview_length": len(text_preview),
+                        "truncated": len(extracted_text) > 3000
+                    }
+                    # Add user_id to metadata for better tracking and filtering
+                    user_id = state.get("_user_id")
+                    if user_id:
+                        metadata["user_id"] = user_id
+                    client.update_current_observation(metadata=metadata)
                 except Exception:
                     pass  # Silently fail if not in observation context
         
@@ -92,9 +98,9 @@ def content_validation_node(state: ProcessingState) -> ProcessingState:
         prompt_template = content_validation_template()
         validation_prompt = prompt_template.format(extracted_content=text_preview)
         
-        # Use existing invoke_llm helper
+        # Use async ainvoke_llm helper for non-blocking concurrent requests
         logger.llm_request("gemini", "content_validation")
-        validation_result = invoke_llm(validation_prompt, as_json=True, trace_name="content_validation")
+        validation_result = await ainvoke_llm(validation_prompt, as_json=True, trace_name="content_validation")
         
         # Parse validation result
         if validation_result and isinstance(validation_result, dict):
@@ -102,18 +108,22 @@ def content_validation_node(state: ProcessingState) -> ProcessingState:
             state["is_valid_content"] = validation_result.get("is_valid_demo", False)
             
             # Log validation result to Langfuse
+            # ✅ Include user_id for multi-user tracking and isolation
             if LANGFUSE_AVAILABLE:
                 client = get_langfuse_client()
                 if client:
                     try:
-                        client.update_current_observation(
-                            metadata={
-                                "is_valid_demo": validation_result["is_valid_demo"],
-                                "confidence": validation_result.get('confidence', 0),
-                                "content_type": validation_result.get('content_type', 'unknown'),
-                                "validation_passed": validation_result["is_valid_demo"]
-                            }
-                        )
+                        metadata = {
+                            "is_valid_demo": validation_result["is_valid_demo"],
+                            "confidence": validation_result.get('confidence', 0),
+                            "content_type": validation_result.get('content_type', 'unknown'),
+                            "validation_passed": validation_result["is_valid_demo"]
+                        }
+                        # Add user_id to metadata for better tracking and filtering
+                        user_id = state.get("_user_id")
+                        if user_id:
+                            metadata["user_id"] = user_id
+                        client.update_current_observation(metadata=metadata)
                     except Exception:
                         pass  # Silently fail if not in observation context
             

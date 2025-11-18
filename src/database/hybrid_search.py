@@ -116,25 +116,38 @@ class LangChainHybridSearch:
             formatted_results.append(result)
         return formatted_results
     
-    def search(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    async def search(self, query: str, top_k: int = 5, user_id: str = None) -> List[Dict[str, Any]]:
         """
-        Perform hybrid search using both semantic and keyword matching.
+        Perform hybrid search using both semantic and keyword matching with user_id filtering.
         
         This is your main search function that:
         1. Uses dense retriever to find semantically similar documents
         2. Uses sparse retriever to find keyword matches
         3. Combines and ranks results using configured weights
+        4. Filters results by user_id for data isolation
         
         Args:
             query: Search query string
             top_k: Number of top results to return
+            user_id: Optional user ID - if provided, only returns results belonging to that user
             
         Returns:
-            List of search results with scores and metadata, sorted by relevance
+            List of search results with scores and metadata, sorted by relevance (filtered by user_id if provided)
         """
         try:
             # Use LangChain's ensemble retriever for automatic fusion
-            documents = self.hybrid_retriever.get_relevant_documents(query)
+            # Wrapped in thread pool for async compatibility
+            import asyncio
+            loop = asyncio.get_event_loop()
+            documents = await loop.run_in_executor(
+                None, 
+                self.hybrid_retriever.get_relevant_documents, 
+                query
+            )
+            
+            # ✅ Filter by user_id first (for data isolation)
+            if user_id:
+                documents = [doc for doc in documents if doc.metadata.get("user_id") == user_id]
             
             # Take only the top_k results
             documents = documents[:top_k]
@@ -182,7 +195,7 @@ class LangChainHybridSearch:
         # Format results using shared method
         return self._format_results(documents)
     
-    def compare_retrievers(self, query: str, top_k: int = 5) -> Dict[str, List[Dict[str, Any]]]:
+    async def compare_retrievers(self, query: str, top_k: int = 5) -> Dict[str, List[Dict[str, Any]]]:
         """
         Compare results from each retriever individually (useful for debugging).
         
@@ -201,8 +214,13 @@ class LangChainHybridSearch:
         results = {}
         
         try:
-            # Get results from dense retriever only
-            dense_docs = self.dense_retriever.get_relevant_documents(query)[:top_k]
+            # Get results from dense retriever only (wrapped in thread pool for async)
+            import asyncio
+            loop = asyncio.get_event_loop()
+            dense_docs = await loop.run_in_executor(
+                None,
+                lambda: self.dense_retriever.get_relevant_documents(query)[:top_k]
+            )
             results["dense_only"] = [
                 {
                     "id": doc.metadata.get("id", ""),
@@ -213,8 +231,11 @@ class LangChainHybridSearch:
                 for doc in dense_docs
             ]
             
-            # Get results from sparse retriever only
-            sparse_docs = self.sparse_retriever.get_relevant_documents(query)[:top_k]
+            # Get results from sparse retriever only (wrapped in thread pool for async)
+            sparse_docs = await loop.run_in_executor(
+                None,
+                lambda: self.sparse_retriever.get_relevant_documents(query)[:top_k]
+            )
             results["sparse_only"] = [
                 {
                     "id": doc.metadata.get("id", ""),
@@ -225,8 +246,8 @@ class LangChainHybridSearch:
                 for doc in sparse_docs
             ]
             
-            # Get hybrid results
-            hybrid_results = self.search(query, top_k)
+            # Get hybrid results (now async)
+            hybrid_results = await self.search(query, top_k)
             results["hybrid"] = [
                 {
                     "id": result["id"],
@@ -289,12 +310,14 @@ class LangChainHybridSearch:
             }
         }
 
-    def search_balanced(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    async def search_balanced(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
             """Quick balanced search with score normalization"""
             
-            # Get separate results  
-            dense_docs = self.dense_retriever.invoke(query)[:5] 
-            sparse_docs = self.sparse_retriever.invoke(query)[:5]
+            # Get separate results - wrapped in thread pool for async compatibility
+            import asyncio
+            loop = asyncio.get_event_loop()
+            dense_docs = await loop.run_in_executor(None, lambda: self.dense_retriever.invoke(query)[:5])
+            sparse_docs = await loop.run_in_executor(None, lambda: self.sparse_retriever.invoke(query)[:5])
             
             # Simple rank-based scoring (avoids score magnitude issues)
             all_results = []

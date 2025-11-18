@@ -46,6 +46,9 @@ class StorageService:
             efficacy_analysis = analysis_data.get("efficacy_analysis", {})
             averages = efficacy_analysis.get("averages", {})
             
+            # Extract user_id from state for multi-user isolation
+            user_id = state.get("_user_id")
+            
             chunk_metadata = {
                 "form_id": form_id,
                 "form_title": state["file_name"],
@@ -57,6 +60,10 @@ class StorageService:
                 "location": basic_info.get("location", ""),
                 "improvement_percent": averages.get("improvement_percent", 0)
             }
+            
+            # Add user_id to metadata for multi-user isolation
+            if user_id:
+                chunk_metadata["user_id"] = user_id
             
             # Prepare chunks with metadata
             prepared_chunks = []
@@ -90,6 +97,11 @@ class StorageService:
                 }],
                 "cross_report_analysis": {"cross_report_suggestions": []}
             }
+            
+            # Add user_id to analysis response for multi-user isolation
+            if user_id:
+                analysis_response["user_id"] = user_id
+                analysis_response["reports"][0]["user_id"] = user_id
             
             storage_data = {
                 "form_id": form_id,

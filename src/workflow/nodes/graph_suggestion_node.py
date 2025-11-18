@@ -1,5 +1,5 @@
 from src.prompt.graph_suggestion_template import graph_suggestion_prompt
-from src.utils.llm_helper import invoke_llm
+from src.utils.llm_helper import ainvoke_llm
 from src.workflow.state import ProcessingState
 from src.formatter.json_helper import clean_json_from_llm_response
 from src.utils.clean_logger import CleanLogger
@@ -27,8 +27,11 @@ else:
 
 
 @observe(name="graph_suggestion_generation")
-def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
-    """Node for LLM-driven graph suggestions with specific chart data (v3 API)"""
+async def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
+    """Node for LLM-driven graph suggestions with specific chart data (v3 API)
+    
+    ✅ MULTI-USER READY: Now async with ainvoke_llm() for non-blocking concurrent requests.
+    """
     logger = CleanLogger("workflow.nodes.graph_suggestion")
     
     try:
@@ -42,17 +45,21 @@ def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
         analysis_data = state["analysis_result"]
         
         # Log input metadata to Langfuse (v3 API)
+        # ✅ Include user_id for multi-user tracking and isolation
         if LANGFUSE_AVAILABLE:
             try:
                 client = get_client()
                 if client:
-                    client.update_current_observation(
-                        metadata={
-                            "has_analysis": True,
-                            "product_category": analysis_data.get("product_category", "unknown"),
-                            "metrics_count": len(analysis_data.get("metrics_detected", []))
-                        }
-                    )
+                    metadata = {
+                        "has_analysis": True,
+                        "product_category": analysis_data.get("product_category", "unknown"),
+                        "metrics_count": len(analysis_data.get("metrics_detected", []))
+                    }
+                    # Add user_id to metadata for better tracking and filtering
+                    user_id = state.get("_user_id")
+                    if user_id:
+                        metadata["user_id"] = user_id
+                    client.update_current_observation(metadata=metadata)
             except Exception as e:
                 logger.debug(f"Could not update observation: {e}")
         
@@ -75,23 +82,23 @@ def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
             state["graph_suggestions"] = _generate_fallback_charts(analysis_data)
             return state
         
-        # Get LLM response (prefer structured JSON)
+        # Get LLM response (prefer structured JSON) - now async
         logger.llm_request("gemini", "graph_suggestion")
-        suggestions = invoke_llm(prompt, as_json=True, trace_name="graph_suggestion")
+        suggestions = await ainvoke_llm(prompt, as_json=True, trace_name="graph_suggestion")
         
         # Handle list return or None
         if isinstance(suggestions, list):
             suggestions = suggestions[0] if suggestions else None
         if not isinstance(suggestions, dict) or not suggestions:
             # Fallback: use centralized JSON cleaning function from raw response
-            raw_response = invoke_llm(prompt, as_json=False, trace_name="graph_suggestion_raw")
+            raw_response = await ainvoke_llm(prompt, as_json=False, trace_name="graph_suggestion_raw")
             suggestions = clean_json_from_llm_response(raw_response)
         
         if not suggestions:
             # One retry with stricter instruction
             retry_prompt = prompt + "\n\nReturn ONLY valid JSON that matches the required structure. No markdown, no code fences."
             logger.llm_request("gemini", "graph_suggestion_retry")
-            retry_raw = invoke_llm(retry_prompt, as_json=False, trace_name="graph_suggestion_retry")
+            retry_raw = await ainvoke_llm(retry_prompt, as_json=False, trace_name="graph_suggestion_retry")
             suggestions = clean_json_from_llm_response(retry_raw)
         
         if not suggestions:
@@ -106,17 +113,21 @@ def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
             logger.graph_generation(chart_count, chart_types)
             
             # Log graph metrics to Langfuse (v3 API)
+            # ✅ Include user_id for multi-user tracking and isolation
             if LANGFUSE_AVAILABLE:
                 try:
                     client = get_client()
                     if client:
-                        client.update_current_observation(
-                            metadata={
-                                "chart_count": chart_count,
-                                "chart_types": chart_types,
-                                "generation_method": "llm"
-                            }
-                        )
+                        metadata = {
+                            "chart_count": chart_count,
+                            "chart_types": chart_types,
+                            "generation_method": "llm"
+                        }
+                        # Add user_id to metadata for better tracking and filtering
+                        user_id = state.get("_user_id")
+                        if user_id:
+                            metadata["user_id"] = user_id
+                        client.update_current_observation(metadata=metadata)
                 except Exception as e:
                     logger.debug(f"Could not update observation with metrics: {e}")
         else:

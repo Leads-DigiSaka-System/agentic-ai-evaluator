@@ -10,6 +10,8 @@ async def delete_form(form_id: str):
     """
     Delete a single demo trial record from Qdrant using its form_id.
     
+    ⚠️ ADMIN ONLY: This endpoint is for admin use only.
+    
     Example: DELETE /delete/LA-2025-0007
     
     Args:
@@ -18,6 +20,7 @@ async def delete_form(form_id: str):
     Returns:
         dict: Status and details of the deletion operation
     """
+    # Admin-only operation - no user_id filtering needed
     result = delete_from_qdrant(form_id)
     
     if result["status"] == "error":

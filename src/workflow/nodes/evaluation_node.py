@@ -28,9 +28,11 @@ else:
 
 
 @observe(name="output_evaluation")
-def evaluation_node(state: dict) -> dict:
+async def evaluation_node(state: dict) -> dict:
     """
     INTELLIGENT EVALUATION NODE
+    
+    ✅ MULTI-USER READY: Now async for non-blocking concurrent execution.
     
     Purpose: Use LLM to assess output quality and set decision flags
     Philosophy: Intelligence decides "is this good enough?" not "where to go next"
@@ -63,26 +65,30 @@ def evaluation_node(state: dict) -> dict:
         logger.log_decision("evaluation_context", evaluation_context, f"Current step: {current_step}")
         
         # Log evaluation context to Langfuse
+        # ✅ Include user_id for multi-user tracking and isolation
         if LANGFUSE_AVAILABLE:
             client = get_langfuse_client()
             if client:
                 try:
-                    client.update_current_observation(
-                        metadata={
-                            "evaluation_context": evaluation_context,
-                            "evaluation_attempt": state.get("evaluation_attempts", 0),
-                            "has_analysis": has_analysis,
-                            "has_graphs": has_graphs
-                        }
-                    )
+                    metadata = {
+                        "evaluation_context": evaluation_context,
+                        "evaluation_attempt": state.get("evaluation_attempts", 0),
+                        "has_analysis": has_analysis,
+                        "has_graphs": has_graphs
+                    }
+                    # Add user_id to metadata for better tracking and filtering
+                    user_id = state.get("_user_id")
+                    if user_id:
+                        metadata["user_id"] = user_id
+                    client.update_current_observation(metadata=metadata)
                 except Exception:
                     pass  # Silently fail if not in observation context
             
-        # Run intelligent output evaluation via AGENT
+        # Run intelligent output evaluation via AGENT (now async)
         # The validate_output function is a proper agent with @observe decorator
         # This will show up as a separate agent step in Langfuse traces
         logger.info(f"Invoking output_evaluator_agent to evaluate {evaluation_context} quality")
-        evaluation_result = validate_output(state)
+        evaluation_result = await validate_output(state)
         
         # Handle potential list returns from LLM
         if isinstance(evaluation_result, list):
@@ -102,18 +108,22 @@ def evaluation_node(state: dict) -> dict:
         state["output_evaluation"] = evaluation_result
         
         # Log evaluation results to Langfuse
+        # ✅ Include user_id for multi-user tracking and isolation
         if LANGFUSE_AVAILABLE:
             client = get_langfuse_client()
             if client:
                 try:
-                    client.update_current_observation(
-                        metadata={
-                            "confidence": confidence,
-                            "decision": decision,
-                            "issue_type": issue_type,
-                            "feedback_length": len(feedback)
-                        }
-                    )
+                    metadata = {
+                        "confidence": confidence,
+                        "decision": decision,
+                        "issue_type": issue_type,
+                        "feedback_length": len(feedback)
+                    }
+                    # Add user_id to metadata for better tracking and filtering
+                    user_id = state.get("_user_id")
+                    if user_id:
+                        metadata["user_id"] = user_id
+                    client.update_current_observation(metadata=metadata)
                 except Exception:
                     pass  # Silently fail if not in observation context
         

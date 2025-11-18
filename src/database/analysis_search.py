@@ -51,19 +51,20 @@ class AnalysisHybridSearch:
             raise
     
     @observe_operation(name="analysis_hybrid_search")
-    def search(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    async def search(self, query: str, top_k: int = 5, user_id: str = None) -> List[Dict[str, Any]]:
         """
-        Search for relevant analysis documents.
+        Search for relevant analysis documents with user_id filtering for data isolation.
         
         Args:
             query: Search query string
             top_k: Number of top results to return (default: 5)
+            user_id: Optional user ID - if provided, only returns results belonging to that user
             
         Returns:
-            List of formatted analysis results with metadata
+            List of formatted analysis results with metadata (filtered by user_id if provided)
             
         Example:
-            >>> results = searcher.search("rice fertilizer demo", top_k=3)
+            >>> results = searcher.search("rice fertilizer demo", top_k=3, user_id="user_123")
         """
         if not query or not query.strip():
             self.logger.warning("Empty search query provided")
@@ -81,14 +82,22 @@ class AnalysisHybridSearch:
                 "collection": self.collection_name
             })
             
-            # ✅ FIXED: Use invoke() instead of get_relevant_documents()
-            documents = self.dense_retriever.invoke(query)
+            # ✅ Use invoke() - wrapped in thread pool for async compatibility
+            # Note: LangChain retrievers are synchronous, so we run in thread pool
+            import asyncio
+            loop = asyncio.get_event_loop()
+            documents = await loop.run_in_executor(None, self.dense_retriever.invoke, query)
             
             # ✅ Log retrieval results
             update_trace_with_metrics({
                 "documents_retrieved": len(documents),
                 "documents_before_topk": len(documents)
             })
+            
+            # ✅ Filter documents by user_id first (for data isolation)
+            if user_id:
+                documents = [doc for doc in documents if doc.metadata.get("user_id") == user_id]
+                self.logger.info(f"Filtered to {len(documents)} documents for user_id: {user_id}")
             
             # ✅ Filter documents by score threshold (adaptive)
             try:

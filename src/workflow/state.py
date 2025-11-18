@@ -18,6 +18,15 @@ class ProcessingState(TypedDict):
     file_name: str
     file_content: bytes
     _tracking_id: Optional[str]
+    _user_id: Optional[str]
+    """
+    User ID for multi-user isolation and tracking.
+    Used for:
+    - Langfuse user-specific traces
+    - Logging with user context
+    - Cache isolation (already handled separately)
+    - Future user-specific features
+    """
     
     # ============================================
     # PROCESSING OUTPUTS

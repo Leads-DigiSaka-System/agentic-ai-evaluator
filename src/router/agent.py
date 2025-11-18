@@ -136,10 +136,11 @@ async def upload_file(
                 )
     
         # ✅ Synchronous processing (keep for backward compatibility)
+        # ✅ CRITICAL: Include user_id in propagate_session_id to prevent confusion when multiple users process simultaneously
         try:
-            with propagate_session_id(session_id, file_name=file.filename[:100]):
+            with propagate_session_id(session_id, file_name=file.filename[:100], user_id=user_id):
                 result = await asyncio.wait_for(
-                    MultiReportHandler.process_multi_report_pdf(content, file.filename),
+                    MultiReportHandler.process_multi_report_pdf(content, file.filename, user_id=user_id),
                     timeout=constants.REQUEST_TIMEOUT_SECONDS
                 )
                 

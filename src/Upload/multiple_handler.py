@@ -48,9 +48,14 @@ class MultiReportHandler:
         original_filename: str,
         pdf_metadata: Dict[str, Any],
         tracking_id: str = None,
-        extracted_markdown: str = None
+        extracted_markdown: str = None,
+        user_id: str = None
     ) -> ProcessingState:
-        """Build initial processing state"""
+        """Build initial processing state
+        
+        Args:
+            user_id: Optional user ID for multi-user tracking and isolation
+        """
         return {
             "file_path": tmp_path,
             "file_name": original_filename,
@@ -68,7 +73,8 @@ class MultiReportHandler:
             "file_validation": {"is_valid": True, "validation_skipped": True} if extracted_markdown else None,
             "is_valid_content": None,
             "content_validation": None,
-            "_tracking_id": tracking_id
+            "_tracking_id": tracking_id,
+            "_user_id": user_id
         }
     
     @staticmethod
@@ -171,7 +177,8 @@ class MultiReportHandler:
     async def process_multi_report_pdf(
         file_content: bytes, 
         original_filename: str,
-        tracking_id: str = None
+        tracking_id: str = None,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
         Process a file that may contain multiple reports
@@ -216,7 +223,7 @@ class MultiReportHandler:
             # Split and process reports
             result = await MultiReportHandler._process_reports(
                 extracted_markdown, file_content, original_filename, tmp_path, pdf_metadata,
-                tracking_id=tracking_id
+                tracking_id=tracking_id, user_id=user_id  # ✅ Pass user_id
             )
 
             return result
@@ -238,7 +245,8 @@ class MultiReportHandler:
         original_filename: str, 
         tmp_path: str, 
         pdf_metadata: Dict[str, Any],
-        tracking_id: str = None
+        tracking_id: str = None,
+        user_id: str = None  # ✅ Add user_id parameter
     ) -> Dict[str, Any]:
         """
         Split markdown into individual reports using intelligent detection
@@ -258,7 +266,7 @@ class MultiReportHandler:
             logger.info("Processing as SINGLE REPORT (full validation enabled)")
             report_response = await MultiReportHandler._process_single_report_direct(
                 tmp_path, file_content, original_filename, pdf_metadata,
-                tracking_id=tracking_id
+                tracking_id=tracking_id, user_id=user_id
             )
             
             # Check if content validation failed
@@ -284,7 +292,7 @@ class MultiReportHandler:
         all_reports_response = []
         for i, report_md in enumerate(reports_markdown):
             report_response = await MultiReportHandler._process_single_report(
-                report_md, file_content, original_filename, tmp_path, pdf_metadata, i, len(reports_markdown)
+                report_md, file_content, original_filename, tmp_path, pdf_metadata, i, len(reports_markdown), user_id=user_id
             )
             all_reports_response.append(report_response)
 
@@ -310,7 +318,8 @@ class MultiReportHandler:
         file_content: bytes, 
         original_filename: str, 
         pdf_metadata: Dict[str, Any],
-        tracking_id: str = None
+        tracking_id: str = None,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
         Process a SINGLE report PDF with FULL VALIDATION
@@ -339,16 +348,31 @@ class MultiReportHandler:
 
             # Initialize state WITHOUT pre-extracted markdown
             initial_state = MultiReportHandler._build_initial_state(
-                tmp_path, file_content, original_filename, pdf_metadata, tracking_id, extracted_markdown=None
+                tmp_path, file_content, original_filename, pdf_metadata, tracking_id, extracted_markdown=None, user_id=user_id
             )
 
             # Execute the workflow (now includes validation)
-            logger.info(f"Invoking workflow for {original_filename} (tracking_id: {tracking_id})")
+            # ✅ CRITICAL: Wrap in propagate_session_id with user_id to prevent confusion when multiple users process simultaneously
+            logger.info(f"Invoking workflow for {original_filename} (tracking_id: {tracking_id}, user_id: {user_id})")
             
             try:
-                # Use LangGraph's native async method (ainvoke) instead of blocking invoke()
-                # This is the proper way to run workflows in async contexts
-                final_state = await processing_workflow.ainvoke(initial_state)
+                from src.monitoring.session.langfuse_session_helper import propagate_session_id
+                from src.utils.config import LANGFUSE_CONFIGURED
+                
+                # Generate session_id for this workflow execution
+                session_id = f"workflow_{tracking_id or 'unknown'}"
+                
+                # Wrap workflow execution in propagate_session_id with user_id
+                # This ensures all Langfuse observations inherit user_id, preventing confusion
+                if LANGFUSE_CONFIGURED and user_id:
+                    with propagate_session_id(session_id, user_id=user_id):
+                        # Use LangGraph's native async method (ainvoke) instead of blocking invoke()
+                        # This is the proper way to run workflows in async contexts
+                        final_state = await processing_workflow.ainvoke(initial_state)
+                else:
+                    # Fallback if Langfuse not configured or no user_id
+                    final_state = await processing_workflow.ainvoke(initial_state)
+                
                 logger.info(f"Workflow completed successfully for {original_filename}")
             except Exception as workflow_error:
                 logger.error(f"Workflow execution failed for {original_filename}: {str(workflow_error)}")
@@ -417,7 +441,7 @@ class MultiReportHandler:
     @observe(as_type="generation", name="process_single_report")
     async def _process_single_report(report_md: str, file_content: bytes, original_filename: str,
                                    tmp_path: str, pdf_metadata: Dict[str, Any], 
-                                   report_index: int, total_reports: int) -> Dict[str, Any]:
+                                   report_index: int, total_reports: int, user_id: str = None) -> Dict[str, Any]:
         """Process a single report from a MULTI-REPORT PDF"""
         logger = get_clean_logger(__name__)
         
@@ -440,18 +464,37 @@ class MultiReportHandler:
 
             initial_state = MultiReportHandler._build_initial_state(
                 tmp_path, file_content, f"{original_filename}_report_{report_index + 1}", 
-                pdf_metadata, tracking_id=None, extracted_markdown=report_md
+                pdf_metadata, tracking_id=None, extracted_markdown=report_md, user_id=user_id
             )
 
             # FIX: Run synchronous invoke() in thread pool to avoid blocking async event loop
-            logger.info(f"Invoking workflow for report {report_index + 1}/{total_reports}")
+            # ✅ CRITICAL: Wrap in propagate_session_id with user_id to prevent confusion when multiple users process simultaneously
+            logger.info(f"Invoking workflow for report {report_index + 1}/{total_reports} (user_id: {user_id})")
             try:
-                loop = asyncio.get_event_loop()
-                final_state = await loop.run_in_executor(
-                    None,  # Use default ThreadPoolExecutor
-                    processing_workflow.invoke,
-                    initial_state
-                )
+                from src.monitoring.session.langfuse_session_helper import propagate_session_id
+                from src.utils.config import LANGFUSE_CONFIGURED
+                
+                # Generate session_id for this workflow execution
+                session_id = f"workflow_report_{report_index + 1}"
+                
+                # Wrap workflow execution in propagate_session_id with user_id
+                if LANGFUSE_CONFIGURED and user_id:
+                    with propagate_session_id(session_id, user_id=user_id):
+                        loop = asyncio.get_event_loop()
+                        final_state = await loop.run_in_executor(
+                            None,  # Use default ThreadPoolExecutor
+                            processing_workflow.invoke,
+                            initial_state
+                        )
+                else:
+                    # Fallback if Langfuse not configured or no user_id
+                    loop = asyncio.get_event_loop()
+                    final_state = await loop.run_in_executor(
+                        None,  # Use default ThreadPoolExecutor
+                        processing_workflow.invoke,
+                        initial_state
+                    )
+                
                 logger.info(f"Workflow completed for report {report_index + 1}/{total_reports}")
             except Exception as workflow_error:
                 logger.error(f"Workflow execution failed for report {report_index + 1}: {str(workflow_error)}")

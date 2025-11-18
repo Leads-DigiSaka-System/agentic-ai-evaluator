@@ -4,21 +4,37 @@ from src.generator.qdrant_load import client, DEMO_COLLECTION
 from src.utils.clean_logger import get_clean_logger
 
 logger = get_clean_logger(__name__)
-def delete_from_qdrant(form_id: str):
+def delete_from_qdrant(form_id: str, user_id: str = None):
     """
-    Delete a demo trial entry from Qdrant based on form_id.
-    Must match payload field 'form_id'.
+    Delete a demo trial entry from Qdrant based on form_id with user_id validation.
+    Must match payload field 'form_id' and optionally 'user_id' for security.
+    
+    Args:
+        form_id: Unique identifier for the form to delete
+        user_id: Optional user ID - if provided, only deletes if form belongs to that user
+        
+    Returns:
+        dict: Status and details of the deletion operation
     """
     try:
-        # Build filter
-        filter_condition = models.Filter(
-            must=[
+        # Build filter conditions
+        filter_conditions = [
+            models.FieldCondition(
+                key="form_id",
+                match=models.MatchValue(value=form_id)
+            )
+        ]
+        
+        # ✅ Add user_id filter for security (if provided)
+        if user_id:
+            filter_conditions.append(
                 models.FieldCondition(
-                    key="form_id",
-                    match=models.MatchValue(value=form_id)
+                    key="user_id",
+                    match=models.MatchValue(value=user_id)
                 )
-            ]
-        )
+            )
+        
+        filter_condition = models.Filter(must=filter_conditions)
 
         # Perform delete
         response = client.delete(
@@ -26,7 +42,10 @@ def delete_from_qdrant(form_id: str):
             points_selector=models.FilterSelector(filter=filter_condition)
         )
 
-        logger.info(f"Deleted record with form_id: {form_id}")
+        if user_id:
+            logger.info(f"Deleted record with form_id: {form_id} for user: {user_id}")
+        else:
+            logger.info(f"Deleted record with form_id: {form_id}")
 
         return {
             "status": "success",

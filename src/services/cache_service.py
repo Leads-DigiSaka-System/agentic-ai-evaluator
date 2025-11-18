@@ -150,23 +150,69 @@ class AgentOutputCache:
             logger.error(f"Failed to retrieve cache {cache_id}: {str(e)}")
             return None
     
-    async def delete_cache(self, cache_id: str) -> bool:
+    async def delete_cache(self, cache_id: str, user_id: Optional[str] = None) -> bool:
         """
-        Delete cached data
+        Delete cached data with user_id validation for security
         
         Args:
             cache_id: Cache identifier
+            user_id: Optional user ID - if provided, verifies cache belongs to user before deletion
             
         Returns:
             True if deleted successfully, False otherwise
+            
+        Security:
+            If user_id is provided, verifies that the cache belongs to that user before deletion.
+            This prevents users from deleting other users' caches.
         """
         try:
             redis_pool = await self._get_redis_pool()
-            cache_key = self._get_cache_key(cache_id)
             
-            deleted = await redis_pool.delete(cache_key)
+            # If user_id provided, verify ownership first
+            if user_id:
+                # Try to get cache with user_id to verify ownership
+                cache_data = await self.get_cached_output(cache_id, user_id=user_id)
+                if not cache_data:
+                    # Try without user_id for backward compatibility
+                    cache_data = await self.get_cached_output(cache_id)
+                    if cache_data:
+                        # Found cache but check if it has user_id that doesn't match
+                        cached_user_id = cache_data.get("user_id")
+                        if cached_user_id and cached_user_id != user_id:
+                            logger.warning(f"User {user_id} attempted to delete cache {cache_id} belonging to {cached_user_id}")
+                            return False
+                elif cache_data.get("user_id") != user_id:
+                    logger.warning(f"User {user_id} attempted to delete cache {cache_id} belonging to {cache_data.get('user_id')}")
+                    return False
+                
+                # Delete using user-scoped key
+                cache_key = self._get_cache_key(cache_id, user_id)
+                deleted = await redis_pool.delete(cache_key)
+                
+                # Also try deleting without user_id for backward compatibility
+                if not deleted:
+                    cache_key = self._get_cache_key(cache_id)
+                    deleted = await redis_pool.delete(cache_key)
+            else:
+                # No user_id provided - delete both user-scoped and non-scoped (for backward compatibility)
+                cache_key = self._get_cache_key(cache_id)
+                deleted = await redis_pool.delete(cache_key)
+                
+                # Also try with any user_id pattern (for cleanup operations)
+                # This is less secure but needed for admin cleanup
+                if not deleted:
+                    # Try to find any cache with this cache_id
+                    all_keys = await redis_pool.keys(f"agent:cache:*:{cache_id}")
+                    if not all_keys:
+                        all_keys = await redis_pool.keys(f"agent:cache:{cache_id}")
+                    for key in all_keys:
+                        if isinstance(key, bytes):
+                            key = key.decode()
+                        await redis_pool.delete(key)
+                        deleted = True
 
             if deleted:
+                logger.info(f"Cache deleted: {cache_id} (user: {user_id or 'admin'})")
                 return True
             else:
                 logger.warning(f"Cache not found for deletion: {cache_id}")
@@ -175,9 +221,13 @@ class AgentOutputCache:
             logger.error(f"Failed to delete cache {cache_id}: {str(e)}")
             return False
     
-    async def cleanup_expired_caches(self) -> int:
+    async def cleanup_expired_caches(self, user_id: Optional[str] = None) -> int:
         """
-        Clean up all expired cache entries from Redis
+        Clean up expired cache entries from Redis
+        
+        Args:
+            user_id: Optional user ID - if provided, only cleans caches for that user
+        
         Note: Redis TTL handles expiration automatically, but this can scan for any missed entries
         
         Returns:
@@ -185,7 +235,13 @@ class AgentOutputCache:
         """
         try:
             redis_pool = await self._get_redis_pool()
-            cache_keys = await redis_pool.keys("agent:cache:*")
+            
+            # Filter by user_id if provided
+            if user_id:
+                cache_keys = await redis_pool.keys(f"agent:cache:{user_id}:*")
+            else:
+                cache_keys = await redis_pool.keys("agent:cache:*")
+            
             cleaned_count = 0
             
             for cache_key in cache_keys:
@@ -208,14 +264,18 @@ class AgentOutputCache:
                     await redis_pool.delete(cache_key)
                     cleaned_count += 1
                     continue
+                
+                # Additional user_id validation if filtering by user
+                if user_id and cache_data.get("user_id") != user_id:
+                    continue
                     
                 if self._is_cache_expired(cache_data):
                     await redis_pool.delete(cache_key)
                     cleaned_count += 1
                     cache_id = cache_data.get("cache_id", "unknown")
-                    logger.info(f"Cleaned expired cache: {cache_id}")
+                    logger.info(f"Cleaned expired cache: {cache_id} (user: {user_id or 'all'})")
             
-            logger.info(f"Cleanup completed: {cleaned_count} expired caches removed")
+            logger.info(f"Cleanup completed: {cleaned_count} expired caches removed (user: {user_id or 'all'})")
             return cleaned_count
             
         except Exception as e:

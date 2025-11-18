@@ -148,10 +148,12 @@ class QdrantDenseRetriever(BaseRetriever):
             # ORIGINAL CODE: Convert to LangChain Document format
             documents = []
             for result in search_results:
+                # Extract user_id from payload for filtering
+                payload = result.payload or {}
                 doc = Document(
-                    page_content=result.payload.get("summary_text", ""),
+                    page_content=payload.get("summary_text", ""),
                     metadata={
-                        **result.payload,
+                        **payload,  # Include all payload fields (including user_id if present)
                         "score": result.score,
                         "id": result.id
                     }

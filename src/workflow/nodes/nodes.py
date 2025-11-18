@@ -175,8 +175,11 @@ def extraction_node(state: ProcessingState) -> ProcessingState:
 
 
 @observe(name="analysis_node")
-def analysis_node(state: ProcessingState) -> ProcessingState:
-    """Node 2: Analyze extracted content and determine form type"""
+async def analysis_node(state: ProcessingState) -> ProcessingState:
+    """Node 2: Analyze extracted content and determine form type
+    
+    ✅ MULTI-USER READY: Now async for non-blocking concurrent execution.
+    """
     logger = CleanLogger("workflow.nodes.analysis")
     
     try:
@@ -198,9 +201,11 @@ def analysis_node(state: ProcessingState) -> ProcessingState:
         state["form_type"] = form_type
         logger.processing_success("form_type_extraction", f"Form type: {form_type}")
         
-        # Perform analysis with better error handling
+        # Perform analysis with better error handling (now async)
+        # ✅ Pass user_id for multi-user tracking
         logger.analysis_start("demo_trial_analysis")
-        analysis_result = analyze_demo_trial(state["extracted_markdown"])
+        user_id = state.get("_user_id")
+        analysis_result = await analyze_demo_trial(state["extracted_markdown"], user_id=user_id)
         state["analysis_result"] = analysis_result
         
         # Check analysis status

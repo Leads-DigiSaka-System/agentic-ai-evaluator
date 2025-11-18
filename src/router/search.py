@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, validator, Field
 from src.database.hybrid_search import LangChainHybridSearch
 from src.database.analysis_search import analysis_searcher 
@@ -14,6 +14,7 @@ from src.monitoring.trace.langfuse_helper import (
     get_langfuse_client
 )
 from src.monitoring.scores.search_score import log_search_scores
+from src.deps.user_context import get_user_id
 
 router = APIRouter()
 search_engine = LangChainHybridSearch()
@@ -38,7 +39,8 @@ class AnalysisSearchRequest(BaseModel):
 @observe_operation(name="analysis_search")
 async def analysis_search(
     request: Request,  #  REQUIRED: For SlowAPI rate limiter
-    body: AnalysisSearchRequest  #  RENAMED: Your request body (was 'request')
+    body: AnalysisSearchRequest,  #  RENAMED: Your request body (was 'request')
+    user_id: str = Depends(get_user_id)  # ✅ Extract user_id for data isolation
 ):
     try:
         # Add tags to trace
@@ -52,9 +54,11 @@ async def analysis_search(
             except Exception as e:
                 logger.debug(f"Could not add tags to trace: {e}")
         
-        results = analysis_searcher.search(
+        # ✅ Search with user_id filtering for data isolation
+        results = await analysis_searcher.search(
             query=body.query,  #  Changed from request.query to body.query
-            top_k=body.top_k   #  Changed from request.top_k to body.top_k
+            top_k=body.top_k,   #  Changed from request.top_k to body.top_k
+            user_id=user_id     # ✅ Filter results by user_id
         )
         
         # Calculate search quality metrics for metadata
@@ -73,7 +77,7 @@ async def analysis_search(
             avg_data_quality = 0.0
             search_efficiency = 0.0
         
-        # Log metrics to trace
+        # Log metrics to trace (including user_id for tracking)
         update_trace_with_metrics({
             "query_length": len(body.query),
             "top_k_requested": body.top_k,
@@ -81,7 +85,8 @@ async def analysis_search(
             "has_results": has_results,
             "avg_relevance_score": avg_relevance if has_results else 0.0,
             "avg_data_quality": avg_data_quality if has_results else 0.0,
-            "search_efficiency": search_efficiency
+            "search_efficiency": search_efficiency,
+            "user_id": user_id  # ✅ Track which user performed the search
         })
         
         # Log scores using dedicated score module

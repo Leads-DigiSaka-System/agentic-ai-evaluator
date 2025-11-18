@@ -303,7 +303,7 @@ async def get_progress(
     try:
         redis_pool = await get_shared_redis_pool()
         
-        # ✅ Verify job belongs to user
+        # ✅ Verify job belongs to user and get stored_user_id for response
         stored_user_id = await redis_pool.get(f"arq:user:{job_id}")
         if stored_user_id:
             stored_user_id = stored_user_id.decode('utf-8') if isinstance(stored_user_id, bytes) else stored_user_id
@@ -312,6 +312,8 @@ async def get_progress(
                     status_code=403,
                     detail="Job does not belong to this user"
                 )
+        else:
+            stored_user_id = None
         
         # Get tracking_id from mapping
         tracking_id = await _get_tracking_id(redis_pool, job_id)
@@ -382,12 +384,17 @@ async def get_progress(
         if job_status != "failed":
             progress, message = _normalize_progress_and_message(progress, message, job_status)
         
+        # ✅ Use user_id from frontend header (source of truth) - NOT from Redis or result
+        # The user_id from header is what the frontend sent, so we use that consistently
+        # We already validated that stored_user_id matches header user_id above
+        
         # Build response
         progress_info = {
             "job_id": job_id,
             "status": job_status,
             "progress": progress,
-            "message": message
+            "message": message,
+            "user_id": user_id  # ✅ Always use user_id from frontend header (source of truth)
         }
         
         # Include error information if failed
@@ -404,7 +411,7 @@ async def get_progress(
         # Include result if complete and successful
         elif result_exists and result is not None:
             progress_info["result"] = result
-            logger.info(f"[PROGRESS] Returning progress: {progress}%, status: {job_status}, result included: {bool(result)}")
+            logger.info(f"[PROGRESS] Returning progress: {progress}%, status: {job_status}, result included: {bool(result)}, user_id: {user_id}")
         else:
             logger.info(f"[PROGRESS] Returning progress: {progress}%, status: {job_status}, no result yet")
         

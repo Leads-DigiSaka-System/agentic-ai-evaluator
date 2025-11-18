@@ -230,10 +230,13 @@ class AnalysisStorage:
                 wait=True
             )
             
+            # ✅ Extract user_id from payload for logging (payload has user_id from frontend header)
+            payload_user_id = payload.get("user_id")
+            user_id_info = f" (user_id: {payload_user_id})" if payload_user_id else ""
             self.logger.storage_success(
                 "report insertion", 
                 1, 
-                f"Report #{report.get('report_number')} - {basic_info.get('product', 'N/A')}"
+                f"Report #{report.get('report_number')} - {basic_info.get('product', 'N/A')}{user_id_info}"
             )
             return True
             
@@ -277,7 +280,13 @@ class AnalysisStorage:
             else extracted_content
         )
         
-        return {
+        # ✅ Extract user_id from full_response (source of truth from frontend header)
+        # full_response["user_id"] comes from storage_service.prepare_storage_data()
+        # which extracts it from state.get("_user_id") (from frontend header)
+        # report.get("user_id") is just a fallback (should not be needed if flow is correct)
+        user_id = full_response.get("user_id") or report.get("user_id")
+        
+        payload = {
             # Identification
             "form_id": form_id,
             "report_number": report.get("report_number", 1),
@@ -347,6 +356,12 @@ class AnalysisStorage:
             "has_errors": len(report.get("errors", [])) > 0,
             "errors": report.get("errors", [])[:MAX_ERROR_LIST_SIZE]
         }
+        
+        # Add user_id to payload for multi-user isolation
+        if user_id:
+            payload["user_id"] = user_id
+        
+        return payload
     
     def _create_summary_text(
         self,

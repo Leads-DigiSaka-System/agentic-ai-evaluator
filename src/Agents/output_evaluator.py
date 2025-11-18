@@ -1,4 +1,4 @@
-from src.utils.llm_helper import invoke_llm
+from src.utils.llm_helper import ainvoke_llm
 from src.utils.clean_logger import get_clean_logger
 from src.utils.config import LANGFUSE_CONFIGURED
 
@@ -40,9 +40,11 @@ else:
 
 
 @observe(name="output_evaluator_agent")
-def validate_output(state: dict) -> dict:
+async def validate_output(state: dict) -> dict:
     """
     ENHANCED INTELLIGENT QUALITY EVALUATOR AGENT
+    
+    ✅ MULTI-USER READY: Now async with ainvoke_llm() for non-blocking concurrent requests.
     
     Purpose: Use LLM (single or multi-agent via CrewAI) to assess if outputs meet quality standards
     This is a proper agent that evaluates quality and returns assessment
@@ -79,7 +81,7 @@ def validate_output(state: dict) -> dict:
         # DECISION POINT: Use CrewAI multi-agent or single agent evaluation
         if CREWAI_AVAILABLE and USE_CREWAI:
             logger.info("🤖 Using CrewAI multi-agent evaluation system")
-            result = validate_output_with_crew(state)
+            result = validate_output_with_crew(state)  # CrewAI may be sync, but that's OK
             
         else:
             if USE_CREWAI:
@@ -87,7 +89,7 @@ def validate_output(state: dict) -> dict:
             else:
                 logger.info("🔧 Using single agent evaluation (CrewAI disabled)")
             
-            result = _single_agent_evaluation(state)
+            result = await _single_agent_evaluation(state)  # Now async
         
         # Validate result structure (same for both modes)
         result = _validate_evaluation_result(result)
@@ -158,10 +160,12 @@ def validate_output(state: dict) -> dict:
         }
 
 
-def _single_agent_evaluation(state: dict) -> dict:
+async def _single_agent_evaluation(state: dict) -> dict:
     """
     Original single agent evaluation logic (moved from main function)
     This is the fallback when CrewAI is not available or disabled
+    
+    ✅ MULTI-USER READY: Now async with ainvoke_llm() for non-blocking concurrent requests.
     """
     logger = get_clean_logger(__name__)
     
@@ -302,11 +306,11 @@ Guidelines:
 """
         
         # ============================================
-        # GET LLM QUALITY ASSESSMENT (Single Agent Mode)
+        # GET LLM QUALITY ASSESSMENT (Single Agent Mode) - now async
         # ============================================
         
         logger.llm_request("single_evaluator_agent", f"Evaluating {evaluation_context} quality")
-        result = invoke_llm(prompt, as_json=True)
+        result = await ainvoke_llm(prompt, as_json=True)
         logger.llm_response("single_evaluator_agent", "received", "Quality assessment received")
         
         return result

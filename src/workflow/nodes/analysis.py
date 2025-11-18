@@ -1,5 +1,5 @@
 from src.prompt.analysis_template import analysis_prompt_template_structured
-from src.utils.llm_helper import invoke_llm
+from src.utils.llm_helper import ainvoke_llm
 from src.utils.clean_logger import CleanLogger
 # LANGFUSE_CONFIGURED is now handled in langfuse_utils
 from src.utils import config
@@ -15,9 +15,11 @@ from src.utils.langfuse_utils import (
 
 
 @observe(name="analyze_demo_trial")
-def analyze_demo_trial(markdown_data: str):
+async def analyze_demo_trial(markdown_data: str, user_id: str = None):
     """
     Universal analyzer that adapts to ANY agricultural demo form
+    
+    ✅ MULTI-USER READY: Now async with ainvoke_llm() for non-blocking concurrent requests.
     
     Automatically detects:
     - Product type (herbicide, foliar, fungicide, etc.)
@@ -43,17 +45,20 @@ def analyze_demo_trial(markdown_data: str):
             logger.info(f"Content truncated from {original_length} to {MAX_CONTENT_LENGTH} characters")
         
         # Update trace with input metadata (v3 API)
+        # ✅ Include user_id for multi-user tracking and isolation
         if LANGFUSE_AVAILABLE:
             try:
                 client = get_client()
                 if client:
-                    client.update_current_observation(
-                        metadata={
-                            "input_length": original_length,
-                            "truncated": original_length > MAX_CONTENT_LENGTH,
-                            "template": "universal_adaptive_analysis"
-                        }
-                    )
+                    metadata = {
+                        "input_length": original_length,
+                        "truncated": original_length > MAX_CONTENT_LENGTH,
+                        "template": "universal_adaptive_analysis"
+                    }
+                    # Add user_id to metadata for better tracking and filtering
+                    if user_id:
+                        metadata["user_id"] = user_id
+                    client.update_current_observation(metadata=metadata)
             except Exception as e:
                 logger.debug(f"Could not update observation: {e}")
         
@@ -62,7 +67,7 @@ def analyze_demo_trial(markdown_data: str):
         prompt = template.format(markdown_data=markdown_data)
         
         logger.llm_request("gemini", "universal_agricultural_demo_analysis")
-        result = invoke_llm(prompt, as_json=True, trace_name="agricultural_demo_analysis",model=config.GEMINI_LARGE)
+        result = await ainvoke_llm(prompt, as_json=True, trace_name="agricultural_demo_analysis",model=config.GEMINI_LARGE)
         
         if not result:
             error_msg = "No response from LLM"
@@ -82,19 +87,22 @@ def analyze_demo_trial(markdown_data: str):
                 logger.analysis_result("universal_adaptive_analysis", metrics, f"Product Category: {product_category}")
                 
                 # Log analysis metrics to Langfuse (v3 API)
+                # ✅ Include user_id for multi-user tracking and isolation
                 if LANGFUSE_AVAILABLE:
                     try:
                         client = get_client()
                         if client:
-                            client.update_current_observation(
-                                metadata={
-                                    "product_category": product_category,
-                                    "metrics_count": len(metrics),
-                                    "metrics_detected": metrics[:5],  # First 5 metrics
-                                    "data_quality_score": result.get("data_quality", {}).get("completeness_score", 0),
-                                    "improvement_percent": result.get("performance_analysis", {}).get("calculated_metrics", {}).get("improvement_percent", 0)
-                                }
-                            )
+                            metadata = {
+                                "product_category": product_category,
+                                "metrics_count": len(metrics),
+                                "metrics_detected": metrics[:5],  # First 5 metrics
+                                "data_quality_score": result.get("data_quality", {}).get("completeness_score", 0),
+                                "improvement_percent": result.get("performance_analysis", {}).get("calculated_metrics", {}).get("improvement_percent", 0)
+                            }
+                            # Add user_id to metadata for better tracking and filtering
+                            if user_id:
+                                metadata["user_id"] = user_id
+                            client.update_current_observation(metadata=metadata)
                     except Exception as e:
                         logger.debug(f"Could not update observation with metrics: {e}")
                 

@@ -197,8 +197,8 @@ async def approve_storage_simple(
                 except Exception as e:
                     logger.debug(f"Could not update observation: {e}")
             
-            # Clean up cache
-            await agent_cache.delete_cache(approval_request.cache_id)
+            # Clean up cache (with user_id validation for security)
+            await agent_cache.delete_cache(approval_request.cache_id, user_id=user_id)
             
             return {
                 "status": "rejected",
@@ -216,34 +216,34 @@ async def approve_storage_simple(
                 
                 if LANGFUSE_CONFIGURED:
                     # Process storage within session context
-                    with propagate_session_id(original_session_id, cache_id=approval_request.cache_id[:50]):
+                    with propagate_session_id(original_session_id, cache_id=approval_request.cache_id[:50], user_id=user_id):
                         if len(reports) == 1:
                             # Single report
-                            result = await _process_single_report_storage(first_report)
+                            result = await _process_single_report_storage(first_report, user_id=user_id)
                         else:
                             # Multiple reports - use batch storage
-                            result = await _process_multiple_reports_storage(reports)
+                            result = await _process_multiple_reports_storage(reports, user_id=user_id)
                 else:
                     # Fallback if Langfuse not configured
                     if len(reports) == 1:
-                        result = await _process_single_report_storage(first_report)
+                        result = await _process_single_report_storage(first_report, user_id=user_id)
                     else:
-                        result = await _process_multiple_reports_storage(reports)
+                        result = await _process_multiple_reports_storage(reports, user_id=user_id)
             except Exception as e:
                 logger.debug(f"Could not propagate session_id in storage: {e}")
                 # Fallback to normal processing
                 if len(reports) == 1:
-                    result = await _process_single_report_storage(first_report)
+                    result = await _process_single_report_storage(first_report, user_id=user_id)
                 else:
-                    result = await _process_multiple_reports_storage(reports)
+                    result = await _process_multiple_reports_storage(reports, user_id=user_id)
         else:
             # No session_id available, process normally
             if len(reports) == 1:
                 # Single report
-                result = await _process_single_report_storage(first_report)
+                result = await _process_single_report_storage(first_report, user_id=user_id)
             else:
                 # Multiple reports - use batch storage
-                result = await _process_multiple_reports_storage(reports)
+                result = await _process_multiple_reports_storage(reports, user_id=user_id)
         
         # Update trace with storage results, tags, and scores
         if LANGFUSE_AVAILABLE:
@@ -276,9 +276,9 @@ async def approve_storage_simple(
             except Exception as e:
                 logger.debug(f"Could not update observation: {e}")
         
-        # Clean up cache after successful storage
+        # Clean up cache after successful storage (with user_id validation for security)
         if result.get("status") == "success":
-            await agent_cache.delete_cache(approval_request.cache_id)
+            await agent_cache.delete_cache(approval_request.cache_id, user_id=user_id)
             logger.cache_delete(approval_request.cache_id)
         
         return result
@@ -307,10 +307,16 @@ async def approve_storage_simple(
         )
 
 
-async def _process_single_report_storage(report_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Process storage for single report"""
+async def _process_single_report_storage(report_data: Dict[str, Any], user_id: str = None) -> Dict[str, Any]:
+    """Process storage for single report
+    
+    Args:
+        report_data: Report data from cache
+        user_id: User ID from frontend header (source of truth) - NOT from cached data
+    """
     try:
         # Convert to state format
+        # ✅ Use user_id from frontend header (source of truth), NOT from cached report_data
         state_data = {
             "file_name": report_data["file_name"],
             "form_type": report_data.get("form_type"),
@@ -322,7 +328,8 @@ async def _process_single_report_storage(report_data: Dict[str, Any]) -> Dict[st
             "file_validation": report_data.get("validation", {}).get("file_validation"),
             "is_valid_content": report_data.get("validation", {}).get("content_validation", {}).get("is_valid_demo", False),
             "content_validation": report_data.get("validation", {}).get("content_validation"),
-            "current_step": "simple_storage_approval"
+            "current_step": "simple_storage_approval",
+            "_user_id": user_id  # ✅ Use user_id from frontend header (source of truth)
         }
         
         # Prepare and store
@@ -348,8 +355,13 @@ async def _process_single_report_storage(report_data: Dict[str, Any]) -> Dict[st
         }
 
 
-async def _process_multiple_reports_storage(reports: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Process batch storage for multiple reports"""
+async def _process_multiple_reports_storage(reports: List[Dict[str, Any]], user_id: str = None) -> Dict[str, Any]:
+    """Process batch storage for multiple reports
+    
+    Args:
+        reports: List of report data from cache
+        user_id: User ID from frontend header (source of truth) - NOT from cached data
+    """
     try:
         results = []
         success_count = 0
@@ -357,6 +369,7 @@ async def _process_multiple_reports_storage(reports: List[Dict[str, Any]]) -> Di
         for i, report in enumerate(reports):
             try:
                 # Convert to state format
+                # ✅ Use user_id from frontend header (source of truth), NOT from cached report
                 state_data = {
                     "file_name": report["file_name"],
                     "form_type": report.get("form_type"),
@@ -368,7 +381,8 @@ async def _process_multiple_reports_storage(reports: List[Dict[str, Any]]) -> Di
                     "file_validation": report.get("validation", {}).get("file_validation"),
                     "is_valid_content": report.get("validation", {}).get("content_validation", {}).get("is_valid_demo", False),
                     "content_validation": report.get("validation", {}).get("content_validation"),
-                    "current_step": "batch_storage_approval"
+                    "current_step": "batch_storage_approval",
+                    "_user_id": user_id  # ✅ Use user_id from frontend header (source of truth)
                 }
                 
                 # Prepare and store

@@ -72,17 +72,40 @@ async def process_file_background(ctx, tracking_id: str, file_content: bytes, fi
     logger.info(f"Starting background processing for user {user_id}: {filename} (tracking_id: {tracking_id})")
     
     try:
-        # Start processing task
-        processing_task = asyncio.create_task(
-            MultiReportHandler.process_multi_report_pdf(
-                file_content, 
-                filename,
-                tracking_id=tracking_id
-            )
-        )
+        # ✅ CRITICAL: Wrap processing in propagate_session_id with user_id
+        # This ensures all Langfuse observations inherit user_id, preventing confusion when multiple users process simultaneously
+        from src.monitoring.session.langfuse_session_helper import propagate_session_id
+        from src.utils.config import LANGFUSE_CONFIGURED
         
-        # Wait for processing to complete
-        result = await processing_task
+        # Generate session_id for this background job
+        workflow_session_id = f"background_{tracking_id}"
+        
+        # Wrap processing in propagate_session_id context
+        if LANGFUSE_CONFIGURED and user_id:
+            with propagate_session_id(workflow_session_id, user_id=user_id, tracking_id=tracking_id):
+                # Start processing task (pass user_id for workflow state)
+                processing_task = asyncio.create_task(
+                    MultiReportHandler.process_multi_report_pdf(
+                        file_content, 
+                        filename,
+                        tracking_id=tracking_id,
+                        user_id=user_id
+                    )
+                )
+                # Wait for processing to complete (inside context so all observations inherit user_id)
+                result = await processing_task
+        else:
+            # Fallback if Langfuse not configured or no user_id
+            processing_task = asyncio.create_task(
+                MultiReportHandler.process_multi_report_pdf(
+                    file_content, 
+                    filename,
+                    tracking_id=tracking_id,
+                    user_id=user_id
+                )
+            )
+            # Wait for processing to complete
+            result = await processing_task
         
         logger.info(f"Tracking {tracking_id}: Complete! (Total time: {time.time() - start_time:.2f}s)")
         
@@ -109,7 +132,9 @@ async def process_file_background(ctx, tracking_id: str, file_content: bytes, fi
         
     except Exception as e:
         error_message = str(e)
-        logger.error(f"Background processing failed for {filename} (tracking_id: {tracking_id}): {error_message}", exc_info=True)
+        logger.error(f"Background processing failed for {filename} (tracking_id: {tracking_id}): {error_message}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         
         # Import user-friendly error utility
         from src.utils.user_friendly_errors import get_user_friendly_error

@@ -154,9 +154,14 @@ async def get_cache_stats(api_key: str = Depends(require_api_key)) -> Dict[str, 
 
 
 @router.delete("/cache/{cache_id}")
-async def delete_specific_cache(cache_id: str, api_key: str = Depends(require_api_key)) -> Dict[str, Any]:
+async def delete_specific_cache(
+    cache_id: str, 
+    api_key: str = Depends(require_api_key)
+) -> Dict[str, Any]:
     """
     Delete a specific cache entry by cache_id
+    
+    ⚠️ ADMIN ONLY: This endpoint is for admin use only.
     
     Args:
         cache_id: Cache ID to delete
@@ -169,6 +174,7 @@ async def delete_specific_cache(cache_id: str, api_key: str = Depends(require_ap
         }
     """
     try:
+        # Admin-only operation - no user_id filtering needed
         deleted = await agent_cache.delete_cache(cache_id)
         
         if deleted:

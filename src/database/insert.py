@@ -129,7 +129,9 @@ class QdrantOperations:
                         "form_type": chunk.get("metadata", {}).get("form_type", "Unknown Type"),
                         "date_of_insertion": chunk.get("metadata", {}).get("date_of_insertion", "unknown_date"),
                         "token_count": chunk.get("token_count", 0),
-                        "char_count": chunk.get("char_count", 0)
+                        "char_count": chunk.get("char_count", 0),
+                        # ✅ Add user_id from metadata for multi-user isolation
+                        "user_id": chunk.get("metadata", {}).get("user_id")
                     }
                 )
 
@@ -140,7 +142,10 @@ class QdrantOperations:
                 return False
 
             # Insert points
-            logger.storage_start("chunk insertion", f"count: {len(points)}")
+            # ✅ Log user_id if present for verification
+            user_ids_in_batch = [p.payload.get("user_id") for p in points if p.payload.get("user_id")]
+            user_id_info = f" (user_id: {user_ids_in_batch[0]})" if user_ids_in_batch else ""
+            logger.storage_start("chunk insertion", f"count: {len(points)}{user_id_info}")
             operation_info = self.client.upsert(
                 collection_name=self.collection_name,
                 points=points,
