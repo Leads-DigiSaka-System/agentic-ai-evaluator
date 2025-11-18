@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from src.generator.redis_pool import get_shared_redis_pool
 from src.utils.clean_logger import get_clean_logger
 from src.deps.security import require_api_key
+from src.deps.user_context import get_user_id
 from typing import Optional, Dict, Any, Tuple
 import json
 import pickle
@@ -279,9 +280,16 @@ def _normalize_progress_and_message(progress: int, message: str, job_status: str
 
 
 @router.get("/progress/{job_id}")
-async def get_progress(job_id: str, api_key: str = Depends(require_api_key)):
+async def get_progress(
+    job_id: str, 
+    user_id: str = Depends(get_user_id),  # ✅ Extract user_id from header
+    api_key: str = Depends(require_api_key)
+):
     """
     Get progress of background job
+    
+    Headers Required:
+        X-User-ID: User identifier (must match job owner)
     
     Returns:
     {
@@ -294,6 +302,16 @@ async def get_progress(job_id: str, api_key: str = Depends(require_api_key)):
     """
     try:
         redis_pool = await get_shared_redis_pool()
+        
+        # ✅ Verify job belongs to user
+        stored_user_id = await redis_pool.get(f"arq:user:{job_id}")
+        if stored_user_id:
+            stored_user_id = stored_user_id.decode('utf-8') if isinstance(stored_user_id, bytes) else stored_user_id
+            if stored_user_id != user_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Job does not belong to this user"
+                )
         
         # Get tracking_id from mapping
         tracking_id = await _get_tracking_id(redis_pool, job_id)

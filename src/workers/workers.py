@@ -53,9 +53,9 @@ async def update_progress(ctx, job_id: str, progress: int, message: str):
 # IMPORTANT: Must be standalone async functions (not class methods)
 # Function name must match the string used in enqueue_job()
 
-async def process_file_background(ctx, tracking_id: str, file_content: bytes, filename: str, session_id: str):
+async def process_file_background(ctx, tracking_id: str, file_content: bytes, filename: str, session_id: str, user_id: str):
     """
-    Process file in background
+    Process file in background with user isolation
     
     Args:
         ctx: ARQ context (contains Redis connection)
@@ -63,12 +63,13 @@ async def process_file_background(ctx, tracking_id: str, file_content: bytes, fi
         file_content: File bytes
         filename: Original filename
         session_id: Session ID for tracking
+        user_id: User ID for data isolation
         
     Returns:
         dict: Processing result
     """
     start_time = time.time()
-    logger.info(f"Starting background processing: {filename} (tracking_id: {tracking_id})")
+    logger.info(f"Starting background processing for user {user_id}: {filename} (tracking_id: {tracking_id})")
     
     try:
         # Start processing task
@@ -85,12 +86,12 @@ async def process_file_background(ctx, tracking_id: str, file_content: bytes, fi
         
         logger.info(f"Tracking {tracking_id}: Complete! (Total time: {time.time() - start_time:.2f}s)")
         
-        # Cache the result for storage approval (same as synchronous processing)
+        # Cache the result for storage approval (with user_id for isolation)
         # This ensures the result persists until user approval
         cache_id = None
         try:
-            cache_id = await agent_cache.save_agent_output(result, session_id=session_id)
-            logger.info(f"Result cached with cache_id: {cache_id} (tracking_id: {tracking_id})")
+            cache_id = await agent_cache.save_agent_output(result, session_id=session_id, user_id=user_id)
+            logger.info(f"Result cached with cache_id: {cache_id} (tracking_id: {tracking_id}, user: {user_id})")
             # Add cache_id to result for frontend
             if isinstance(result, dict):
                 result["cache_id"] = cache_id
@@ -102,7 +103,8 @@ async def process_file_background(ctx, tracking_id: str, file_content: bytes, fi
             "status": "success",
             "result": result,
             "session_id": session_id,
-            "cache_id": cache_id  # Include cache_id for storage approval
+            "cache_id": cache_id,  # Include cache_id for storage approval
+            "user_id": user_id  # ✅ Include user_id in response
         }
         
     except Exception as e:

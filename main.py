@@ -86,8 +86,12 @@ def signal_handler(sig, frame):
     shutdown_handler()
     os._exit(0)
 
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
+# Register signal handlers (Unix/Linux only - Windows doesn't support SIGTERM)
+# These work fine in Docker (Linux) and when using Gunicorn/Uvicorn
+if hasattr(signal, 'SIGINT'):
+    signal.signal(signal.SIGINT, signal_handler)
+if hasattr(signal, 'SIGTERM'):
+    signal.signal(signal.SIGTERM, signal_handler)
 
 app = FastAPI()
 

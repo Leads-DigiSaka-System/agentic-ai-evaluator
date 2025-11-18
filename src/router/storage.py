@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
 from src.services.storage_service import storage_service
@@ -7,6 +7,7 @@ from src.utils.limiter_config import limiter
 from src.utils.errors import ProcessingError, ValidationError
 from src.utils.clean_logger import get_clean_logger
 from src.workflow.models import SimpleStorageApprovalRequest
+from src.deps.user_context import get_user_id
 from src.utils.config import LANGFUSE_CONFIGURED
 from datetime import datetime
 
@@ -45,9 +46,16 @@ def observe_with_signature_preservation(*args, **kwargs):
 @router.post("/storage/approve-simple")
 @limiter.limit("10/minute")
 @observe_with_signature_preservation(name="approve_storage_simple")
-async def approve_storage_simple(request: Request, approval_request: SimpleStorageApprovalRequest):
+async def approve_storage_simple(
+    request: Request, 
+    approval_request: SimpleStorageApprovalRequest,
+    user_id: str = Depends(get_user_id)  # ✅ Extract user_id from header
+):
     """
-    Simplified storage approval using cached agent output
+    Simplified storage approval using cached agent output with user isolation
+    
+    Headers Required:
+        X-User-ID: User identifier (must match cache owner)
     
     This endpoint automatically retrieves cached agent output and stores it.
     Frontend only needs to provide cache_id and approval decision.
@@ -61,7 +69,7 @@ async def approve_storage_simple(request: Request, approval_request: SimpleStora
     """
     try:
         logger.cache_retrieve(approval_request.cache_id, "processing")
-        logger.info(f"User approval: {approval_request.approved}")
+        logger.info(f"User {user_id} approval: {approval_request.approved}")
         
         # Update trace with approval metadata and tags
         if LANGFUSE_AVAILABLE:
@@ -76,20 +84,29 @@ async def approve_storage_simple(request: Request, approval_request: SimpleStora
                         metadata={
                             "cache_id": approval_request.cache_id[:50],
                             "approved": approval_request.approved,
-                            "storage_type": "simple_approval"
+                            "storage_type": "simple_approval",
+                            "user_id": user_id
                         }
                     )
             except Exception as e:
                 logger.debug(f"Could not update observation: {e}")
         
-        # Get cached agent output
-        cached_data = await agent_cache.get_cached_output(approval_request.cache_id)
+        # Get cached agent output (with user_id for isolation)
+        cached_data = await agent_cache.get_cached_output(approval_request.cache_id, user_id=user_id)
         
         if not cached_data:
             raise ProcessingError(
                 detail="Cached agent output not found or expired",
                 step="cache_retrieval",
                 file_name="cached_output"
+            )
+        
+        # ✅ Verify cache belongs to user
+        cached_user_id = cached_data.get("user_id")
+        if cached_user_id and cached_user_id != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Cache does not belong to this user"
             )
         
         # Get the actual cached output (agent_response)

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Depends
 from src.Upload.multiple_handler import MultiReportHandler
 from src.utils import constants
 from src.utils.limiter_config import limiter
@@ -19,6 +19,7 @@ from src.utils.langfuse_utils import (
     LANGFUSE_AVAILABLE
 )
 from src.utils.config import LANGFUSE_CONFIGURED
+from src.deps.user_context import get_user_id
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from src.generator.redis_pool import get_shared_redis_pool
 import uuid
@@ -34,16 +35,22 @@ logger = get_clean_logger(__name__)
 async def upload_file(
     request: Request, 
     file: UploadFile = File(...), 
+    user_id: str = Depends(get_user_id),  # ✅ Extract user_id from header
     background: bool = False  # ✅ Query parameter, not form field
 ):
     """
     Upload and process files
+    
+    Headers Required:
+        X-User-ID: User identifier for data isolation
     
     Args:
         file: File to process
         background: If True, process in background and return job_id
     """
     try:
+        logger.info(f"Processing file for user: {user_id}")
+        
         # Read file content
         content = await file.read()
         
@@ -52,9 +59,9 @@ async def upload_file(
         
         logger.file_upload(file.filename, len(content))
         
-        # Generate session ID
-        session_id = generate_session_id(prefix="file_upload")
-        logger.info(f"Generated session ID: {session_id}")
+        # Generate session ID (include user_id for better tracking)
+        session_id = generate_session_id(prefix=f"file_upload_{user_id}")
+        logger.info(f"Generated session ID: {session_id} for user: {user_id}")
         
         # Set session_id on trace
         from src.utils.langfuse_utils import safe_update_trace
@@ -86,28 +93,36 @@ async def upload_file(
                 }
                 job_priority = priority_map.get(priority.lower(), ARQ_JOB_PRIORITY_NORMAL)
                 
-                # Enqueue job with priority (ARQ uses _job_id for priority-based ordering)
+                # Enqueue job with priority and user_id (ARQ uses _job_id for priority-based ordering)
                 job = await redis_pool.enqueue_job(
                     "process_file_background",
                     tracking_id,
                     content,
                     file.filename,
                     session_id,
-                    _job_id=f"{job_priority}-{tracking_id}"  # Lower number = higher priority
+                    user_id,  # ✅ Pass user_id to background worker
+                    _job_id=f"{user_id}:{job_priority}-{tracking_id}"  # Include user_id in job_id
                 )
                 
+                # Store tracking_id and user_id mappings
                 await redis_pool.setex(
                     f"arq:tracking:{job.job_id}",
                     REDIS_TRACKING_TTL_SECONDS,
                     tracking_id
                 )
+                await redis_pool.setex(
+                    f"arq:user:{job.job_id}",
+                    REDIS_TRACKING_TTL_SECONDS,
+                    user_id
+                )
                 
-                logger.info(f"Job queued: {job.job_id} (tracking_id: {tracking_id}, priority: {priority})")
+                logger.info(f"Job queued: {job.job_id} (tracking_id: {tracking_id}, user: {user_id}, priority: {priority})")
                 
                 return {
                     "status": "queued",
                     "job_id": job.job_id,
                     "session_id": session_id,
+                    "user_id": user_id,  # ✅ Include in response
                     "priority": priority,
                     "message": "Processing started in background",
                     "progress_url": f"/api/progress/{job.job_id}"
@@ -137,10 +152,10 @@ async def upload_file(
                 except Exception as e:
                     logger.warning(f"Failed to clean agent response: {str(e)}")
                 
-                # Cache result
+                # Cache result (with user_id for isolation)
                 cache_id = None
                 try:
-                    cache_id = await agent_cache.save_agent_output(result, session_id=session_id)
+                    cache_id = await agent_cache.save_agent_output(result, session_id=session_id, user_id=user_id)
                     logger.cache_save(cache_id, "agent output")
                     
                     # ✅ Add cache_id to result for frontend

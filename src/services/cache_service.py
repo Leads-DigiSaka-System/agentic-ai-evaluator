@@ -17,8 +17,10 @@ class AgentOutputCache:
         self.cache_expiry_seconds = CACHE_EXPIRY_SECONDS
         logger.info(f"AgentOutputCache initialized (using shared Redis pool)")
     
-    def _get_cache_key(self, cache_id: str) -> str:
-        """Get Redis key for a given cache ID"""
+    def _get_cache_key(self, cache_id: str, user_id: Optional[str] = None) -> str:
+        """Get Redis key for a given cache ID, optionally scoped to user"""
+        if user_id:
+            return f"agent:cache:{user_id}:{cache_id}"
         return f"agent:cache:{cache_id}"
     
     async def _get_redis_pool(self):
@@ -39,13 +41,14 @@ class AgentOutputCache:
         except:
             return True  # If we can't parse the date, consider it expired
     
-    async def save_agent_output(self, agent_response: Dict[str, Any], session_id: Optional[str] = None) -> str:
+    async def save_agent_output(self, agent_response: Dict[str, Any], session_id: Optional[str] = None, user_id: Optional[str] = None) -> str:
         """
         Save agent output to cache and return cache ID
         
         Args:
             agent_response: Response from /api/agent endpoint
             session_id: Optional session ID to link storage approval to original session
+            user_id: Optional user ID for data isolation
             
         Returns:
             cache_id: Unique identifier for retrieving cached data
@@ -65,11 +68,15 @@ class AgentOutputCache:
             # Store session_id if provided (for linking storage approval to original session)
             if session_id:
                 cache_data["session_id"] = session_id
+            
+            # Store user_id if provided (for user data isolation)
+            if user_id:
+                cache_data["user_id"] = user_id
 
             redis_pool = await self._get_redis_pool()
             
-            # Save to Redis
-            cache_key = self._get_cache_key(cache_id)
+            # Save to Redis (with user-scoped key if user_id provided)
+            cache_key = self._get_cache_key(cache_id, user_id)
             await redis_pool.setex(
                 cache_key,
                 self.cache_expiry_seconds,
@@ -88,12 +95,13 @@ class AgentOutputCache:
             logger.error(f"Failed to cache agent output: {str(e)}")
             raise Exception(f"Cache save failed: {str(e)}")
     
-    async def get_cached_output(self, cache_id: str) -> Optional[Dict[str, Any]]:
+    async def get_cached_output(self, cache_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Retrieve cached agent output
         
         Args:
             cache_id: Cache identifier
+            user_id: Optional user ID for data isolation (must match if cache was saved with user_id)
             
         Returns:
             Cached agent response or None if not found/expired
@@ -101,8 +109,14 @@ class AgentOutputCache:
         try:
             redis_pool = await self._get_redis_pool()
 
-            cache_key = self._get_cache_key(cache_id)
+            # Try user-scoped key first if user_id provided
+            cache_key = self._get_cache_key(cache_id, user_id)
             cache_data_raw = await redis_pool.get(cache_key)
+            
+            # If not found and user_id provided, try without user_id (backward compatibility)
+            if not cache_data_raw and user_id:
+                cache_key = self._get_cache_key(cache_id)
+                cache_data_raw = await redis_pool.get(cache_key)
             if not cache_data_raw:
                 logger.warning(f"Cache not found: {cache_id}")
                 return None

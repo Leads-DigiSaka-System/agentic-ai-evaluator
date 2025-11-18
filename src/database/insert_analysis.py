@@ -190,7 +190,7 @@ class AnalysisStorage:
             )
             
             # Validate summary
-            if not summary_text or len(summary_text.strip()) < self.MIN_SUMMARY_LENGTH:
+            if not summary_text or len(summary_text.strip()) < MIN_SUMMARY_LENGTH:
                 summary_text = self._create_fallback_summary(basic_info)
             
             # Generate embedding vector
@@ -272,8 +272,8 @@ class AnalysisStorage:
         # Extract content with size limit
         extracted_content = report.get("extracted_content", "")
         content_preview = (
-            extracted_content[:self.SUMMARY_PREVIEW_LENGTH] + "..."
-            if len(extracted_content) > self.SUMMARY_PREVIEW_LENGTH
+            extracted_content[:SUMMARY_PREVIEW_LENGTH] + "..."
+            if len(extracted_content) > SUMMARY_PREVIEW_LENGTH
             else extracted_content
         )
         
@@ -336,7 +336,7 @@ class AnalysisStorage:
             # Searchable summaries
             "summary_text": summary_text,
             "executive_summary": analysis.get("executive_summary", "")[
-                :self.EXECUTIVE_SUMMARY_MAX_LENGTH
+                :EXECUTIVE_SUMMARY_MAX_LENGTH
             ],
             
             # Multi-report context
@@ -345,7 +345,7 @@ class AnalysisStorage:
             
             # Errors
             "has_errors": len(report.get("errors", [])) > 0,
-            "errors": report.get("errors", [])[:self.MAX_ERROR_LIST_SIZE]
+            "errors": report.get("errors", [])[:MAX_ERROR_LIST_SIZE]
         }
     
     def _create_summary_text(

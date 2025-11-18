@@ -1,0 +1,121 @@
+# Docker Compose for Full Application Stack
+# Includes: FastAPI, ARQ Worker, Redis
+# NOTE: Qdrant is external - configure Qdrant_Localhost in .env to point to your Qdrant instance
+#
+# USAGE:
+#   Start all services:
+#     docker compose -f docker/docker-compose.yml up -d
+#
+#   Stop all services:
+#     docker compose -f docker/docker-compose.yml down
+#
+#   View logs:
+#     docker compose -f docker/docker-compose.yml logs -f
+#
+#   View specific service logs:
+#     docker compose -f docker/docker-compose.yml logs -f fastapi
+#     docker compose -f docker/docker-compose.yml logs -f worker
+#
+#   Restart a service:
+#     docker compose -f docker/docker-compose.yml restart fastapi
+#
+#   Rebuild after code changes:
+#     docker compose -f docker/docker-compose.yml up -d --build
+
+version: "3.9"
+
+services:
+  # Redis for ARQ job queue and caching
+  redis:
+    image: redis:7-alpine
+    container_name: agentic_redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"  # Map host 6380 to container 6379
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - app_network
+
+  # FastAPI Application (Gunicorn)
+  # NOTE: Qdrant is external - configure Qdrant_Localhost in .env to point to your Qdrant instance
+  fastapi:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: agentic-fastapi:latest
+    container_name: agentic_fastapi
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      # Override Redis URL to use service name
+      # Qdrant URL should be set in .env file (external Qdrant instance)
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      # Qdrant_Localhost should be set in .env (e.g., http://your-qdrant-host:6333)
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      # Mount code for development (hot reload) - remove in production
+      - ../src:/app/src:ro
+      - ../main.py:/app/main.py:ro
+      - ../gunicorn_config.py:/app/gunicorn_config.py:ro
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ARQ Worker for background jobs
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    image: agentic-worker:latest
+    container_name: agentic_worker
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      # Override Redis URL to use service name
+      # Qdrant URL should be set in .env file (external Qdrant instance)
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      # Qdrant_Localhost should be set in .env (e.g., http://your-qdrant-host:6333)
+    depends_on:
+      redis:
+        condition: service_healthy
+      fastapi:
+        condition: service_healthy
+    volumes:
+      # Mount code for development - remove in production
+      - ../src:/app/src:ro
+    networks:
+      - app_network
+    # Scale workers if needed (run multiple worker instances)
+    # deploy:
+    #   replicas: 2
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  app_network:
+    driver: bridge
+
