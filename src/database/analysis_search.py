@@ -89,20 +89,15 @@ class AnalysisHybridSearch:
                 "collection": self.collection_name
             })
             
-            # ✅ Temporarily update retriever's search_limit to get enough results
-            # We need to retrieve MORE than top_k because we'll filter by user_id after
-            # This ensures we get top_k results for the user even after filtering
+            # ✅ SECURITY FIX: Set search limit and pass user_id to retriever for DB-level filtering
+            # No need to over-retrieve since filtering happens at database level
             original_limit = self.dense_retriever.search_limit
-            # Retrieve more documents to account for user_id filtering
-            # If filtering, we might need 2-3x more to ensure we get top_k results for the user
-            effective_limit = top_k * 3 if user_id else top_k
-            self.dense_retriever.search_limit = effective_limit
+            self.dense_retriever.search_limit = top_k  # Use top_k directly since filtering is at DB level
             
             try:
-                # ✅ Search ALL data in Qdrant (vector search needs all data for semantic similarity)
-                # Use async method which handles thread pool execution internally
-                # ✅ Search without user_id filter - search all data for better semantic results
-                documents = await self.dense_retriever._aget_relevant_documents(query)
+                # ✅ SECURITY FIX: Pass user_id to retriever for database-level filtering
+                # This ensures data isolation at the database level (secure and efficient)
+                documents = await self.dense_retriever._aget_relevant_documents(query, user_id=user_id)
             finally:
                 # Restore original limit
                 self.dense_retriever.search_limit = original_limit
@@ -111,21 +106,9 @@ class AnalysisHybridSearch:
             update_trace_with_metrics({
                 "documents_retrieved": len(documents),
                 "documents_before_topk": len(documents),
-                "user_id_filtered": user_id is not None
+                "user_id_filtered": user_id is not None,
+                "filtering_method": "database_level"  # Track that we're using DB-level filtering
             })
-            
-            # ✅ Filter by user_id AFTER retrieval (for clarity/organization only)
-            # Purpose: Prevent confusion in return results, NOT for security
-            # Vector search works across ALL data, but we only return user's own results
-            if user_id:
-                original_count = len(documents)
-                documents = [doc for doc in documents if doc.metadata.get("user_id") == user_id]
-                filtered_count = len(documents)
-                self.logger.info(f"Filtered {original_count} documents to {filtered_count} for user_id: {user_id}")
-                
-                # If we don't have enough results after filtering, log a warning
-                if filtered_count < top_k and original_count > filtered_count:
-                    self.logger.debug(f"Retrieved {filtered_count}/{top_k} results for user after filtering (searched {original_count} total documents)")
             
             # ✅ Filter documents by score threshold (adaptive)
             try:

@@ -1,4 +1,4 @@
-from typing import List, Any
+from typing import List, Any, Optional
 import numpy as np
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
@@ -56,12 +56,18 @@ class QdrantSparseRetriever(BaseRetriever):
             # Get dense TF-IDF vector (this is the issue!)
             sparse_vec = self.sparse_encoder.encode([query])[0]
             
+            # ✅ IMPROVEMENT: Use proper logging instead of print statements
+            logger = get_clean_logger(__name__)
+            
             # Debug: Check if we got any non-zero values
             if hasattr(sparse_vec, 'nnz'):
                 # It's a scipy sparse matrix
                 if sparse_vec.nnz == 0:
-                    print(f"WARNING: TF-IDF returned zero vector for query: '{query}'")
-                    print("This means query terms are not in the TF-IDF vocabulary")
+                    logger.warning(
+                        f"TF-IDF returned zero vector for query: '{query}'. "
+                        "Query terms are not in the TF-IDF vocabulary (OOV - Out of Vocabulary). "
+                        "Consider using query expansion or falling back to dense retriever."
+                    )
                     # Return empty sparse vector
                     return {"indices": [], "values": []}
                 
@@ -75,51 +81,86 @@ class QdrantSparseRetriever(BaseRetriever):
             indices = np.nonzero(sv_array)[0].tolist()
             values = sv_array[indices].tolist()
             
-            # Debug output
+            # ✅ IMPROVEMENT: Proper logging with context
             if len(indices) == 0:
-                print(f"WARNING: No non-zero values found for query: '{query}'")
-                print(f"TF-IDF vector shape: {sv_array.shape}, max value: {sv_array.max()}")
+                logger.warning(
+                    f"No non-zero values found for query: '{query}'. "
+                    f"TF-IDF vector shape: {sv_array.shape}, max value: {sv_array.max()}. "
+                    "This may indicate vocabulary mismatch or empty query."
+                )
             else:
-                print(f"DEBUG: Query '{query}' -> {len(indices)} non-zero terms, max value: {max(values):.6f}")
+                logger.debug(
+                    f"Query '{query}' encoded to sparse vector: {len(indices)} non-zero terms, "
+                    f"max value: {max(values):.6f}"
+                )
             
             return {"indices": indices, "values": values}
             
         except Exception as e:
-            print(f"ERROR in _encode_sparse_query: {e}")
+            logger = get_clean_logger(__name__)
+            logger.error(f"Error encoding sparse query '{query}': {str(e)}", exc_info=True)
             return {"indices": [], "values": []}
     
     def _get_relevant_documents(
         self, 
         query: str, 
         *, 
-        run_manager: CallbackManagerForRetrieverRun
+        run_manager: CallbackManagerForRetrieverRun,
+        user_id: Optional[str] = None
     ) -> List[Document]:
         """
-        Retrieve documents using sparse vector keyword search.
+        Retrieve documents using sparse vector keyword search with optional user_id filtering.
         
         Process:
         1. Convert the text query into a sparse vector
-        2. Search Qdrant for documents with matching keywords
+        2. Search Qdrant for documents with matching keywords (with optional user_id filter)
         3. Convert results to LangChain Document format
         
         Args:
             query: The search query text
             run_manager: LangChain callback manager (for logging/tracing)
+            user_id: Optional user ID for data isolation - filters at database level
             
         Returns:
             List of LangChain Document objects with content and metadata
         """
+        logger = get_clean_logger(__name__)
+        
         try:
             # Step 1: Encode query to sparse vector
             sparse_vector = self._encode_sparse_query(query)
             
-            # Step 2: Search Qdrant using sparse vector matching
+            # ✅ IMPROVEMENT: Handle OOV (Out of Vocabulary) queries gracefully
+            if len(sparse_vector["indices"]) == 0:
+                logger.warning(
+                    f"Empty sparse vector for query '{query}'. "
+                    "This query has no matching terms in TF-IDF vocabulary. "
+                    "Consider falling back to dense retriever or using query expansion."
+                )
+                # Return empty results - caller can fall back to dense retriever
+                return []
+            
+            # ✅ SECURITY FIX: Build Qdrant filter at database level for user_id isolation
+            query_filter = None
+            if user_id:
+                query_filter = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="user_id",
+                            match=models.MatchValue(value=user_id)
+                        )
+                    ]
+                )
+                logger.debug(f"Applying user_id filter at database level: {user_id}")
+            
+            # Step 2: Search Qdrant using sparse vector matching with optional filter
             results = self.client.search(
                 collection_name=self.collection_name,
                 query_vector=models.NamedSparseVector(
                     name=self.vector_name,
                     vector=sparse_vector
                 ),
+                query_filter=query_filter,  # ✅ Filter at DB level - secure and efficient
                 limit=self.search_limit,
                 with_payload=True  # Include document metadata
             )
@@ -148,7 +189,7 @@ class QdrantSparseRetriever(BaseRetriever):
             # Log error and return empty list to prevent crashes
             if run_manager:
                 run_manager.on_retriever_error(e)
-            print(f"Error in sparse retrieval: {e}")
+            logger.error(f"Error in sparse retrieval for query '{query}': {str(e)}", exc_info=True)
             return []
     
     def _extract_query_terms(self, query: str) -> List[str]:

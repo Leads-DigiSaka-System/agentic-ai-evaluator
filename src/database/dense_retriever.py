@@ -1,4 +1,4 @@
-from typing import List, Any
+from typing import List, Any, Optional
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
@@ -34,19 +34,21 @@ class QdrantDenseRetriever(BaseRetriever):
         self, 
         query: str, 
         *, 
-        run_manager: CallbackManagerForRetrieverRun
+        run_manager: CallbackManagerForRetrieverRun,
+        user_id: Optional[str] = None
     ) -> List[Document]:
         """
-        Retrieve documents using dense vector similarity search.
+        Retrieve documents using dense vector similarity search with optional user_id filtering.
         
         Process:
         1. Convert the text query into a dense vector using the encoder
-        2. Search Qdrant for vectors with high cosine similarity
+        2. Search Qdrant for vectors with high cosine similarity (with optional user_id filter)
         3. Convert results to LangChain Document format
         
         Args:
             query: The search query text
             run_manager: LangChain callback manager (for logging/tracing)
+            user_id: Optional user ID for data isolation - filters at database level
             
         Returns:
             List of LangChain Document objects with content and metadata
@@ -56,13 +58,26 @@ class QdrantDenseRetriever(BaseRetriever):
             # This converts text like "user registration" into a 768-dimensional vector
             dense_vec = self.dense_encoder.encode([query])[0]
             
-            # Step 2: Search Qdrant using vector similarity
+            # ✅ SECURITY FIX: Build Qdrant filter at database level for user_id isolation
+            query_filter = None
+            if user_id:
+                query_filter = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="user_id",
+                            match=models.MatchValue(value=user_id)
+                        )
+                    ]
+                )
+            
+            # Step 2: Search Qdrant using vector similarity with optional filter
             results = self.client.search(
                 collection_name=self.collection_name,
                 query_vector=models.NamedVector(
                     name=self.vector_name,
                     vector=dense_vec
                 ),
+                query_filter=query_filter,  # ✅ Filter at DB level - secure and efficient
                 limit=self.search_limit,
                 with_payload=True  # Include document metadata
             )

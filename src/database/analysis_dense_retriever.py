@@ -95,12 +95,13 @@ class QdrantDenseRetriever(BaseRetriever):
     
     # ✅ ONLY NEW LINE - ADD THIS DECORATOR
     @observe_operation(name="dense_vector_retrieval", capture_input=True, capture_output=True)
-    def _get_relevant_documents(self, query: str) -> List[Document]:
+    def _get_relevant_documents(self, query: str, user_id: Optional[str] = None) -> List[Document]:
         """
-        Retrieve documents using dense vector search.
+        Retrieve documents using dense vector search with optional user_id filtering.
         
         Args:
             query: Search query string
+            user_id: Optional user ID for data isolation - filters at database level for security
             
         Returns:
             List of Document objects with metadata and scores
@@ -118,7 +119,8 @@ class QdrantDenseRetriever(BaseRetriever):
                 "query_length": len(query),
                 "vector_name": self.vector_name,
                 "search_limit": self.search_limit,
-                "collection": self.collection_name
+                "collection": self.collection_name,
+                "user_id_filtered": user_id is not None
             })
             
             # ORIGINAL CODE: Encode query to vector
@@ -129,11 +131,25 @@ class QdrantDenseRetriever(BaseRetriever):
                 "vector_dimension": len(query_vector)
             })
             
-            # ✅ Search ALL data in Qdrant (no user_id filter - vector search needs all data)
-            # user_id filtering happens AFTER retrieval for clarity/organization only
+            # ✅ SECURITY FIX: Build Qdrant filter at database level for user_id isolation
+            # This ensures data security and better performance
+            query_filter = None
+            if user_id:
+                query_filter = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="user_id",
+                            match=models.MatchValue(value=user_id)
+                        )
+                    ]
+                )
+                self.logger.debug(f"Applying user_id filter at database level: {user_id}")
+            
+            # ✅ Search with database-level filtering for security and performance
             search_results = self.client.search(
                 collection_name=self.collection_name,
                 query_vector=(self.vector_name, query_vector),
+                query_filter=query_filter,  # ✅ Filter at DB level - secure and efficient
                 limit=self.search_limit,
                 with_payload=True
             )
@@ -173,7 +189,7 @@ class QdrantDenseRetriever(BaseRetriever):
             self.logger.db_error("dense search", str(e))
             raise
     
-    async def _aget_relevant_documents(self, query: str) -> List[Document]:
+    async def _aget_relevant_documents(self, query: str, user_id: Optional[str] = None) -> List[Document]:
         """
         Async version of _get_relevant_documents.
         
@@ -182,6 +198,7 @@ class QdrantDenseRetriever(BaseRetriever):
         
         Args:
             query: Search query string
+            user_id: Optional user ID for data isolation - filters at database level
             
         Returns:
             List of Document objects with metadata and scores
@@ -189,7 +206,7 @@ class QdrantDenseRetriever(BaseRetriever):
         import asyncio
         loop = asyncio.get_event_loop()
         # Run blocking operations (encoding + Qdrant search) in thread pool
-        return await loop.run_in_executor(None, self._get_relevant_documents, query)
+        return await loop.run_in_executor(None, self._get_relevant_documents, query, user_id)
     
     def __repr__(self) -> str:
         return (f"QdrantDenseRetriever(collection='{self.collection_name}', "
