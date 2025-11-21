@@ -206,6 +206,11 @@ async def analysis_node(state: ProcessingState) -> ProcessingState:
         logger.analysis_start("demo_trial_analysis")
         user_id = state.get("_user_id")
         analysis_result = await analyze_demo_trial(state["extracted_markdown"], user_id=user_id)
+        
+        # ✅ Normalize analysis result (adds season detection, fixes structure)
+        from src.formatter.json_helper import normalize_analysis_response
+        analysis_result = normalize_analysis_response(analysis_result)
+        
         state["analysis_result"] = analysis_result
         
         # Check analysis status

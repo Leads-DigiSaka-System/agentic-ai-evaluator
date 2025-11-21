@@ -70,6 +70,13 @@ Extract ALL available fields (adapt field names as needed):
 - plot_size: Plot size / Area (sq meter or hectares)
 - contact: Contact Number (if available)
 
+SEASON DETECTION:
+- Determine season based on application_date or planting_date (whichever is available)
+- Philippines Season Calendar:
+  * Wet Season: June to November (rainy months)
+  * Dry Season: December to May (dry months)
+- Include "season" field in basic_info: "wet" or "dry" (based on month of application/planting date)
+
 DATA QUALITY ASSESSMENT:
 - Completeness score: Calculate % of filled fields (0–100)
 - Flag any critical missing data
@@ -361,7 +368,8 @@ RETURN FLEXIBLE JSON STRUCTURE (ONLY JSON, NO OTHER TEXT)
     "planting_date": "",
     "crop": "",
     "plot_size": "",
-    "contact": ""
+    "contact": "",
+    "season": "wet/dry"
   }},
   
   "treatment_comparison": {{

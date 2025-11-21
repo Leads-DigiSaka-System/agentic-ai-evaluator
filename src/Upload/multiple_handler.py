@@ -132,6 +132,11 @@ class MultiReportHandler:
         if not LANGFUSE_AVAILABLE:
             return
         
+        # Safety check: return early if final_state is None
+        if final_state is None:
+            logger.warning(f"Cannot log workflow metrics for {original_filename}: final_state is None")
+            return
+        
         from src.monitoring.scores.workflow_score import log_workflow_scores
         
         # Calculate metrics for metadata
@@ -282,6 +287,10 @@ class MultiReportHandler:
                 "cross_report_analysis": {"cross_report_suggestions": []}
             }
             
+            # ✅ Normalize result before returning (adds season detection, fixes structure)
+            from src.formatter.json_helper import validate_and_clean_agent_response
+            result = validate_and_clean_agent_response(result)
+            
             # Analysis storage is now handled separately via API endpoint
             result["analysis_storage_status"] = "ready_for_approval"
             logger.storage_start("analysis storage", "ready for user approval")
@@ -305,6 +314,10 @@ class MultiReportHandler:
             "reports": all_reports_response,
             "cross_report_analysis": cross_report_suggestions
         }
+        
+        # ✅ Normalize result before returning (adds season detection, fixes structure)
+        from src.formatter.json_helper import validate_and_clean_agent_response
+        result = validate_and_clean_agent_response(result)
         
         result["analysis_storage_status"] = "ready_for_approval"
         logger.storage_start("analysis storage", "ready for user approval")
@@ -379,13 +392,18 @@ class MultiReportHandler:
                 # Re-raise to be handled by outer try-except
                 raise
 
+            # Safety check: ensure final_state is not None before proceeding
+            if final_state is None:
+                logger.error(f"Workflow returned None state for {original_filename}")
+                raise Exception("Workflow execution failed: final_state is None")
+            
             # Build response with validation info
             report_response = MultiReportHandler._build_report_response(final_state, original_filename, report_number=1)
 
-            # Log final metrics and scores to Langfuse
+            # Log final metrics and scores to Langfuse (with None check inside function)
             MultiReportHandler._log_workflow_metrics(final_state, original_filename)
 
-            if final_state["errors"]:
+            if final_state.get("errors"):
                 logger.processing_error(original_filename, f"Single report completed with errors: {final_state['errors']}")
             else:
                 chart_count = len(final_state.get("graph_suggestions", {}).get("suggested_charts", []))
@@ -614,16 +632,16 @@ class MultiReportHandler:
 
     @staticmethod
     def _get_improvement_colors(improvement_data: List[Dict]) -> List[str]:
-        """Get colors based on improvement percentage"""
+        """Get colors based on improvement percentage - using blue and green only"""
         colors = []
         for data in improvement_data:
             improvement = data["improvement_percent"]
             if improvement >= 25:
-                colors.append("#27ae60")
+                colors.append("#74D077")  # Light green for high improvement
             elif improvement >= 15:
-                colors.append("#f39c12")
+                colors.append("#45AAF2")  # Light blue for medium improvement
             else:
-                colors.append("#e74c3c")
+                colors.append("#28628C")  # Dark blue for low improvement
         return colors
 
     @staticmethod

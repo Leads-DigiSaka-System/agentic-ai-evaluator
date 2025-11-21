@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, date
 import json
 import re
+from src.utils.season_detector import detect_season_from_dates
 
 # Import constants from centralized constants file
 from src.utils.constants import (
@@ -303,6 +304,12 @@ class AnalysisStorage:
             "planting_date": basic_info.get("planting_date", ""),
             "plot_size": basic_info.get("plot_size", ""),
             "contact": basic_info.get("contact", ""),
+            # ✅ Season detection (wet/dry based on application_date or planting_date)
+            # Prefer season from analysis (if LLM detected it), otherwise auto-detect from dates
+            "season": basic_info.get("season") or detect_season_from_dates(
+                application_date=basic_info.get("application_date", ""),
+                planting_date=basic_info.get("planting_date", "")
+            ),
             
             # Performance Metrics (safe float conversion)
             "improvement_percent": self._safe_float(calculated.get("improvement_percent", 0)),

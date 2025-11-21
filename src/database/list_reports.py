@@ -3,6 +3,7 @@ from qdrant_client.http import models
 from typing import List, Dict, Any, Optional
 from src.utils.config import QDRANT_LOCAL_URI, QDRANT_COLLECTION_ANALYSIS
 from src.utils.clean_logger import get_clean_logger
+from src.utils.season_detector import detect_season_from_dates, get_season_name
 import json
 
 
@@ -89,6 +90,12 @@ class ReportLister:
                     "planting_date": payload.get("planting_date", ""),
                     "plot_size": payload.get("plot_size", ""),
                     "contact": payload.get("contact", ""),
+                    # ✅ Season (wet/dry) - from stored value or detect from dates
+                    "season": (season_value := payload.get("season") or detect_season_from_dates(
+                        application_date=payload.get("application_date", ""),
+                        planting_date=payload.get("planting_date", "")
+                    )),
+                    "season_name": get_season_name(season_value),
                     
                     # Performance Metrics
                     "improvement_percent": safe_float(payload.get("improvement_percent", 0)),

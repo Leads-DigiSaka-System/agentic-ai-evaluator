@@ -290,8 +290,21 @@ def normalize_analysis_response(response_data: Dict[str, Any]) -> Dict[str, Any]
                 "planting_date": "",
                 "crop": "",
                 "plot_size": "",
-                "contact": ""
+                "contact": "",
+                "season": None
             }
+        
+        # ✅ Auto-detect season if missing (post-processing)
+        basic_info = normalized.get("basic_info", {})
+        if not basic_info.get("season"):
+            from src.utils.season_detector import detect_season_from_dates
+            detected_season = detect_season_from_dates(
+                application_date=basic_info.get("application_date", ""),
+                planting_date=basic_info.get("planting_date", "")
+            )
+            if detected_season:
+                basic_info["season"] = detected_season
+                logger.info(f"Auto-detected season: {detected_season} from dates")
         
         # Ensure recommendations is always a list
         if "recommendations" not in normalized:
@@ -347,11 +360,11 @@ def validate_and_clean_agent_response(agent_response: Dict[str, Any]) -> Dict[st
             logger.info(f"Processing {len(cleaned_response['reports'])} reports")
             
             for i, report in enumerate(cleaned_response["reports"]):
-                if isinstance(report, dict) and "analysis" in report:
-                    logger.info(f"Normalizing analysis for report {i+1}")
-                    
-                    # Normalize the analysis data
-                    report["analysis"] = normalize_analysis_response(report["analysis"])
+                if isinstance(report, dict):
+                    # Normalize the analysis data if present
+                    if "analysis" in report:
+                        logger.info(f"Normalizing analysis for report {i+1}")
+                        report["analysis"] = normalize_analysis_response(report["analysis"])
                     
                     # Ensure storage_status is set
                     if "storage_status" not in report:

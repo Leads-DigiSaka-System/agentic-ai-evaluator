@@ -16,10 +16,17 @@ SECURITY & RELIABILITY GUARDRAILS
 
 THEME & AESTHETICS (APPLY CONSISTENTLY)
 - Use a modern, readable palette:
-  * Primary greens for Leads Agri: ["#27ae60", "#2ecc71"]
-  * Control/negative in red tones: ["#e74c3c", "#c0392b"]
-  * Accents for neutrals: ["#f39c12", "#3498db", "#9b59b6"]
-- Prefer soft gradients/transparency for fills (rgba with 0.15–0.25 alpha).
+  * Primary greens for Leads Agri: ["#7AD077", "#227E26"]
+  * Control/Standard Practice: Blue tones ["#45AAF2", "#28628C"]
+- COLOR USAGE BY CHART TYPE:
+  * For line_chart: Use DARK colors with rgba transparency
+    - Control: borderColor "#28628C", backgroundColor "rgba(40, 98, 140, 0.15)"
+    - Leads Agri: borderColor "#227E26", backgroundColor "rgba(34, 126, 38, 0.15)"
+  * For bar_chart: Use rgba strings (NOT gradient objects)
+    - Control: backgroundColor "rgba(69, 170, 242, 0.8)", borderColor "#28628C"
+    - Leads Agri: backgroundColor "rgba(122, 208, 119, 0.8)", borderColor "#227E26"
+  * For pie/doughnut_chart: Use solid colors - "#7AD077" or "#45AAF2"
+- IMPORTANT: Use rgba() strings directly, NOT gradient objects. Chart.js requires rgba strings.
 - Rounded bar corners (borderRadius 6) and slightly thicker lines (3px).
 - Place legend at bottom, title concise and data-specific.
 - Subtle grids and tick colors for readability.
@@ -93,11 +100,10 @@ Return JSON with this exact structure:
           {{
             "label": "Control|Leads Agri|Metric Name",
             "data": [Extract exact values from analysis],
-            "backgroundColor": ["#27ae60", "#e74c3c", "#f39c12"],
-            "borderColor": ["#27ae60", "#e74c3c", "#f39c12"], 
+            "backgroundColor": ["For bar_chart: use rgba strings like 'rgba(69, 170, 242, 0.8)'", "For line_chart: use rgba with 0.15 alpha"],
+            "borderColor": ["#28628C for Control (dark blue)", "#227E26 for Leads Agri (dark green)"], 
             "borderWidth": 1,
             "tension": 0.3,
-            "borderRadius": 6
           }}
         ]
       }},
@@ -151,16 +157,16 @@ If raw_data has: {{"control": {{"3 DAA": 3, "7 DAA": 3, "14 DAA": 3}}, "leads_ag
       {{
         "label": "Control",
         "data": [3, 3, 3],
-        "borderColor": "#e74c3c",
-        "backgroundColor": "rgba(231, 76, 60, 0.15)",
+        "borderColor": "#28628C",
+        "backgroundColor": "rgba(40, 98, 140, 0.15)",
         "tension": 0.3,
         "borderWidth": 3
       }},
       {{
         "label": "Leads Agri",
         "data": [3, 4, 4],
-        "borderColor": "#27ae60",
-        "backgroundColor": "rgba(39, 174, 96, 0.15)",
+        "borderColor": "#227E26",
+        "backgroundColor": "rgba(34, 126, 38, 0.15)",
         "tension": 0.3,
         "borderWidth": 3
       }}
@@ -192,10 +198,10 @@ If calculated_metrics has: {{"control_average": 3.0, "leads_average": 3.67, "rel
       {{
         "label": "Average Performance",
         "data": [3.0, 3.67],
-        "backgroundColor": ["rgba(231, 76, 60, 0.2)", "rgba(39, 174, 96, 0.2)"],
-        "borderColor": ["#e74c3c", "#27ae60"],
-        "borderWidth": 2,
-        "borderRadius": 6
+        "backgroundColor": ["rgba(69, 170, 242, 0.8)", "rgba(122, 208, 119, 0.8)"],
+        "borderColor": ["#28628C", "#227E26"],
+        "borderWidth": 2
+
       }}
     ]
   }}
@@ -216,10 +222,9 @@ If yield_analysis has: {{"control_yield": "5.2 MT/Ha", "leads_yield": "6.0 MT/Ha
       {{
         "label": "Yield (MT/Ha)",
         "data": [5.2, 6.0],
-        "backgroundColor": ["rgba(231, 76, 60, 0.2)", "rgba(39, 174, 96, 0.2)"],
-        "borderColor": ["#e74c3c", "#27ae60"],
+        "backgroundColor": ["rgba(69, 170, 242, 0.8)", "rgba(122, 208, 119, 0.8)"],
+        "borderColor": ["#28628C", "#227E26"],
         "borderWidth": 2,
-        "borderRadius": 6
       }}
     ]
   }}

@@ -109,6 +109,10 @@ async def process_file_background(ctx, tracking_id: str, file_content: bytes, fi
         
         logger.info(f"Tracking {tracking_id}: Complete! (Total time: {time.time() - start_time:.2f}s)")
         
+        # ✅ Normalize result before caching (adds season detection, fixes structure)
+        from src.formatter.json_helper import validate_and_clean_agent_response
+        result = validate_and_clean_agent_response(result)
+        
         # Cache the result for storage approval (with user_id for isolation)
         # This ensures the result persists until user approval
         cache_id = None
