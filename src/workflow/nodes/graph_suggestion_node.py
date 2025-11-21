@@ -4,6 +4,7 @@ from src.workflow.state import ProcessingState
 from src.formatter.json_helper import clean_json_from_llm_response
 from src.utils.clean_logger import CleanLogger
 from src.utils.config import LANGFUSE_CONFIGURED
+from src.utils import config
 import asyncio
 import json
 
@@ -79,26 +80,26 @@ async def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
         except Exception as e:
             logger.graph_error(f"Failed to format prompt: {str(e)}")
             state["errors"].append(f"Prompt formatting error: {str(e)}")
-            state["graph_suggestions"] = _generate_fallback_charts(analysis_data)
+            state["graph_suggestions"] = {"suggested_charts": [], "summary": "Graph generation failed"}
             return state
         
         # Get LLM response (prefer structured JSON) - now async
         logger.llm_request("gemini", "graph_suggestion")
-        suggestions = await ainvoke_llm(prompt, as_json=True, trace_name="graph_suggestion")
+        suggestions = await ainvoke_llm(prompt, as_json=True, trace_name="graph_suggestion", model=config.GEMINI_LARGE)
         
         # Handle list return or None
         if isinstance(suggestions, list):
             suggestions = suggestions[0] if suggestions else None
         if not isinstance(suggestions, dict) or not suggestions:
             # Fallback: use centralized JSON cleaning function from raw response
-            raw_response = await ainvoke_llm(prompt, as_json=False, trace_name="graph_suggestion_raw")
+            raw_response = await ainvoke_llm(prompt, as_json=False, trace_name="graph_suggestion_raw", model=config.GEMINI_LARGE)
             suggestions = clean_json_from_llm_response(raw_response)
         
         if not suggestions:
             # One retry with stricter instruction
             retry_prompt = prompt + "\n\nReturn ONLY valid JSON that matches the required structure. No markdown, no code fences."
             logger.llm_request("gemini", "graph_suggestion_retry")
-            retry_raw = await ainvoke_llm(retry_prompt, as_json=False, trace_name="graph_suggestion_retry")
+            retry_raw = await ainvoke_llm(retry_prompt, as_json=False, trace_name="graph_suggestion_retry", model=config.GEMINI_LARGE)
             suggestions = clean_json_from_llm_response(retry_raw)
         
         if not suggestions:
@@ -133,15 +134,14 @@ async def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
         else:
             logger.graph_fallback("LLM failed to generate graph suggestions")
             state["errors"].append("LLM failed to generate graph suggestions")
-            # Fallback to basic charts
-            state["graph_suggestions"] = _generate_fallback_charts(analysis_data)
+            state["graph_suggestions"] = {"suggested_charts": [], "summary": "LLM failed to generate graph suggestions"}
             
             if LANGFUSE_AVAILABLE:
                 try:
                     client = get_client()
                     if client:
                         client.update_current_observation(
-                            metadata={"generation_method": "fallback", "reason": "llm_failed"}
+                            metadata={"generation_method": "failed", "reason": "llm_failed"}
                         )
                 except Exception as e:
                     logger.debug(f"Could not update observation: {e}")
@@ -157,78 +157,17 @@ async def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
             from src.monitoring.trace.langfuse_helper import update_trace_with_error
             update_trace_with_error(e, {"step": "graph_suggestion"})
         
-        # Fallback to ensure we always have some charts
-        state["graph_suggestions"] = _generate_fallback_charts(state.get("analysis_result", {}))
+        # Set empty graph suggestions instead of fallback
+        state["graph_suggestions"] = {"suggested_charts": [], "summary": f"Graph generation failed: {str(e)}"}
         
         if LANGFUSE_AVAILABLE:
             try:
                 client = get_client()
                 if client:
                     client.update_current_observation(
-                        metadata={"generation_method": "fallback", "reason": "exception"}
+                        metadata={"generation_method": "failed", "reason": "exception"}
                     )
             except Exception as e:
                 logger.debug(f"Could not update observation: {e}")
         
         return state
-
-
-def _generate_fallback_charts(analysis_data: dict) -> dict:
-    """Generate basic fallback charts if LLM fails"""
-    perf_analysis = analysis_data.get("performance_analysis", {})
-    calculated = perf_analysis.get("calculated_metrics", {})
-    raw_data = perf_analysis.get("raw_data", {})
-    
-    control_data = raw_data.get("control", {})
-    leads_data = raw_data.get("leads_agri", {})
-    
-    # Try both field names for compatibility
-    improvement = calculated.get("relative_improvement_percent", calculated.get("improvement_percent", 0))
-    
-    fallback_charts = {
-        "suggested_charts": [
-            {
-                "chart_id": "fallback_performance_trend",
-                "chart_type": "line_chart",
-                "title": f"Performance Trend - {improvement}% Improvement",
-                "priority": "high",
-                "data_source": "performance_analysis.raw_data",
-                "description": "Performance progression over assessment intervals",
-                "chart_data": {
-                    "labels": list(control_data.keys()),
-                    "datasets": [
-                        {
-                            "label": "Control",
-                            "data": list(control_data.values()),
-                            "borderColor": "#e74c3c",
-                            "backgroundColor": "rgba(231, 76, 60, 0.1)",
-                            "tension": 0.1
-                        },
-                        {
-                            "label": "Leads Agri",
-                            "data": list(leads_data.values()),
-                            "borderColor": "#27ae60", 
-                            "backgroundColor": "rgba(39, 174, 96, 0.1)",
-                            "tension": 0.1
-                        }
-                    ]
-                },
-                "chart_options": {
-                    "responsive": True,
-                    "plugins": {
-                        "legend": {"position": "top"},
-                        "title": {
-                            "display": True,
-                            "text": "Performance Over Time"
-                        }
-                    },
-                    "scales": {
-                        "y": {"beginAtZero": True}
-                    }
-                }
-            }
-        ],
-        "summary": "Basic performance trend chart (fallback)"
-    }
-    
-    return fallback_charts

@@ -11,6 +11,7 @@ from src.router.storage import router as storage_router
 from src.router.progress import router as progress_router
 from src.router.cache import router as cache_router
 from src.router.worker import router as worker_router
+from src.router.list import router as list_router
 from src.deps.security import require_api_key
 from dotenv import load_dotenv
 from datetime import datetime
@@ -164,7 +165,8 @@ app.add_middleware(
 # Include routers
 # Secure all API routes with API key. Health and admin validate can remain open if desired.
 app.include_router(upload_router, prefix="/api", tags=["Upload"], dependencies=[Depends(require_api_key)])
-app.include_router(agent_router, prefix="/api", tags=["agent"], dependencies=[Depends(require_api_key)])  # Re-enabled with debug
+app.include_router(agent_router, prefix="/api", tags=["agent"], dependencies=[Depends(require_api_key)])
+app.include_router(list_router, prefix="/api", tags=["list"], dependencies=[Depends(require_api_key)]) # Re-enabled with debug
 app.include_router(search_router, prefix="/api", tags=["search"], dependencies=[Depends(require_api_key)])
 app.include_router(storage_router, prefix="/api", tags=["storage"], dependencies=[Depends(require_api_key)])  # Re-enabled with debug
 app.include_router(progress_router, prefix="/api", tags=["progress"], dependencies=[Depends(require_api_key)])

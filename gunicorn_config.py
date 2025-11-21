@@ -5,7 +5,10 @@ import multiprocessing
 import os
 
 # Server socket
-bind = os.getenv("GUNICORN_BIND", "0.0.0.0:8000")
+# Railway and other platforms provide PORT env var
+# Priority: PORT > GUNICORN_BIND > default 8000
+port = os.getenv("PORT") or (os.getenv("GUNICORN_BIND", "0.0.0.0:8000").split(":")[-1])
+bind = f"0.0.0.0:{port}"
 backlog = int(os.getenv("GUNICORN_BACKLOG", "2048"))
 
 # Worker processes
