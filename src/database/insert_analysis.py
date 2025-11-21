@@ -2,7 +2,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
 from src.generator.encoder import DenseEncoder
-from src.utils.config import QDRANT_LOCAL_URI, QDRANT_COLLECTION_ANALYSIS
+from src.utils.config import QDRANT_LOCAL_URI, QDRANT_COLLECTION_ANALYSIS, QDRANT_API_KEY
 from src.utils.clean_logger import get_clean_logger
 from typing import Dict, Any, List, Optional
 import uuid
@@ -23,7 +23,13 @@ class AnalysisStorage:
     
     def __init__(self):
         self.logger = get_clean_logger(__name__)
-        self.client = QdrantClient(url=QDRANT_LOCAL_URI)
+        # Initialize QdrantClient with optional API key for Qdrant Cloud
+        if QDRANT_API_KEY:
+            self.client = QdrantClient(url=QDRANT_LOCAL_URI, api_key=QDRANT_API_KEY)
+            self.logger.info("AnalysisStorage: Initialized with API key (Qdrant Cloud)")
+        else:
+            self.client = QdrantClient(url=QDRANT_LOCAL_URI)
+            self.logger.info("AnalysisStorage: Initialized without API key (local Qdrant)")
         self.collection_name = QDRANT_COLLECTION_ANALYSIS
         self.dense_encoder = DenseEncoder()
         self.vector_size = 768

@@ -1,7 +1,7 @@
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from typing import List, Dict, Any, Optional
-from src.utils.config import QDRANT_LOCAL_URI, QDRANT_COLLECTION_ANALYSIS
+from src.utils.config import QDRANT_LOCAL_URI, QDRANT_COLLECTION_ANALYSIS, QDRANT_API_KEY
 from src.utils.clean_logger import get_clean_logger
 from src.utils.season_detector import detect_season_from_dates, get_season_name
 import json
@@ -10,9 +10,15 @@ import json
 class ReportLister:
     
     def __init__(self):
-        self.client = QdrantClient(url=QDRANT_LOCAL_URI)
-        self.collection_name = QDRANT_COLLECTION_ANALYSIS
         self.logger = get_clean_logger(__name__)
+        # Initialize QdrantClient with optional API key for Qdrant Cloud
+        if QDRANT_API_KEY:
+            self.client = QdrantClient(url=QDRANT_LOCAL_URI, api_key=QDRANT_API_KEY)
+            self.logger.info("ReportLister: Initialized with API key (Qdrant Cloud)")
+        else:
+            self.client = QdrantClient(url=QDRANT_LOCAL_URI)
+            self.logger.info("ReportLister: Initialized without API key (local Qdrant)")
+        self.collection_name = QDRANT_COLLECTION_ANALYSIS
     
     async def list_all_reports(self) -> Dict[str, Any]:
         """

@@ -3,7 +3,7 @@ from langchain_core.documents import Document
 from qdrant_client import QdrantClient
 import json
 
-from src.utils.config import QDRANT_LOCAL_URI, QDRANT_COLLECTION_ANALYSIS
+from src.utils.config import QDRANT_LOCAL_URI, QDRANT_COLLECTION_ANALYSIS, QDRANT_API_KEY
 from src.generator.encoder import DenseEncoder
 from src.database.analysis_dense_retriever import QdrantDenseRetriever
 from src.utils.clean_logger import get_clean_logger
@@ -31,7 +31,13 @@ class AnalysisHybridSearch:
     def __init__(self, search_limit: int = 10):
         try:
             self.logger = get_clean_logger(__name__)
-            self.client = QdrantClient(url=QDRANT_LOCAL_URI)
+            # Initialize QdrantClient with optional API key for Qdrant Cloud
+            if QDRANT_API_KEY:
+                self.client = QdrantClient(url=QDRANT_LOCAL_URI, api_key=QDRANT_API_KEY)
+                self.logger.info("AnalysisHybridSearch: Initialized with API key (Qdrant Cloud)")
+            else:
+                self.client = QdrantClient(url=QDRANT_LOCAL_URI)
+                self.logger.info("AnalysisHybridSearch: Initialized without API key (local Qdrant)")
             self.collection_name = QDRANT_COLLECTION_ANALYSIS
             self.dense_encoder = DenseEncoder()
             self.search_limit = search_limit

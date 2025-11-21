@@ -8,6 +8,7 @@ GOOGLE_API_KEY = os.getenv("GEMINI_APIKEY")
 GEMINI_LARGE = os.getenv("GEMINI_LARGE")
 
 QDRANT_LOCAL_URI = os.getenv("Qdrant_Localhost")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")  # Optional: For Qdrant Cloud authentication
 QDRANT_COLECTION_DEMO = os.getenv("Qdrant_Form")
 QDRANT_COLLECTION_ANALYSIS= os.getenv("Qdrant_Analysis_Report")
 
