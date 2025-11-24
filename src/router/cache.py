@@ -101,9 +101,11 @@ async def get_cache_stats(api_key: str = Depends(require_api_key)) -> Dict[str, 
     Returns:
         {
             "total_entries": int,
-            "total_size_mb": float,
-            "oldest_entry": str,
-            "newest_entry": str
+            "estimated_size_mb": float,
+            "oldest_ttl_seconds": int,
+            "newest_ttl_seconds": int,
+            "cache_expiry_minutes": int,
+            "cache_expiry_seconds": int
         }
     """
     try:
@@ -137,19 +139,150 @@ async def get_cache_stats(api_key: str = Depends(require_api_key)) -> Dict[str, 
         # Estimate total size (sample * total / sample_size)
         estimated_total_size = total_size_bytes * (total_entries / min(100, total_entries)) if total_entries > 0 else 0
         
+        # Get cache expiry in minutes for display
+        from src.utils.constants import CACHE_EXPIRY_MINUTES
+        
         return {
             "status": "success",
             "total_entries": total_entries,
             "estimated_size_mb": round(estimated_total_size / (1024 * 1024), 2),
             "oldest_ttl_seconds": oldest_ttl,
             "newest_ttl_seconds": newest_ttl,
-            "cache_expiry_hours": agent_cache.cache_expiry_hours
+            "cache_expiry_minutes": CACHE_EXPIRY_MINUTES,
+            "cache_expiry_seconds": CACHE_EXPIRY_MINUTES * 60
         }
     except Exception as e:
         logger.error(f"Failed to get cache stats: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get cache stats: {str(e)}"
+        )
+
+
+@router.get("/cache/memory")
+async def get_redis_memory(api_key: str = Depends(require_api_key)) -> Dict[str, Any]:
+    """
+    Get actual Redis memory usage (not just cache)
+    
+    This shows the REAL memory usage in Redis, including:
+    - Cache entries
+    - ARQ job queue
+    - Job results
+    - Progress tracking
+    - All other Redis data
+    
+    Returns:
+        {
+            "used_memory_mb": float,
+            "used_memory_human": str,
+            "max_memory_mb": float,
+            "max_memory_human": str,
+            "memory_usage_percent": float,
+            "memory_available_mb": float,
+            "status": "ok" | "warning" | "critical"
+        }
+    """
+    try:
+        redis_pool = await get_shared_redis_pool()
+        
+        # Get Redis memory info
+        info = await redis_pool.info('memory')
+        
+        used_memory = info.get('used_memory', 0)  # Bytes
+        used_memory_mb = used_memory / (1024 * 1024)
+        used_memory_human = info.get('used_memory_human', f"{used_memory_mb:.2f}M")
+        
+        max_memory = info.get('maxmemory', 0)  # Bytes, 0 = no limit
+        max_memory_mb = max_memory / (1024 * 1024) if max_memory > 0 else 30  # Default 30MB for free tier
+        max_memory_human = info.get('maxmemory_human', f"{max_memory_mb:.2f}M") if max_memory > 0 else "30M"
+        
+        # Calculate usage percentage
+        memory_usage_percent = (used_memory_mb / max_memory_mb * 100) if max_memory_mb > 0 else 0
+        memory_available_mb = max_memory_mb - used_memory_mb if max_memory > 0 else None
+        
+        # Determine status
+        if memory_usage_percent >= 90:
+            status = "critical"
+        elif memory_usage_percent >= 80:
+            status = "warning"
+        else:
+            status = "ok"
+        
+        return {
+            "status": "success",
+            "used_memory_mb": round(used_memory_mb, 2),
+            "used_memory_human": used_memory_human,
+            "max_memory_mb": round(max_memory_mb, 2),
+            "max_memory_human": max_memory_human,
+            "memory_usage_percent": round(memory_usage_percent, 2),
+            "memory_available_mb": round(memory_available_mb, 2) if memory_available_mb is not None else None,
+            "redis_status": status,
+            "message": f"Redis using {used_memory_mb:.2f}MB / {max_memory_mb:.2f}MB ({memory_usage_percent:.1f}%)"
+        }
+    except Exception as e:
+        logger.error(f"Failed to get Redis memory: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get Redis memory: {str(e)}"
+        )
+
+
+@router.get("/cache/{cache_id}")
+async def get_cache_status(
+    cache_id: str,
+    api_key: str = Depends(require_api_key)
+) -> Dict[str, Any]:
+    """
+    Check if cache exists and get its status
+    
+    Args:
+        cache_id: Cache ID to check
+        
+    Returns:
+        {
+            "status": "exists" | "not_found" | "expired",
+            "cache_id": str,
+            "cache_info": {
+                "cache_id": str,
+                "created_at": str,
+                "status": str,
+                "expires_at": str,
+                "ttl_seconds": int,
+                "is_expired": bool
+            } | null,
+            "message": str
+        }
+    """
+    try:
+        cache_info = await agent_cache.get_cache_info(cache_id)
+        
+        if cache_info is None:
+            return {
+                "status": "not_found",
+                "cache_id": cache_id,
+                "cache_info": None,
+                "message": f"Cache {cache_id} not found or already deleted"
+            }
+        
+        if cache_info.get("is_expired", False):
+            return {
+                "status": "expired",
+                "cache_id": cache_id,
+                "cache_info": cache_info,
+                "message": f"Cache {cache_id} has expired"
+            }
+        
+        return {
+            "status": "exists",
+            "cache_id": cache_id,
+            "cache_info": cache_info,
+            "message": f"Cache {cache_id} exists and is valid"
+        }
+    except Exception as e:
+        logger.error(f"Failed to get cache status {cache_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get cache status: {str(e)}"
         )
 
 

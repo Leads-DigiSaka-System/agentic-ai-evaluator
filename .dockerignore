@@ -1,0 +1,91 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+test/
+tests/
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+env.example
+
+# Data files (LARGE - exclude these!)
+data/
+actual_data/
+cache/
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.zip
+*.tar
+*.gz
+
+# Git
+.git/
+.gitignore
+
+# Documentation (keep README only)
+*.md
+!README.md
+
+# Docker files (not needed in image)
+docker/
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Startup scripts (not needed in container)
+start_*.sh
+start_*.bat
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*.pkl
+
+# Additional files not needed in container
+requirements.txt
+*.json.bak
+*.json.tmp
+
+# Large model files (if any)
+*.bin
+*.safetensors
+models/
+
+# OneDrive sync files
+*.odt
+~$*
+

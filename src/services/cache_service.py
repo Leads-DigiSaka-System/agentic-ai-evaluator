@@ -36,7 +36,9 @@ class AgentOutputCache:
         """Check if cache data is expired"""
         try:
             created_at = datetime.fromisoformat(cache_data.get("created_at", ""))
-            expiry_time = created_at + timedelta(hours=self.cache_expiry_hours)
+            # Use minutes for expiry calculation
+            from src.utils.constants import CACHE_EXPIRY_MINUTES
+            expiry_time = created_at + timedelta(minutes=CACHE_EXPIRY_MINUTES)
             return datetime.now() > expiry_time
         except:
             return True  # If we can't parse the date, consider it expired
@@ -313,7 +315,8 @@ class AgentOutputCache:
             
             # Calculate expiry time
             created_at = datetime.fromisoformat(cache_data.get("created_at", ""))
-            expires_at = created_at + timedelta(hours=self.cache_expiry_hours)
+            from src.utils.constants import CACHE_EXPIRY_MINUTES
+            expires_at = created_at + timedelta(minutes=CACHE_EXPIRY_MINUTES)
             
             # Return metadata only
             return {

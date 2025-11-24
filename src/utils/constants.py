@@ -41,8 +41,11 @@ DEBUG_MODE = os.getenv("DEBUG", "false").lower() == "true"
 # ============================================================================
 # Cache & Storage Constants
 # ============================================================================
-CACHE_EXPIRY_HOURS = 24
-CACHE_EXPIRY_SECONDS = CACHE_EXPIRY_HOURS * 3600
+# Cache expires in 10 minutes if not saved to storage
+# Can be overridden via CACHE_EXPIRY_MINUTES environment variable
+CACHE_EXPIRY_MINUTES = int(os.getenv("CACHE_EXPIRY_MINUTES", "10"))  # Default 10 minutes
+CACHE_EXPIRY_HOURS = CACHE_EXPIRY_MINUTES / 60  # Convert to hours for backward compatibility
+CACHE_EXPIRY_SECONDS = CACHE_EXPIRY_MINUTES * 60  # Use minutes for TTL
 
 # ============================================================================
 # Analysis & Processing Constants
@@ -59,8 +62,8 @@ MAX_CONTENT_LENGTH = 4000  # For truncation
 REDIS_TRACKING_TTL_SECONDS = 3600  # 1 hour
 REDIS_PROGRESS_TTL_SECONDS = 3600  # 1 hour
 ARQ_JOB_TIMEOUT_SECONDS = 600  # 10 minutes
-ARQ_MAX_JOBS = 10
-ARQ_KEEP_RESULT_SECONDS = 86400  # 24 hours
+ARQ_MAX_JOBS = int(os.getenv("ARQ_MAX_JOBS", "10"))  # Can be overridden to reduce memory usage
+ARQ_KEEP_RESULT_SECONDS = int(os.getenv("ARQ_KEEP_RESULT_SECONDS", "86400"))  # Default 24 hours (86400), can be overridden
 ARQ_MAX_RETRIES = int(os.getenv("ARQ_MAX_RETRIES", "3"))  # Max retry attempts for failed jobs
 ARQ_RETRY_DELAY = float(os.getenv("ARQ_RETRY_DELAY", "5.0"))  # Delay between retries in seconds
 ARQ_JOB_PRIORITY_HIGH = 1

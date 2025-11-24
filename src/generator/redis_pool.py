@@ -1,7 +1,7 @@
 
 from arq import create_pool
 from arq.connections import RedisSettings
-from src.utils.config import REDIS_URL, REDIS_HOST, REDIS_PORT, REDIS_DB
+from src.utils.config import REDIS_URL, REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_PASSWORD
 from src.utils.clean_logger import get_clean_logger
 from typing import Optional
 import asyncio
@@ -125,6 +125,7 @@ def get_sync_redis_client():
                 host=REDIS_HOST,
                 port=REDIS_PORT,
                 db=REDIS_DB,
+                password=REDIS_PASSWORD,  # Support password for Redis Cloud
                 decode_responses=False  # Keep bytes for compatibility
             )
             # Test connection
