@@ -26,7 +26,29 @@ LANGFUSE_CONFIGURED = bool(LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY)
 
 #REdis
 # Redis Configuration for ARQ
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6380"))
-REDIS_DB = int(os.getenv("REDIS_DB", "0"))
-REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+# Support both full REDIS_URL or individual components
+REDIS_URL_ENV = os.getenv("REDIS_URL", None)  # Full Redis URL (for Railway, etc.)
+
+if REDIS_URL_ENV:
+    # Use full URL if provided (Railway, Redis Cloud connection string, etc.)
+    REDIS_URL = REDIS_URL_ENV
+    # Extract components for backward compatibility
+    REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+    REDIS_PORT = int(os.getenv("REDIS_PORT", "6380"))
+    REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+    REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
+else:
+    # Build URL from individual components
+    REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+    REDIS_PORT = int(os.getenv("REDIS_PORT", "6380"))
+    REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+    REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
+    REDIS_USERNAME = os.getenv("REDIS_USERNAME", None)  # For Railway (usually "default")
+    
+    # Build Redis URL with optional username and password
+    if REDIS_USERNAME and REDIS_PASSWORD:
+        REDIS_URL = f"redis://{REDIS_USERNAME}:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+    elif REDIS_PASSWORD:
+        REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+    else:
+        REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
