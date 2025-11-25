@@ -10,13 +10,13 @@ services:
     container_name: agentic-fastapi
     restart: unless-stopped
     ports:
-      - "8002:8000"
+      - "8002:8002"
     env_file:
       - .env
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/api/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
