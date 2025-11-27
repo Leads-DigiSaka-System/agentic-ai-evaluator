@@ -19,11 +19,19 @@ logger = get_clean_logger(__name__)
 class QdrantOperations:
     def __init__(self, dense_encoder=None, sparse_encoder=None):
         # Initialize QdrantClient with optional API key for Qdrant Cloud
+        # Increased timeout for remote Qdrant servers (60 seconds)
         if QDRANT_API_KEY:
-            self.client = QdrantClient(url=QDRANT_LOCAL_URI, api_key=QDRANT_API_KEY)
+            self.client = QdrantClient(
+                url=QDRANT_LOCAL_URI, 
+                api_key=QDRANT_API_KEY,
+                timeout=60
+            )
             logger.info("QdrantOperations: Initialized with API key (Qdrant Cloud)")
         else:
-            self.client = QdrantClient(url=QDRANT_LOCAL_URI)
+            self.client = QdrantClient(
+                url=QDRANT_LOCAL_URI,
+                timeout=60
+            )
             logger.info("QdrantOperations: Initialized without API key (local Qdrant)")
         self.collection_name = QDRANT_COLECTION_DEMO
         self.dense_vector_name = "dense"

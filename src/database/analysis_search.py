@@ -32,11 +32,12 @@ class AnalysisHybridSearch:
         try:
             self.logger = get_clean_logger(__name__)
             # Initialize QdrantClient with optional API key for Qdrant Cloud
+            # Increased timeout for remote Qdrant servers (60 seconds)
             if QDRANT_API_KEY:
-                self.client = QdrantClient(url=QDRANT_LOCAL_URI, api_key=QDRANT_API_KEY)
+                self.client = QdrantClient(url=QDRANT_LOCAL_URI, api_key=QDRANT_API_KEY, timeout=60)
                 self.logger.info("AnalysisHybridSearch: Initialized with API key (Qdrant Cloud)")
             else:
-                self.client = QdrantClient(url=QDRANT_LOCAL_URI)
+                self.client = QdrantClient(url=QDRANT_LOCAL_URI, timeout=60)
                 self.logger.info("AnalysisHybridSearch: Initialized without API key (local Qdrant)")
             self.collection_name = QDRANT_COLLECTION_ANALYSIS
             self.dense_encoder = DenseEncoder()

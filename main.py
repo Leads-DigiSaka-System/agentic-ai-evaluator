@@ -192,13 +192,21 @@ def health_check():
         "checks": {}
     }
     
-    # Check Database
+    # Check Database (Qdrant)
     try:
-        from src.database.insert import qdrant_client
-        collections = qdrant_client.client.get_collections()
+        from src.utils.config import QDRANT_LOCAL_URI, QDRANT_API_KEY
+        from qdrant_client import QdrantClient
+        
+        if QDRANT_API_KEY:
+            client = QdrantClient(url=QDRANT_LOCAL_URI, api_key=QDRANT_API_KEY, timeout=10)
+        else:
+            client = QdrantClient(url=QDRANT_LOCAL_URI, timeout=10)
+        
+        collections = client.get_collections()
         health_status["checks"]["database"] = {
             "status": "ok",
-            "collections": len(collections.collections)
+            "url": QDRANT_LOCAL_URI,
+            "collections_count": len(collections.collections)
         }
     except Exception as e:
         health_status["status"] = "degraded"
@@ -219,6 +227,119 @@ def health_check():
         }
     
     return health_status
+
+@app.get("/api/qdrant/check")
+def check_qdrant_connection():
+    """
+    Check Qdrant connection status with detailed information
+    """
+    from src.utils.config import QDRANT_LOCAL_URI, QDRANT_API_KEY, QDRANT_COLECTION_DEMO, QDRANT_COLLECTION_ANALYSIS
+    from qdrant_client import QdrantClient
+    import time
+    
+    result = {
+        "status": "unknown",
+        "timestamp": datetime.now().isoformat(),
+        "connection": {},
+        "collections": {},
+        "error": None
+    }
+    
+    try:
+        # Test connection
+        start_time = time.time()
+        
+        if QDRANT_API_KEY:
+            client = QdrantClient(url=QDRANT_LOCAL_URI, api_key=QDRANT_API_KEY, timeout=60)
+            auth_method = "API Key"
+        else:
+            client = QdrantClient(url=QDRANT_LOCAL_URI, timeout=60)
+            auth_method = "No Authentication"
+        
+        # Get Qdrant version/info
+        try:
+            # Try to get collections as a connection test
+            collections_response = client.get_collections()
+            connection_time = round((time.time() - start_time) * 1000, 2)  # milliseconds
+            
+            result["status"] = "connected"
+            result["connection"] = {
+                "url": QDRANT_LOCAL_URI,
+                "auth_method": auth_method,
+                "response_time_ms": connection_time,
+                "status": "ok"
+            }
+            
+            # Get collection details
+            all_collections = []
+            for col in collections_response.collections:
+                try:
+                    col_info = client.get_collection(col.name)
+                    all_collections.append({
+                        "name": col.name,
+                        "points_count": col_info.points_count,
+                        "vectors_count": col_info.vectors_count,
+                        "status": "ok"
+                    })
+                except Exception as e:
+                    all_collections.append({
+                        "name": col.name,
+                        "status": "error",
+                        "error": str(e)
+                    })
+            
+            result["collections"] = {
+                "total": len(collections_response.collections),
+                "list": all_collections
+            }
+            
+            # Check specific collections
+            expected_collections = {
+                "form": QDRANT_COLECTION_DEMO,
+                "analysis": QDRANT_COLLECTION_ANALYSIS
+            }
+            
+            collection_status = {}
+            for key, collection_name in expected_collections.items():
+                try:
+                    col_info = client.get_collection(collection_name)
+                    collection_status[key] = {
+                        "name": collection_name,
+                        "exists": True,
+                        "points_count": col_info.points_count,
+                        "vectors_count": col_info.vectors_count,
+                        "status": "ok"
+                    }
+                except Exception as e:
+                    collection_status[key] = {
+                        "name": collection_name,
+                        "exists": False,
+                        "status": "not_found",
+                        "error": str(e)
+                    }
+            
+            result["collections"]["expected"] = collection_status
+            
+        except Exception as e:
+            result["status"] = "error"
+            result["error"] = str(e)
+            result["connection"] = {
+                "url": QDRANT_LOCAL_URI,
+                "auth_method": auth_method,
+                "status": "failed",
+                "error": str(e)
+            }
+            
+    except Exception as e:
+        result["status"] = "error"
+        result["error"] = str(e)
+        result["connection"] = {
+            "url": QDRANT_LOCAL_URI if QDRANT_LOCAL_URI else "not_configured",
+            "status": "failed",
+            "error": str(e)
+        }
+    
+    return result
 
 @app.get("/api/admin/validate-database")
 def validate_database():

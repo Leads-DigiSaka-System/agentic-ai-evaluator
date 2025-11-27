@@ -92,6 +92,21 @@ class QdrantDenseRetriever(BaseRetriever):
         except UnexpectedResponse:
             self.logger.error(f"Collection '{self.collection_name}' does not exist")
             raise ValueError(f"Collection '{self.collection_name}' not found in Qdrant")
+        except Exception as e:
+            # Handle connection errors (SSL, timeout, etc.) gracefully
+            # Don't fail on startup - validation will happen on first use
+            error_msg = str(e)
+            if "SSL" in error_msg or "wrong version" in error_msg.lower():
+                self.logger.warning(
+                    f"SSL/Connection error during collection validation for '{self.collection_name}': {error_msg}. "
+                    f"This might be due to HTTP/HTTPS mismatch. Validation will be retried on first use."
+                )
+            else:
+                self.logger.warning(
+                    f"Connection error during collection validation for '{self.collection_name}': {error_msg}. "
+                    f"Validation will be retried on first use."
+                )
+            # Don't raise - allow app to start, validation will happen on first query
     
     # ✅ ONLY NEW LINE - ADD THIS DECORATOR
     @observe_operation(name="dense_vector_retrieval", capture_input=True, capture_output=True)

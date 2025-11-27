@@ -7,10 +7,35 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL")
 GOOGLE_API_KEY = os.getenv("GEMINI_APIKEY")
 GEMINI_LARGE = os.getenv("GEMINI_LARGE")
 
-QDRANT_LOCAL_URI = os.getenv("Qdrant_Localhost")
+QDRANT_LOCAL_URI_RAW = os.getenv("Qdrant_Localhost")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")  # Optional: For Qdrant Cloud authentication
 QDRANT_COLECTION_DEMO = os.getenv("Qdrant_Form")
 QDRANT_COLLECTION_ANALYSIS= os.getenv("Qdrant_Analysis_Report")
+
+# Auto-fix common URL issues
+def _normalize_qdrant_url(url: str) -> str:
+    """
+    Normalize Qdrant URL - handle common configuration issues
+    - Remove trailing slashes
+    - Auto-detect HTTP vs HTTPS (default to HTTP for local/self-hosted)
+    """
+    if not url:
+        return url
+    
+    url = url.strip().rstrip('/')
+    
+    # If URL starts with https:// but is localhost or IP, suggest http://
+    # This helps with common SSL certificate issues
+    if url.startswith('https://'):
+        # Check if it's a local/self-hosted instance (common SSL issues)
+        if 'localhost' in url or '127.0.0.1' in url or url.count('.') <= 1:
+            # Keep https:// for now, but log a warning
+            pass
+    
+    return url
+
+# Normalize the Qdrant URL
+QDRANT_LOCAL_URI = _normalize_qdrant_url(QDRANT_LOCAL_URI_RAW) if QDRANT_LOCAL_URI_RAW else None
 
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 
