@@ -292,11 +292,12 @@ class AnalysisStorage:
             else extracted_content
         )
         
-        # ✅ Extract user_id from full_response (source of truth from frontend header)
-        # full_response["user_id"] comes from storage_service.prepare_storage_data()
-        # which extracts it from state.get("_user_id") (from frontend header)
-        # report.get("user_id") is just a fallback (should not be needed if flow is correct)
+        # ✅ Extract user_id and cooperative from full_response (source of truth from frontend header)
+        # full_response["user_id"] and ["cooperative"] come from storage_service.prepare_storage_data()
+        # which extracts them from state.get("_user_id") and state.get("_cooperative") (from frontend header)
+        # report.get("user_id") and report.get("cooperative") are just fallbacks (should not be needed if flow is correct)
         user_id = full_response.get("user_id") or report.get("user_id")
+        cooperative = full_response.get("cooperative") or report.get("cooperative")
         
         payload = {
             # Identification
@@ -375,9 +376,11 @@ class AnalysisStorage:
             "errors": report.get("errors", [])[:MAX_ERROR_LIST_SIZE]
         }
         
-        # Add user_id to payload for multi-user isolation
+        # Add user_id and cooperative to payload for multi-user and cooperative isolation
         if user_id:
             payload["user_id"] = user_id
+        if cooperative:
+            payload["cooperative"] = cooperative
         
         return payload
     

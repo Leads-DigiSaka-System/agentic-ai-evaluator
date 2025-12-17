@@ -8,6 +8,7 @@ from src.utils.errors import ProcessingError, ValidationError
 from src.utils.clean_logger import get_clean_logger
 from src.workflow.models import SimpleStorageApprovalRequest
 from src.deps.user_context import get_user_id
+from src.deps.cooperative_context import get_cooperative
 from src.utils.config import LANGFUSE_CONFIGURED
 from datetime import datetime
 
@@ -49,7 +50,8 @@ def observe_with_signature_preservation(*args, **kwargs):
 async def approve_storage_simple(
     request: Request, 
     approval_request: SimpleStorageApprovalRequest,
-    user_id: str = Depends(get_user_id)  # ✅ Extract user_id from header
+    user_id: str = Depends(get_user_id),
+    cooperative: str = Depends(get_cooperative)  # ✅ Extract user_id from header
 ):
     """
     Simplified storage approval using cached agent output with user isolation
@@ -85,7 +87,8 @@ async def approve_storage_simple(
                             "cache_id": approval_request.cache_id[:50],
                             "approved": approval_request.approved,
                             "storage_type": "simple_approval",
-                            "user_id": user_id
+                            "user_id": user_id,
+                            "cooperative": cooperative
                         }
                     )
             except Exception as e:
@@ -219,31 +222,31 @@ async def approve_storage_simple(
                     with propagate_session_id(original_session_id, cache_id=approval_request.cache_id[:50], user_id=user_id):
                         if len(reports) == 1:
                             # Single report
-                            result = await _process_single_report_storage(first_report, user_id=user_id)
+                            result = await _process_single_report_storage(first_report, user_id=user_id, cooperative=cooperative)
                         else:
                             # Multiple reports - use batch storage
-                            result = await _process_multiple_reports_storage(reports, user_id=user_id)
+                            result = await _process_multiple_reports_storage(reports, user_id=user_id, cooperative=cooperative)
                 else:
                     # Fallback if Langfuse not configured
                     if len(reports) == 1:
-                        result = await _process_single_report_storage(first_report, user_id=user_id)
+                        result = await _process_single_report_storage(first_report, user_id=user_id, cooperative=cooperative)
                     else:
-                        result = await _process_multiple_reports_storage(reports, user_id=user_id)
+                        result = await _process_multiple_reports_storage(reports, user_id=user_id, cooperative=cooperative)
             except Exception as e:
                 logger.debug(f"Could not propagate session_id in storage: {e}")
                 # Fallback to normal processing
                 if len(reports) == 1:
-                    result = await _process_single_report_storage(first_report, user_id=user_id)
+                    result = await _process_single_report_storage(first_report, user_id=user_id, cooperative=cooperative)
                 else:
-                    result = await _process_multiple_reports_storage(reports, user_id=user_id)
+                    result = await _process_multiple_reports_storage(reports, user_id=user_id, cooperative=cooperative)
         else:
             # No session_id available, process normally
             if len(reports) == 1:
                 # Single report
-                result = await _process_single_report_storage(first_report, user_id=user_id)
+                result = await _process_single_report_storage(first_report, user_id=user_id, cooperative=cooperative)
             else:
                 # Multiple reports - use batch storage
-                result = await _process_multiple_reports_storage(reports, user_id=user_id)
+                result = await _process_multiple_reports_storage(reports, user_id=user_id, cooperative=cooperative)
         
         # Update trace with storage results, tags, and scores
         if LANGFUSE_AVAILABLE:
@@ -307,12 +310,13 @@ async def approve_storage_simple(
         )
 
 
-async def _process_single_report_storage(report_data: Dict[str, Any], user_id: str = None) -> Dict[str, Any]:
+async def _process_single_report_storage(report_data: Dict[str, Any], user_id: str = None, cooperative: str = None) -> Dict[str, Any]:
     """Process storage for single report
     
     Args:
         report_data: Report data from cache
         user_id: User ID from frontend header (source of truth) - NOT from cached data
+        cooperative: Cooperative ID from frontend header (source of truth) - NOT from cached data
     """
     try:
         # Convert to state format
@@ -329,7 +333,8 @@ async def _process_single_report_storage(report_data: Dict[str, Any], user_id: s
             "is_valid_content": report_data.get("validation", {}).get("content_validation", {}).get("is_valid_demo", False),
             "content_validation": report_data.get("validation", {}).get("content_validation"),
             "current_step": "simple_storage_approval",
-            "_user_id": user_id  # ✅ Use user_id from frontend header (source of truth)
+            "_user_id": user_id,  # ✅ Use user_id from frontend header (source of truth)
+            "_cooperative": cooperative  # ✅ Use cooperative from frontend header (source of truth)
         }
         
         # Prepare and store
@@ -355,12 +360,13 @@ async def _process_single_report_storage(report_data: Dict[str, Any], user_id: s
         }
 
 
-async def _process_multiple_reports_storage(reports: List[Dict[str, Any]], user_id: str = None) -> Dict[str, Any]:
+async def _process_multiple_reports_storage(reports: List[Dict[str, Any]], user_id: str = None, cooperative: str = None) -> Dict[str, Any]:
     """Process batch storage for multiple reports
     
     Args:
         reports: List of report data from cache
         user_id: User ID from frontend header (source of truth) - NOT from cached data
+        cooperative: Cooperative ID from frontend header (source of truth) - NOT from cached data
     """
     try:
         results = []
@@ -382,7 +388,8 @@ async def _process_multiple_reports_storage(reports: List[Dict[str, Any]], user_
                     "is_valid_content": report.get("validation", {}).get("content_validation", {}).get("is_valid_demo", False),
                     "content_validation": report.get("validation", {}).get("content_validation"),
                     "current_step": "batch_storage_approval",
-                    "_user_id": user_id  # ✅ Use user_id from frontend header (source of truth)
+                    "_user_id": user_id,  # ✅ Use user_id from frontend header (source of truth)
+                    "_cooperative": cooperative  # ✅ Use cooperative from frontend header (source of truth)
                 }
                 
                 # Prepare and store

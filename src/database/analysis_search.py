@@ -58,20 +58,21 @@ class AnalysisHybridSearch:
             raise
     
     @observe_operation(name="analysis_hybrid_search")
-    async def search(self, query: str, top_k: int = 5, user_id: str = None) -> List[Dict[str, Any]]:
+    async def search(self, query: str, top_k: int = 5, cooperative: str = None) -> List[Dict[str, Any]]:
         """
-        Search for relevant analysis documents with user_id filtering for data isolation.
+        Search for relevant analysis documents with cooperative filtering for data isolation.
+        Same cooperative can see all data within that cooperative.
         
         Args:
             query: Search query string
             top_k: Number of top results to return (default: 5)
-            user_id: Optional user ID - if provided, only returns results belonging to that user
+            cooperative: Optional cooperative ID - if provided, only returns results belonging to that cooperative
             
         Returns:
-            List of formatted analysis results with metadata (filtered by user_id if provided)
+            List of formatted analysis results with metadata (filtered by cooperative if provided)
             
         Example:
-            >>> results = searcher.search("rice fertilizer demo", top_k=3, user_id="user_123")
+            >>> results = searcher.search("rice fertilizer demo", top_k=3, cooperative="coop001")
         """
         if not query or not query.strip():
             self.logger.warning("Empty search query provided")
@@ -92,28 +93,24 @@ class AnalysisHybridSearch:
                 "search_query": query[:100],
                 "top_k": top_k,
                 "effective_limit": effective_limit,
-                "user_id": user_id,
+                "cooperative": cooperative,
                 "collection": self.collection_name
             })
             
-            # ✅ SECURITY FIX: Set search limit and pass user_id to retriever for DB-level filtering
-            # No need to over-retrieve since filtering happens at database level
-            original_limit = self.dense_retriever.search_limit
-            self.dense_retriever.search_limit = top_k  # Use top_k directly since filtering is at DB level
-            
-            try:
-                # ✅ SECURITY FIX: Pass user_id to retriever for database-level filtering
-                # This ensures data isolation at the database level (secure and efficient)
-                documents = await self.dense_retriever._aget_relevant_documents(query, user_id=user_id)
-            finally:
-                # Restore original limit
-                self.dense_retriever.search_limit = original_limit
+            # ✅ SECURITY FIX: Pass limit as parameter to avoid race conditions
+            # Each request has its own limit parameter, no shared state modification
+            # This ensures concurrent searches don't interfere with each other
+            documents = await self.dense_retriever._aget_relevant_documents(
+                query, 
+                cooperative=cooperative,
+                limit=top_k  # ✅ Pass limit as parameter - thread-safe!
+            )
             
             # ✅ Log retrieval results
             update_trace_with_metrics({
                 "documents_retrieved": len(documents),
                 "documents_before_topk": len(documents),
-                "user_id_filtered": user_id is not None,
+                "cooperative_filtered": cooperative is not None,
                 "filtering_method": "database_level"  # Track that we're using DB-level filtering
             })
             

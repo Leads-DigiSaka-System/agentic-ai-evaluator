@@ -46,8 +46,9 @@ class StorageService:
             efficacy_analysis = analysis_data.get("efficacy_analysis", {})
             averages = efficacy_analysis.get("averages", {})
             
-            # Extract user_id from state for multi-user isolation
+            # Extract user_id and cooperative from state for multi-user and cooperative isolation
             user_id = state.get("_user_id")
+            cooperative = state.get("_cooperative")
             
             chunk_metadata = {
                 "form_id": form_id,
@@ -61,9 +62,11 @@ class StorageService:
                 "improvement_percent": averages.get("improvement_percent", 0)
             }
             
-            # Add user_id to metadata for multi-user isolation
+            # Add user_id and cooperative to metadata for multi-user and cooperative isolation
             if user_id:
                 chunk_metadata["user_id"] = user_id
+            if cooperative:
+                chunk_metadata["cooperative"] = cooperative
             
             # Prepare chunks with metadata
             prepared_chunks = []
@@ -98,10 +101,13 @@ class StorageService:
                 "cross_report_analysis": {"cross_report_suggestions": []}
             }
             
-            # Add user_id to analysis response for multi-user isolation
+            # Add user_id and cooperative to analysis response for multi-user and cooperative isolation
             if user_id:
                 analysis_response["user_id"] = user_id
                 analysis_response["reports"][0]["user_id"] = user_id
+            if cooperative:
+                analysis_response["cooperative"] = cooperative
+                analysis_response["reports"][0]["cooperative"] = cooperative
             
             storage_data = {
                 "form_id": form_id,

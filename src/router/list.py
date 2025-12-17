@@ -1,18 +1,23 @@
 # src/api/reports.py
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from src.database.list_reports import report_lister
+from src.deps.cooperative_context import get_cooperative
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
 @router.get("/list")
-async def list_all_reports():
+async def list_all_reports(
+    cooperative: str = Depends(get_cooperative)
+):
     """
-    List ALL reports - Simple get all, no pagination.
-    All users can see all reports (no filtering).
+    List reports filtered by cooperative only.
+    Same cooperative can see all data within that cooperative.
     """
-    return await report_lister.list_all_reports()
+    return await report_lister.list_all_reports(cooperative=cooperative)
 
 @router.get("/stats")
-async def get_stats():
-    """Get collection statistics"""
-    return report_lister.get_collection_stats()
+async def get_stats(
+    cooperative: str = Depends(get_cooperative)
+):
+    """Get collection statistics filtered by cooperative only"""
+    return report_lister.get_collection_stats(cooperative=cooperative)

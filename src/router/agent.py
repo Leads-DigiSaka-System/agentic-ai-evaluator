@@ -20,6 +20,7 @@ from src.utils.langfuse_utils import (
 )
 from src.utils.config import LANGFUSE_CONFIGURED
 from src.deps.user_context import get_user_id
+from src.deps.cooperative_context import get_cooperative
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from src.generator.redis_pool import get_shared_redis_pool
 import uuid
@@ -35,6 +36,7 @@ logger = get_clean_logger(__name__)
 async def upload_file(
     request: Request, 
     file: UploadFile = File(...), 
+    cooperative: str = Depends(get_cooperative),
     user_id: str = Depends(get_user_id),  # ✅ Extract user_id from header
     background: bool = False  # ✅ Query parameter, not form field
 ):
@@ -100,7 +102,7 @@ async def upload_file(
                     content,
                     file.filename,
                     session_id,
-                    user_id,  # ✅ Pass user_id to background worker
+                    user_id,
                     _job_id=f"{user_id}:{job_priority}-{tracking_id}"  # Include user_id in job_id
                 )
                 

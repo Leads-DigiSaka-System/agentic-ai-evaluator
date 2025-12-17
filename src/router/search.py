@@ -14,7 +14,7 @@ from src.monitoring.trace.langfuse_helper import (
     get_langfuse_client
 )
 from src.monitoring.scores.search_score import log_search_scores
-from src.deps.user_context import get_user_id
+from src.deps.cooperative_context import get_cooperative
 
 router = APIRouter()
 search_engine = LangChainHybridSearch()
@@ -40,7 +40,8 @@ class AnalysisSearchRequest(BaseModel):
 async def analysis_search(
     request: Request,  #  REQUIRED: For SlowAPI rate limiter
     body: AnalysisSearchRequest,  #  RENAMED: Your request body (was 'request')
-    user_id: str = Depends(get_user_id)  # ✅ Extract user_id for data isolation
+    cooperative: str = Depends(get_cooperative)
+    # ✅ Removed user_id - same cooperative can see all data within that cooperative
 ):
     try:
         # Add tags to trace
@@ -54,11 +55,11 @@ async def analysis_search(
             except Exception as e:
                 logger.debug(f"Could not add tags to trace: {e}")
         
-        # ✅ Search with user_id filtering for data isolation
+        # ✅ Search with cooperative filtering only - same cooperative can see all data
         results = await analysis_searcher.search(
             query=body.query,  #  Changed from request.query to body.query
             top_k=body.top_k,   #  Changed from request.top_k to body.top_k
-            user_id=user_id     # ✅ Filter results by user_id
+            cooperative=cooperative  # ✅ Filter results by cooperative only
         )
         
         # Calculate search quality metrics for metadata
@@ -86,7 +87,7 @@ async def analysis_search(
             "avg_relevance_score": avg_relevance if has_results else 0.0,
             "avg_data_quality": avg_data_quality if has_results else 0.0,
             "search_efficiency": search_efficiency,
-            "user_id": user_id  # ✅ Track which user performed the search
+            "cooperative": cooperative  # ✅ Track which cooperative performed the search
         })
         
         # Log scores using dedicated score module

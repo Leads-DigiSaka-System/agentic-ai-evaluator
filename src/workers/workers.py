@@ -55,7 +55,8 @@ async def update_progress(ctx, job_id: str, progress: int, message: str):
 
 async def process_file_background(ctx, tracking_id: str, file_content: bytes, filename: str, session_id: str, user_id: str):
     """
-    Process file in background with user isolation
+    Process file in background with user isolation.
+    Background processing only - cooperative not needed here.
     
     Args:
         ctx: ARQ context (contains Redis connection)

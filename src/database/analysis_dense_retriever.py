@@ -110,13 +110,15 @@ class QdrantDenseRetriever(BaseRetriever):
     
     # ✅ ONLY NEW LINE - ADD THIS DECORATOR
     @observe_operation(name="dense_vector_retrieval", capture_input=True, capture_output=True)
-    def _get_relevant_documents(self, query: str, user_id: Optional[str] = None) -> List[Document]:
+    def _get_relevant_documents(self, query: str, cooperative: Optional[str] = None, limit: Optional[int] = None) -> List[Document]:
         """
-        Retrieve documents using dense vector search with optional user_id filtering.
+        Retrieve documents using dense vector search with optional cooperative filtering.
+        Same cooperative can see all data within that cooperative.
         
         Args:
             query: Search query string
-            user_id: Optional user ID for data isolation - filters at database level for security
+            cooperative: Optional cooperative ID for cooperative-specific access - filters at database level
+            limit: Optional limit override (if None, uses self.search_limit)
             
         Returns:
             List of Document objects with metadata and scores
@@ -135,7 +137,7 @@ class QdrantDenseRetriever(BaseRetriever):
                 "vector_name": self.vector_name,
                 "search_limit": self.search_limit,
                 "collection": self.collection_name,
-                "user_id_filtered": user_id is not None
+                "cooperative_filtered": cooperative is not None
             })
             
             # ORIGINAL CODE: Encode query to vector
@@ -146,26 +148,30 @@ class QdrantDenseRetriever(BaseRetriever):
                 "vector_dimension": len(query_vector)
             })
             
-            # ✅ SECURITY FIX: Build Qdrant filter at database level for user_id isolation
+            # ✅ SECURITY FIX: Build Qdrant filter at database level for cooperative isolation
             # This ensures data security and better performance
+            # Same cooperative can see all data within that cooperative
             query_filter = None
-            if user_id:
+            if cooperative:
                 query_filter = models.Filter(
                     must=[
                         models.FieldCondition(
-                            key="user_id",
-                            match=models.MatchValue(value=user_id)
+                            key="cooperative",
+                            match=models.MatchValue(value=cooperative)
                         )
                     ]
                 )
-                self.logger.debug(f"Applying user_id filter at database level: {user_id}")
+                self.logger.debug(f"Applying cooperative filter at database level: cooperative={cooperative}")
+            
+            # ✅ Use provided limit or fallback to instance limit
+            search_limit = limit if limit is not None else self.search_limit
             
             # ✅ Search with database-level filtering for security and performance
             search_results = self.client.search(
                 collection_name=self.collection_name,
                 query_vector=(self.vector_name, query_vector),
                 query_filter=query_filter,  # ✅ Filter at DB level - secure and efficient
-                limit=self.search_limit,
+                limit=search_limit,  # ✅ Use parameter limit to avoid race conditions
                 with_payload=True
             )
             
@@ -204,7 +210,7 @@ class QdrantDenseRetriever(BaseRetriever):
             self.logger.db_error("dense search", str(e))
             raise
     
-    async def _aget_relevant_documents(self, query: str, user_id: Optional[str] = None) -> List[Document]:
+    async def _aget_relevant_documents(self, query: str, cooperative: Optional[str] = None, limit: Optional[int] = None) -> List[Document]:
         """
         Async version of _get_relevant_documents.
         
@@ -213,7 +219,8 @@ class QdrantDenseRetriever(BaseRetriever):
         
         Args:
             query: Search query string
-            user_id: Optional user ID for data isolation - filters at database level
+            cooperative: Optional cooperative ID for cooperative-specific access - filters at database level
+            limit: Optional limit override (if None, uses self.search_limit)
             
         Returns:
             List of Document objects with metadata and scores
@@ -221,7 +228,8 @@ class QdrantDenseRetriever(BaseRetriever):
         import asyncio
         loop = asyncio.get_event_loop()
         # Run blocking operations (encoding + Qdrant search) in thread pool
-        return await loop.run_in_executor(None, self._get_relevant_documents, query, user_id)
+        # ✅ Pass limit as parameter to avoid race conditions with shared state
+        return await loop.run_in_executor(None, self._get_relevant_documents, query, cooperative, limit)
     
     def __repr__(self) -> str:
         return (f"QdrantDenseRetriever(collection='{self.collection_name}', "

@@ -21,25 +21,40 @@ class ReportLister:
             self.logger.info("ReportLister: Initialized without API key (local Qdrant)")
         self.collection_name = QDRANT_COLLECTION_ANALYSIS
     
-    async def list_all_reports(self) -> Dict[str, Any]:
+    async def list_all_reports(self, cooperative: Optional[str] = None) -> Dict[str, Any]:
         """
-        List ALL reports - simple get all, no pagination, no sorting.
-        Everyone sees everything.
+        List reports filtered by cooperative only.
+        Same cooperative can see all data within that cooperative.
+        
+        Args:
+            cooperative: Optional cooperative ID for filtering
         
         Returns:
-            Dictionary with all reports
+            Dictionary with filtered reports
         """
         try:
-            # Fetch ALL points - simple scroll through entire collection
+            # Build filter for cooperative only
+            scroll_filter = None
+            if cooperative:
+                scroll_filter = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cooperative",
+                            match=models.MatchValue(value=cooperative)
+                        )
+                    ]
+                )
+            
+            # Fetch points - scroll through collection with filter
             all_points = []
             offset = None  # Start from beginning
             batch_size = 100  # Fetch in batches
             
-            # Scroll through entire collection
+            # Scroll through collection with filter
             while True:
                 scroll_result = self.client.scroll(
                     collection_name=self.collection_name,
-                    scroll_filter=None,  #  No filter - show everything
+                    scroll_filter=scroll_filter,  # ✅ Filter by cooperative only
                     limit=batch_size,
                     offset=offset,
                     with_payload=True,
@@ -156,8 +171,9 @@ class ReportLister:
                     "has_errors": payload.get("has_errors", False),
                     "errors": payload.get("errors", []),
                     
-                    # User ID
+                    # User ID and Cooperative
                     "user_id": payload.get("user_id", ""),
+                    "cooperative": payload.get("cooperative", ""),
                 }
                 
                 reports.append(report)
@@ -191,19 +207,40 @@ class ReportLister:
             self.logger.error(f"Error counting reports: {str(e)}")
             return 0
     
-    def get_collection_stats(self) -> Dict[str, Any]:
+    def get_collection_stats(self, cooperative: Optional[str] = None) -> Dict[str, Any]:
         """
-        Get collection statistics - useful for admin dashboard.
+        Get collection statistics filtered by cooperative only.
+        
+        Args:
+            cooperative: Optional cooperative ID for filtering
         
         Returns:
             Dictionary with collection stats
         """
         try:
-            collection_info = self.client.get_collection(self.collection_name)
+            # Build filter for cooperative only
+            count_filter = None
+            if cooperative:
+                count_filter = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cooperative",
+                            match=models.MatchValue(value=cooperative)
+                        )
+                    ]
+                )
+            
+            # Get count with filter
+            count_result = self.client.count(
+                collection_name=self.collection_name,
+                count_filter=count_filter
+            )
+            
             return {
-                "total_reports": collection_info.points_count,
+                "total_reports": count_result.count,
                 "collection_name": self.collection_name,
-                "status": "ready"
+                "status": "ready",
+                "cooperative": cooperative
             }
         except Exception as e:
             self.logger.error(f"Error getting collection stats: {str(e)}")

@@ -236,8 +236,9 @@ class QdrantOperations:
                         "date_of_insertion": chunk.get("metadata", {}).get("date_of_insertion", "unknown_date"),
                         "token_count": chunk.get("token_count", 0),
                         "char_count": chunk.get("char_count", 0),
-                        # ✅ Add user_id from metadata for multi-user isolation
-                        "user_id": chunk.get("metadata", {}).get("user_id")
+                        # ✅ Add user_id and cooperative from metadata for multi-user and cooperative isolation
+                        "user_id": chunk.get("metadata", {}).get("user_id"),
+                        "cooperative": chunk.get("metadata", {}).get("cooperative")
                     }
                 )
 
