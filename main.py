@@ -12,6 +12,7 @@ from src.router.progress import router as progress_router
 from src.router.cache import router as cache_router
 from src.router.worker import router as worker_router
 from src.router.list import router as list_router
+from src.chatbot.chat.chat_router import router as chat_router
 from src.deps.security import require_api_key
 from dotenv import load_dotenv
 from datetime import datetime
@@ -175,6 +176,7 @@ app.include_router(progress_router, prefix="/api", tags=["progress"], dependenci
 app.include_router(cache_router, prefix="/api", tags=["cache"], dependencies=[Depends(require_api_key)])
 app.include_router(worker_router, prefix="/api", tags=["worker"], dependencies=[Depends(require_api_key)])
 app.include_router(delete_router, prefix="/api", tags=["delete"], dependencies=[Depends(require_api_key)])
+app.include_router(chat_router, tags=["chat"], dependencies=[Depends(require_api_key)])  # Prefix already in router
 
 # Health check endpoint
 @app.get("/")

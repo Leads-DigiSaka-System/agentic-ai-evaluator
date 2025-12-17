@@ -110,7 +110,8 @@ async def analysis_search(
     except Exception as e:
         #  Log error to trace
         error_msg = str(e)
-        logger.error(f"Analysis search failed: {error_msg}", exc_info=True)
+        import traceback
+        logger.error(f"Analysis search failed: {error_msg}\n{traceback.format_exc()}")
         update_trace_with_error(e, {
             "endpoint": "analysis_search",
             "query": body.query[:100] if body.query else "N/A"  #  Changed

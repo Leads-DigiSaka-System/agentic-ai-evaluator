@@ -7,6 +7,15 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL")
 GOOGLE_API_KEY = os.getenv("GEMINI_APIKEY")
 GEMINI_LARGE = os.getenv("GEMINI_LARGE")
 
+# Groq Configuration
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# Default model based on Groq official docs: https://console.groq.com/docs/models
+# llama-3.1-8b-instant: 131K context, $0.05/$0.08 per 1M tokens (cheapest, fast)
+# llama-3.3-70b-versatile: 131K context, $0.59/$0.79 per 1M tokens (better quality)
+# openai/gpt-oss-20b: 131K context, $0.075/$0.30 per 1M tokens (good balance)
+# Note: mixtral-8x7b-32768 is NOT in official docs (may be deprecated)
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")  # Default: 131K context, cheapest
+
 QDRANT_LOCAL_URI_RAW = os.getenv("Qdrant_Localhost")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")  # Optional: For Qdrant Cloud authentication
 QDRANT_COLECTION_DEMO = os.getenv("Qdrant_Form")
