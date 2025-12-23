@@ -5,7 +5,7 @@ Uses LangChain's standard agent creation (create_openai_tools_agent)
 for reliable tool-based conversations with agricultural data.
 
 Features:
-- Tool-based agent with 16 agricultural data tools
+- Tool-based agent with 27 agricultural data tools (11 basic search + 16 advanced search + 3 list + 3 analysis)
 - Cooperative-based data isolation
 - OpenRouter LLM integration (Llama 3.3 70B Instruct)
 - Conversation memory support
@@ -26,7 +26,7 @@ from src.chatbot.memory.conversation_store import generate_thread_id
 
 # Import all available tools
 from src.chatbot.tools import (
-    # Search tools (10)
+    # Basic search tools (11)
     search_analysis_tool,
     search_by_product_tool,
     search_by_location_tool,
@@ -37,6 +37,24 @@ from src.chatbot.tools import (
     search_by_sentiment_tool,
     search_by_product_category_tool,
     search_by_performance_significance_tool,
+    search_by_applicant_tool,
+    # Advanced search tools (16)
+    search_by_form_type_tool,
+    search_by_date_range_tool,
+    search_by_metric_type_tool,
+    search_by_confidence_level_tool,
+    search_by_data_quality_tool,
+    search_by_control_product_tool,
+    search_by_speed_of_action_tool,
+    search_by_yield_status_tool,
+    search_by_yield_improvement_range_tool,
+    search_by_measurement_intervals_tool,
+    search_by_metrics_detected_tool,
+    search_by_risk_factors_tool,
+    search_by_opportunities_tool,
+    search_by_recommendations_tool,
+    search_by_key_observation_tool,
+    search_by_scale_info_tool,
     # List tools (3)
     list_reports_tool,
     get_stats_tool,
@@ -94,10 +112,10 @@ def _get_all_tools() -> List:
     Get all available tools for the chat agent.
     
     Returns:
-        List of all LangChain tools
+        List of all LangChain tools (27 total: 11 basic search + 16 advanced search + 3 list + 3 analysis)
     """
     return [
-        # Search tools (10)
+        # Basic search tools (11)
         search_analysis_tool,
         search_by_product_tool,
         search_by_location_tool,
@@ -108,6 +126,24 @@ def _get_all_tools() -> List:
         search_by_sentiment_tool,
         search_by_product_category_tool,
         search_by_performance_significance_tool,
+        search_by_applicant_tool,
+        # Advanced search tools (16)
+        search_by_form_type_tool,
+        search_by_date_range_tool,
+        search_by_metric_type_tool,
+        search_by_confidence_level_tool,
+        search_by_data_quality_tool,
+        search_by_control_product_tool,
+        search_by_speed_of_action_tool,
+        search_by_yield_status_tool,
+        search_by_yield_improvement_range_tool,
+        search_by_measurement_intervals_tool,
+        search_by_metrics_detected_tool,
+        search_by_risk_factors_tool,
+        search_by_opportunities_tool,
+        search_by_recommendations_tool,
+        search_by_key_observation_tool,
+        search_by_scale_info_tool,
         # List tools (3)
         list_reports_tool,
         get_stats_tool,
