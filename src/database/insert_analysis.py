@@ -284,6 +284,17 @@ class AnalysisStorage:
         # Safe nested access for statistical assessment
         statistical_assessment = performance.get("statistical_assessment", {})
         
+        # Extract yield analysis data
+        yield_analysis = analysis.get("yield_analysis", {})
+        
+        # Extract trend analysis data
+        trend_analysis = performance.get("trend_analysis", {})
+        
+        # Extract top-level arrays
+        risk_factors = analysis.get("risk_factors", [])
+        opportunities = analysis.get("opportunities", [])
+        recommendations = analysis.get("recommendations", [])
+        
         # Extract content with size limit
         extracted_content = report.get("extracted_content", "")
         content_preview = (
@@ -308,6 +319,7 @@ class AnalysisStorage:
             "insertion_date": datetime.now().isoformat(),
             
             # Basic Info
+            "applicant": basic_info.get("applicant", ""),
             "cooperator": basic_info.get("cooperator", ""),
             "product": basic_info.get("product", ""),
             "location": basic_info.get("location", ""),
@@ -333,11 +345,24 @@ class AnalysisStorage:
             ),
             "confidence_level": statistical_assessment.get("confidence_level", ""),
             
+            # Trend Analysis
+            "speed_of_action": trend_analysis.get("speed_of_action", ""),
+            "key_observation": trend_analysis.get("key_observation", ""),
+            
+            # Yield Analysis
+            "control_yield": yield_analysis.get("control_yield", ""),
+            "leads_yield": yield_analysis.get("leads_yield", ""),
+            "yield_improvement_percent": self._safe_float(
+                yield_analysis.get("yield_improvement_percent", 0)
+            ),
+            "yield_status": yield_analysis.get("yield_status", ""),
+            
             # Product Category & Metrics
             "product_category": analysis.get("product_category", ""),
             "metrics_detected": analysis.get("metrics_detected", []),
             "measurement_intervals": analysis.get("measurement_intervals", []),
             "metric_type": performance.get("metric_type", ""),
+            "scale_info": performance.get("scale_info", ""),
             
             # Treatment Info
             "control_product": control_product,
@@ -353,10 +378,10 @@ class AnalysisStorage:
             ),
             "missing_fields": analysis.get("data_quality", {}).get("missing_fields", []),
             
-            # Full Data (safe JSON serialization)
-            "full_analysis": self._safe_json_dumps(analysis),
-            "graph_suggestions": self._safe_json_dumps(graph_suggestions),
-            "chart_count": len(graph_suggestions.get("suggested_charts", [])),
+            # Full Data (stored as nested dictionaries - Qdrant supports this natively)
+            "full_analysis": analysis if isinstance(analysis, dict) else {},
+            "graph_suggestions": graph_suggestions if isinstance(graph_suggestions, dict) else {},
+            "chart_count": len(graph_suggestions.get("suggested_charts", [])) if isinstance(graph_suggestions, dict) else 0,
             
             # Extracted content (size-limited)
             "extracted_content_preview": content_preview,
@@ -370,6 +395,11 @@ class AnalysisStorage:
             # Multi-report context
             "is_multi_report": full_response.get("total_reports", 1) > 1,
             "total_reports_in_batch": full_response.get("total_reports", 1),
+            
+            # Risk, Opportunities & Recommendations (stored as arrays)
+            "risk_factors": risk_factors if isinstance(risk_factors, list) else [],
+            "opportunities": opportunities if isinstance(opportunities, list) else [],
+            "recommendations": recommendations if isinstance(recommendations, list) else [],
             
             # Errors
             "has_errors": len(report.get("errors", [])) > 0,
@@ -470,7 +500,7 @@ class AnalysisStorage:
                 "report_type": "cross_report_analysis",
                 "total_reports": response.get("total_reports", 0),
                 "insertion_date": datetime.now().isoformat(),
-                "cross_report_data": self._safe_json_dumps(cross_analysis),
+                "cross_report_data": cross_analysis if isinstance(cross_analysis, dict) else {},
                 "summary_text": summary_text
             }
             

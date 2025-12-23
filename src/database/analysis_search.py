@@ -312,16 +312,28 @@ class AnalysisHybridSearch:
         for doc in documents:
             payload = doc.metadata
             
-            # ✅ Helper function to safely parse JSON strings
-            def safe_json_parse(json_str: str, default=None):
-                """Safely parse JSON string, return default if fails"""
-                if not json_str or json_str == "{}":
+            # ✅ Helper function to safely extract nested data (handles both dict and JSON string for backward compatibility)
+            def safe_extract_nested(field_value, default=None):
+                """Extract nested data - handles both dict (new format) and JSON string (old format)"""
+                if field_value is None:
                     return default if default is not None else {}
-                try:
-                    return json.loads(json_str)
-                except (json.JSONDecodeError, TypeError):
-                    self.logger.warning(f"Failed to parse JSON: {json_str[:100]}...")
-                    return default if default is not None else {}
+                
+                # If already a dictionary, return as-is (new format)
+                if isinstance(field_value, dict):
+                    return field_value
+                
+                # If string, try to parse as JSON (old format - backward compatibility)
+                if isinstance(field_value, str):
+                    if not field_value or field_value == "{}":
+                        return default if default is not None else {}
+                    try:
+                        return json.loads(field_value)
+                    except (json.JSONDecodeError, TypeError):
+                        self.logger.warning(f"Failed to parse JSON: {field_value[:100] if field_value else 'None'}...")
+                        return default if default is not None else {}
+                
+                # Fallback
+                return default if default is not None else {}
             
             result = {
                 # Identification
@@ -346,13 +358,13 @@ class AnalysisHybridSearch:
                 "summary": payload.get("summary_text", ""),
                 "executive_summary": payload.get("executive_summary", ""),
                 
-                # ✅ FIXED: Parse JSON strings back to objects
-                "graph_suggestions": safe_json_parse(
-                    payload.get("graph_suggestions", "{}"),
+                # ✅ NEW: Direct dictionary access (with backward compatibility for old JSON strings)
+                "graph_suggestions": safe_extract_nested(
+                    payload.get("graph_suggestions"),
                     default={}
                 ),
-                "full_analysis": safe_json_parse(
-                    payload.get("full_analysis", "{}"),
+                "full_analysis": safe_extract_nested(
+                    payload.get("full_analysis"),
                     default={}
                 ),
                 

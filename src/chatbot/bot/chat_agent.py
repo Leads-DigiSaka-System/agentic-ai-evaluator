@@ -1,12 +1,32 @@
+"""
+Chat Agent for Agricultural Data Queries
+
+Uses LangChain's standard agent creation (create_openai_tools_agent) 
+for reliable tool-based conversations with agricultural data.
+
+Features:
+- Tool-based agent with 16 agricultural data tools
+- Cooperative-based data isolation
+- OpenRouter LLM integration (Llama 3.3 70B Instruct)
+- Conversation memory support
+- Langfuse observability integration
+"""
 from typing import List, Optional, Dict, Any
-from deepagents import create_deep_agent
-from langchain_groq import ChatGroq
-from src.utils.config import GROQ_MODEL, GROQ_API_KEY
+from langchain.agents import AgentExecutor, create_openai_tools_agent
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.tools import StructuredTool
+
+from src.utils.config import OPENROUTER_MODEL
+from src.utils.openrouter_helper import create_openrouter_llm, is_openrouter_configured
 from src.utils.clean_logger import get_clean_logger
 from src.chatbot.prompts.system_prompt import get_chat_agent_system_prompt
 from src.utils.llm_helper import get_langfuse_handler
+from src.chatbot.memory.conversation_store import generate_thread_id
+
+# Import all available tools
 from src.chatbot.tools import (
-    # Search tools
+    # Search tools (10)
     search_analysis_tool,
     search_by_product_tool,
     search_by_location_tool,
@@ -17,11 +37,11 @@ from src.chatbot.tools import (
     search_by_sentiment_tool,
     search_by_product_category_tool,
     search_by_performance_significance_tool,
-    # List tools
+    # List tools (3)
     list_reports_tool,
     get_stats_tool,
     get_report_by_id_tool,
-    # Analysis tools
+    # Analysis tools (3)
     compare_products_tool,
     generate_summary_tool,
     get_trends_tool
@@ -30,31 +50,53 @@ from src.chatbot.tools import (
 logger = get_clean_logger(__name__)
 
 
-def create_chat_agent(cooperative: str) -> Any:
+def _bind_cooperative_to_tool(tool, cooperative: str) -> StructuredTool:
     """
-    Create a Deep Agent for chat with all tools and cooperative context.
+    Bind cooperative parameter to a tool for data isolation.
     
     Args:
-        cooperative: Cooperative ID for data isolation (required)
+        tool: LangChain tool to bind
+        cooperative: Cooperative ID to inject
     
     Returns:
-        Deep Agent instance configured with all tools
+        New tool with cooperative parameter pre-filled
     """
-    if not cooperative:
-        raise ValueError("Cooperative ID is required for chat agent")
+    try:
+        def tool_wrapper(**kwargs):
+            """Wrapper that automatically injects cooperative parameter"""
+            if 'cooperative' not in kwargs:
+                kwargs['cooperative'] = cooperative
+            try:
+                return tool.invoke(kwargs)
+            except Exception as e:
+                logger.debug(f"Tool invoke failed, retrying with explicit cooperative: {e}")
+                return tool.invoke({**kwargs, 'cooperative': cooperative})
+        
+        # Create new tool with bound cooperative
+        bound_tool = StructuredTool.from_function(
+            func=tool_wrapper,
+            name=tool.name,
+            description=tool.description
+        )
+        
+        # Preserve original tool's schema if available
+        if hasattr(tool, 'args_schema'):
+            bound_tool.args_schema = tool.args_schema
+        
+        return bound_tool
+    except Exception as e:
+        logger.warning(f"Error binding cooperative to tool {tool.name}: {e}")
+        return tool
+
+
+def _get_all_tools() -> List:
+    """
+    Get all available tools for the chat agent.
     
-    if not GROQ_API_KEY:
-        raise ValueError("GROQ_API_KEY is not configured. Check GROQ_API_KEY in .env file")
-    
-    logger.info(f"Creating chat agent for cooperative: {cooperative}")
-    
-    # Get system prompt
-    system_prompt = get_chat_agent_system_prompt()
-    
-    # Get all tools
-    # Note: Tools need cooperative parameter, but Deep Agents will handle passing it
-    # We'll need to bind cooperative to tools or pass it via context
-    all_tools = [
+    Returns:
+        List of all LangChain tools
+    """
+    return [
         # Search tools (10)
         search_analysis_tool,
         search_by_product_tool,
@@ -75,122 +117,112 @@ def create_chat_agent(cooperative: str) -> Any:
         generate_summary_tool,
         get_trends_tool
     ]
+
+
+def create_chat_agent(cooperative: str) -> AgentExecutor:
+    """
+    Create a LangChain agent for chat with all tools and cooperative context.
     
-    # Create tools with cooperative bound
-    # Since LangChain tools don't support partial binding directly,
-    # we'll need to create wrapper functions or pass cooperative via tool context
-    # For now, we'll create a wrapper that injects cooperative
+    Uses standard LangChain agent creation (create_openai_tools_agent)
+    which uses the modern tools API.
     
-    def bind_cooperative_to_tool(tool, coop: str):
-        """Bind cooperative parameter to a tool"""
-        from langchain_core.tools import StructuredTool
-        
-        # Get the original tool's function
-        original_func = tool.func if hasattr(tool, 'func') else tool
-        
-        # Create wrapper that injects cooperative
-        def tool_wrapper(**kwargs):
-            kwargs['cooperative'] = coop
-            return tool.invoke(kwargs)
-        
-        # Create new tool with bound cooperative
-        return StructuredTool.from_function(
-            func=tool_wrapper,
-            name=tool.name,
-            description=tool.description
+    Args:
+        cooperative: Cooperative ID for data isolation (required)
+    
+    Returns:
+        AgentExecutor instance configured with all tools
+    
+    Raises:
+        ValueError: If cooperative is missing or OpenRouter is not configured
+    """
+    # Validation
+    if not cooperative:
+        raise ValueError("Cooperative ID is required for chat agent")
+    
+    if not is_openrouter_configured():
+        raise ValueError(
+            "OPENROUTER_API_KEY is not configured. "
+            "Check OPENROUTER_API_KEY in .env file"
         )
     
-    # Bind cooperative to all tools
+    logger.info(f"Creating chat agent for cooperative: {cooperative}")
+    
+    # Get system prompt
+    system_prompt = get_chat_agent_system_prompt()
+    
+    # Get all tools and bind cooperative
+    all_tools = _get_all_tools()
     bound_tools = []
+    
     for tool in all_tools:
         try:
-            bound_tool = bind_cooperative_to_tool(tool, cooperative)
+            bound_tool = _bind_cooperative_to_tool(tool, cooperative)
             bound_tools.append(bound_tool)
         except Exception as e:
-            logger.warning(f"Could not bind cooperative to tool {tool.name}: {str(e)}")
-            # Fallback: use original tool (agent will need to pass cooperative)
+            logger.warning(f"Could not bind cooperative to tool {tool.name}: {e}")
             bound_tools.append(tool)
     
     logger.info(f"Created {len(bound_tools)} tools with cooperative context")
     
-    # Create Groq LLM instance with Langfuse integration
+    # Create OpenRouter LLM instance
     callbacks = []
     langfuse_handler = get_langfuse_handler()
     if langfuse_handler:
         callbacks.append(langfuse_handler)
         logger.debug("Chat agent LLM initialized with Langfuse tracking")
     
-    # Create ChatGroq instance with reasoning model support
-    # For reasoning models like deepseek-r1, use reasoning_format="parsed"
-    is_reasoning_model = "r1" in GROQ_MODEL.lower() or "reasoning" in GROQ_MODEL.lower()
+    openrouter_llm = create_openrouter_llm(
+        model=OPENROUTER_MODEL,
+        temperature=0.7,
+        max_tokens=None,
+        callbacks=callbacks if callbacks else None
+    )
     
-    groq_llm_kwargs = {
-        "model": GROQ_MODEL,
-        "groq_api_key": GROQ_API_KEY,
-        "temperature": 0,  # Use 0 for reasoning models
-        "max_retries": 2,
-        "callbacks": callbacks if callbacks else None
-    }
+    if not openrouter_llm:
+        raise ValueError(
+            "Failed to create OpenRouter LLM. "
+            "Check OPENROUTER_API_KEY configuration."
+        )
     
-    # Add reasoning_format for reasoning models
-    if is_reasoning_model:
-        groq_llm_kwargs["reasoning_format"] = "parsed"
-        groq_llm_kwargs["max_tokens"] = None  # No limit for reasoning
-        groq_llm_kwargs["timeout"] = None  # No timeout for reasoning
-        logger.info(f"🧠 Reasoning model detected: {GROQ_MODEL}")
-    else:
-        groq_llm_kwargs["temperature"] = 0.7  # Balanced creativity for non-reasoning models
+    logger.info(f"🚀 OpenRouter LLM configured: {OPENROUTER_MODEL}")
     
-    groq_llm = ChatGroq(**groq_llm_kwargs)
+    # Create prompt template
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", "{input}"),
+        MessagesPlaceholder(variable_name="agent_scratchpad"),
+    ])
     
-    logger.info(f"🚀 Groq LLM configured: {GROQ_MODEL}")
+    # Create agent using create_openai_tools_agent (direct, no try-except)
+    agent = create_openai_tools_agent(
+        llm=openrouter_llm,
+        tools=bound_tools,
+        prompt=prompt
+    )
     
-    # Note: Deep Agents automatically includes file system tools and context management
-    # We don't need to configure checkpoint here - it's handled via thread_id in invoke_agent
-    # File system tools work automatically with default StateBackend
+    # Create agent executor with proper configuration
+    agent_executor = AgentExecutor(
+        agent=agent,
+        tools=bound_tools,
+        verbose=False,
+        handle_parsing_errors=True,
+        max_iterations=15,
+        max_execution_time=300,
+        return_intermediate_steps=True,
+    )
     
-    try:
-        # Deep Agents create_deep_agent signature:
-        # Try different parameter names based on version
-        # Some versions use 'instructions' instead of 'system_prompt'
-        # Memory is handled via thread_id in invoke_agent
-        try:
-            # Try with system_prompt first (newer versions)
-            agent = create_deep_agent(
-                model=groq_llm,
-                tools=bound_tools,
-                system_prompt=system_prompt
-            )
-        except TypeError:
-            # Fallback: try with instructions (alternative parameter name)
-            try:
-                agent = create_deep_agent(
-                    model=groq_llm,
-                    tools=bound_tools,
-                    instructions=system_prompt
-                )
-            except TypeError:
-                # Fallback: create without system prompt, we'll add it in messages
-                logger.warning("system_prompt/instructions not supported, will add to first message")
-                agent = create_deep_agent(
-                    model=groq_llm,
-                    tools=bound_tools
-                )
-                # Store system prompt to add to first message
-                agent._system_prompt = system_prompt
-        
-        logger.info(f"✅ Chat agent created successfully with {len(bound_tools)} tools using {GROQ_MODEL}")
-        return agent
-        
-    except Exception as e:
-        import traceback
-        logger.error(f"Failed to create chat agent: {str(e)}\n{traceback.format_exc()}")
-        raise
-
+    # Store system prompt for reference
+    agent_executor._system_prompt = system_prompt
+    
+    logger.info(
+        f"✅ Chat agent created successfully with {len(bound_tools)} tools "
+        f"using {OPENROUTER_MODEL}"
+    )
+    return agent_executor
 
 def invoke_agent(
-    agent: Any, 
-    message: str, 
+    agent: AgentExecutor,
+    message: str,
     session_id: Optional[str] = None,
     thread_id: Optional[str] = None,
     cooperative: Optional[str] = None,
@@ -200,80 +232,97 @@ def invoke_agent(
     Invoke the chat agent with a user message.
     
     Args:
-        agent: Deep Agent instance
+        agent: AgentExecutor instance
         message: User's message/query
         session_id: Optional session ID for conversation continuity
-        thread_id: Optional thread ID for LangGraph checkpoint/memory
+        thread_id: Optional thread ID for conversation memory
         cooperative: Optional cooperative ID (for logging)
         user_id: Optional user ID (for logging)
     
     Returns:
-        Agent response with message and metadata
+        Dictionary with:
+        - response: Agent's response text
+        - session_id: Session ID for this conversation
+        - tools_used: List of tool names used
+        - metadata: Additional metadata (model, cooperative)
+        - sources: List of data sources (empty for now)
     """
     try:
-        # Prepare messages for agent
-        messages = []
+        # Generate thread_id if not provided
+        if not thread_id and session_id and user_id:
+            thread_id = generate_thread_id(
+                cooperative or "default",
+                user_id,
+                session_id
+            )
         
-        # Add system prompt if it wasn't set during agent creation
-        if hasattr(agent, '_system_prompt') and agent._system_prompt:
-            messages.append({"role": "system", "content": agent._system_prompt})
+        # Prepare input for agent
+        # AgentExecutor expects a dict with "input" key
+        agent_input = {"input": message}
         
-        # Add user message
-        messages.append({"role": "user", "content": message})
+        # Invoke agent
+        result = agent.invoke(agent_input)
         
-        # Add session context if provided
-        if session_id:
-            # Deep Agents might support session context
-            # For now, we'll pass it in the state
-            pass
+        # Extract response from result
+        response_text = result.get("output", "")
         
-        # Invoke agent with thread_id for conversation memory
-        # Deep Agents uses thread_id for context management via LangGraph checkpoint
-        invoke_config = None
-        if thread_id:
-            # Use thread_id for conversation continuity
-            invoke_config = {"configurable": {"thread_id": thread_id}}
-            logger.debug(f"Using thread_id for conversation memory: {thread_id}")
+        # Fallback: try to extract from intermediate_steps if output is empty
+        if not response_text and "intermediate_steps" in result:
+            for step in reversed(result["intermediate_steps"]):
+                if len(step) >= 2:
+                    observation = step[1]
+                    if isinstance(observation, str) and observation:
+                        response_text = observation
+                        break
         
-        # Invoke agent with memory context
-        if invoke_config:
-            result = agent.invoke({"messages": messages}, config=invoke_config)
-        else:
-            result = agent.invoke({"messages": messages})
+        # Extract tools used from intermediate_steps
+        tools_used = []
+        if "intermediate_steps" in result:
+            for step in result["intermediate_steps"]:
+                if len(step) > 0:
+                    action = step[0]
+                    if hasattr(action, 'tool'):
+                        tool_name = action.tool
+                    elif isinstance(action, dict):
+                        tool_name = action.get('tool', '')
+                    else:
+                        tool_name = str(action)
+                    
+                    if tool_name and tool_name not in tools_used:
+                        tools_used.append(tool_name)
         
-        # Extract response
-        if isinstance(result, dict):
-            # Get the last message from agent
-            agent_messages = result.get("messages", [])
-            if agent_messages:
-                last_message = agent_messages[-1]
-                response_text = last_message.get("content", "") if isinstance(last_message, dict) else str(last_message)
-            else:
-                response_text = str(result)
-            
-            return {
-                "response": response_text,
-                "session_id": session_id,
-                "tools_used": result.get("tools_used", []),
-                "metadata": result.get("metadata", {})
-            }
-        else:
-            # Fallback: convert to string
-            return {
-                "response": str(result),
-                "session_id": session_id,
-                "tools_used": [],
-                "metadata": {}
-            }
-            
+        # Validate response
+        if (not response_text or 
+            response_text.strip().lower() in ["none", "null", "error"] or 
+            len(response_text.strip()) < 10):
+            logger.warning(f"Agent returned empty or invalid response: {response_text}")
+            response_text = (
+                "I'm sorry, I couldn't generate a meaningful response. "
+                "Please try again or rephrase your question."
+            )
+        
+        return {
+            "response": response_text,
+            "session_id": session_id or thread_id,
+            "tools_used": tools_used,
+            "metadata": {
+                "model": OPENROUTER_MODEL,
+                "cooperative": cooperative
+            },
+            "sources": []
+        }
+        
     except Exception as e:
         import traceback
         logger.error(f"Agent invocation failed: {str(e)}\n{traceback.format_exc()}")
         return {
-            "response": f"I encountered an error processing your request. Please try again or rephrase your question.",
+            "response": (
+                "I encountered an error processing your request. "
+                "Please try again or rephrase your question."
+            ),
             "error": str(e),
             "session_id": session_id,
             "tools_used": [],
-            "metadata": {}
+            "metadata": {},
+            "sources": []
         }
-

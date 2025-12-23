@@ -1,8 +1,11 @@
-
 from typing import Optional, List, Dict, Any
 from langchain_core.tools import tool
 from src.database.analysis_search import analysis_searcher
 from src.utils.clean_logger import get_clean_logger
+from src.chatbot.formatter.search_results_formatter import (
+    format_search_results_to_markdown,
+    extract_most_relevant_parts
+)
 import json
 
 logger = get_clean_logger(__name__)
@@ -77,28 +80,21 @@ def search_analysis_tool(
             )
         
         if not results:
-            return f'{{"message": "No results found for query: {query}", "results": [], "query": "{query}"}}'
+            return f"## No Results Found\n\nNo results found for query: {query}"
         
-        # Format results for LLM consumption
-        formatted_results = []
+        # Extract only most relevant parts to save tokens
+        relevant_results = []
         for result in results:
-            formatted_result = {
-                "product": result.get("product", "N/A"),
-                "location": result.get("location", "N/A"),
-                "crop": result.get("crop", "N/A"),
-                "improvement_percent": result.get("improvement_percent", 0.0),
-                "summary": result.get("summary", "")[:200],  # Limit summary length
-                "executive_summary": result.get("executive_summary", "")[:300],
-                "score": result.get("score", 0.0)
-            }
-            formatted_results.append(formatted_result)
+            relevant = extract_most_relevant_parts(result, query)
+            relevant_results.append(relevant)
         
-        import json
-        return json.dumps({
-            "query": query,
-            "total_results": len(formatted_results),
-            "results": formatted_results
-        }, indent=2)
+        # Format as markdown (much more token-efficient than JSON)
+        return format_search_results_to_markdown(
+            results=relevant_results,
+            query=query,
+            max_summary_length=150,
+            max_executive_summary_length=200
+        )
         
     except Exception as e:
         logger.error(f"Search tool error: {str(e)}", exc_info=True)
@@ -141,7 +137,7 @@ def search_by_location_tool(
     """
     Search for analysis reports by location.
     
-    Use this tool when the user asks about demos or results in a specific location.
+    Use this tool when the user asks about demos in a specific location.
     
     Args:
         location: Location name (e.g., "Laguna", "Nueva Ecija")
@@ -161,24 +157,24 @@ def search_by_location_tool(
 
 @tool
 def search_by_crop_tool(
-    crop_type: str,
+    crop: str,
     top_k: int = 5,
     cooperative: str = None
 ) -> str:
     """
     Search for analysis reports by crop type.
     
-    Use this tool when the user asks about specific crops (e.g., rice, corn, vegetables).
+    Use this tool when the user asks about demos for a specific crop.
     
     Args:
-        crop_type: Type of crop (e.g., "rice", "corn", "vegetables")
+        crop: Crop name (e.g., "Rice", "Corn", "Tomato")
         top_k: Number of results to return (default: 5)
         cooperative: Cooperative ID for data isolation (required, passed automatically)
     
     Returns:
         JSON string with crop-specific analysis results
     """
-    query = f"crop: {crop_type}"
+    query = f"crop: {crop}"
     return search_analysis_tool.invoke({
         "query": query,
         "top_k": top_k,
@@ -188,24 +184,24 @@ def search_by_crop_tool(
 
 @tool
 def search_by_cooperator_tool(
-    cooperator_name: str,
+    cooperator: str,
     top_k: int = 5,
     cooperative: str = None
 ) -> str:
     """
     Search for analysis reports by cooperator name.
     
-    Use this tool when the user asks about demos or results from a specific cooperator.
+    Use this tool when the user asks about demos from a specific cooperator.
     
     Args:
-        cooperator_name: Name of the cooperator to search for
+        cooperator: Cooperator name
         top_k: Number of results to return (default: 5)
         cooperative: Cooperative ID for data isolation (required, passed automatically)
     
     Returns:
         JSON string with cooperator-specific analysis results
     """
-    query = f"cooperator: {cooperator_name}"
+    query = f"cooperator: {cooperator}"
     return search_analysis_tool.invoke({
         "query": query,
         "top_k": top_k,
@@ -220,23 +216,19 @@ def search_by_season_tool(
     cooperative: str = None
 ) -> str:
     """
-    Search for analysis reports by season (wet or dry).
+    Search for analysis reports by season.
     
-    Use this tool when the user asks about demos in a specific season.
+    Use this tool when the user asks about demos from a specific season.
     
     Args:
-        season: Season type - "wet" or "dry"
+        season: Season (e.g., "Dry", "Wet", "DS", "WS")
         top_k: Number of results to return (default: 5)
         cooperative: Cooperative ID for data isolation (required, passed automatically)
     
     Returns:
         JSON string with season-specific analysis results
     """
-    season_lower = season.lower().strip()
-    if season_lower not in ["wet", "dry"]:
-        return '{"error": "Season must be either \'wet\' or \'dry\'", "results": []}'
-    
-    query = f"season: {season_lower}"
+    query = f"season: {season}"
     return search_analysis_tool.invoke({
         "query": query,
         "top_k": top_k,
@@ -255,8 +247,8 @@ def search_by_improvement_range_tool(
     Search for analysis reports by improvement percentage range.
     
     Use this tool when the user asks:
-    - "Show me products with >80% improvement"
-    - "Find demos with high performance"
+    - "Show me products with >20% improvement"
+    - "Find demos with high improvement"
     - "What products have low improvement?"
     
     Args:
@@ -266,18 +258,18 @@ def search_by_improvement_range_tool(
         cooperative: Cooperative ID for data isolation (required, passed automatically)
     
     Returns:
-        JSON string with filtered results by improvement range
+        JSON string with improvement-range-filtered results
     """
     if not cooperative:
         return '{"error": "Cooperative ID is required", "results": []}'
     
-    # Build query for improvement range
+    # Build query
     if min_improvement > 0 and max_improvement < 100:
         query = f"improvement between {min_improvement}% and {max_improvement}%"
     elif min_improvement > 0:
-        query = f"improvement greater than {min_improvement}% high performance"
+        query = f"improvement greater than {min_improvement}% high improvement"
     elif max_improvement < 100:
-        query = f"improvement less than {max_improvement}% low performance"
+        query = f"improvement less than {max_improvement}% low improvement"
     else:
         query = "all reports"
     
@@ -296,7 +288,7 @@ def search_by_improvement_range_tool(
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(
                     asyncio.run,
-                    analysis_searcher.search(query, top_k=top_k * 2, cooperative=cooperative)  # Get more to filter
+                    analysis_searcher.search(query, top_k=top_k * 2, cooperative=cooperative)
                 )
                 results = future.result(timeout=30)
         else:
@@ -308,39 +300,29 @@ def search_by_improvement_range_tool(
         filtered_results = []
         for result in results:
             improvement = result.get("improvement_percent", 0.0)
-            if min_improvement <= improvement <= max_improvement:
+            if isinstance(improvement, (int, float)) and min_improvement <= improvement <= max_improvement:
                 filtered_results.append(result)
             if len(filtered_results) >= top_k:
                 break
         
         if not filtered_results:
-            return json.dumps({
-                "query": query,
-                "filter": {"min_improvement": min_improvement, "max_improvement": max_improvement},
-                "message": f"No results found with improvement between {min_improvement}% and {max_improvement}%",
-                "results": []
-            })
+            filter_msg = f"improvement between {min_improvement}% and {max_improvement}%"
+            return f"## No Results Found\n\nNo results found with {filter_msg}"
         
-        # Format results
-        formatted_results = []
+        # Extract only most relevant parts to save tokens
+        relevant_results = []
         for result in filtered_results:
-            formatted_result = {
-                "product": result.get("product", "N/A"),
-                "location": result.get("location", "N/A"),
-                "crop": result.get("crop", "N/A"),
-                "improvement_percent": result.get("improvement_percent", 0.0),
-                "summary": result.get("summary", "")[:200],
-                "executive_summary": result.get("executive_summary", "")[:300],
-                "score": result.get("score", 0.0)
-            }
-            formatted_results.append(formatted_result)
+            relevant = extract_most_relevant_parts(result, query)
+            relevant_results.append(relevant)
         
-        return json.dumps({
-            "query": query,
-            "filter": {"min_improvement": min_improvement, "max_improvement": max_improvement},
-            "total_results": len(formatted_results),
-            "results": formatted_results
-        }, indent=2)
+        # Format as markdown
+        query_with_filter = f"{query} (filter: {min_improvement}%-{max_improvement}% improvement)"
+        return format_search_results_to_markdown(
+            results=relevant_results,
+            query=query_with_filter,
+            max_summary_length=150,
+            max_executive_summary_length=200
+        )
         
     except Exception as e:
         logger.error(f"Search by improvement range error: {str(e)}", exc_info=True)
@@ -358,10 +340,11 @@ def search_by_sentiment_tool(
     
     Use this tool when the user asks:
     - "Show me demos with positive feedback"
-    - "Find reports with negative cooperator feedback"
+    - "Find reports with negative sentiment"
+    - "What demos have neutral feedback?"
     
     Args:
-        sentiment: Sentiment type - "positive", "negative", "neutral", or "mixed"
+        sentiment: Sentiment - "positive", "negative", or "neutral"
         top_k: Number of results to return (default: 5)
         cooperative: Cooperative ID for data isolation (required, passed automatically)
     
@@ -369,12 +352,12 @@ def search_by_sentiment_tool(
         JSON string with sentiment-filtered analysis results
     """
     sentiment_lower = sentiment.lower().strip()
-    valid_sentiments = ["positive", "negative", "neutral", "mixed"]
+    valid_sentiments = ["positive", "negative", "neutral"]
     
     if sentiment_lower not in valid_sentiments:
         return f'{{"error": "Sentiment must be one of: {valid_sentiments}", "results": []}}'
     
-    query = f"cooperator feedback {sentiment_lower} sentiment"
+    query = f"sentiment {sentiment_lower}"
     return search_analysis_tool.invoke({
         "query": query,
         "top_k": top_k,
@@ -391,13 +374,13 @@ def search_by_product_category_tool(
     """
     Search for analysis reports by product category.
     
-    Use this tool when the user asks about specific product types:
-    - "Show me herbicide demos"
-    - "Find foliar fertilizer results"
-    - "What fungicide demos do we have?"
+    Use this tool when the user asks about specific product categories:
+    - "Show me fertilizer demos"
+    - "Find herbicide reports"
+    - "What biostimulant demos do we have?"
     
     Args:
-        category: Product category (e.g., "herbicide", "foliar", "fungicide", "insecticide", "molluscicide", "fertilizer")
+        category: Product category (e.g., "Fertilizer", "Herbicide", "Biostimulant")
         top_k: Number of results to return (default: 5)
         cooperative: Cooperative ID for data isolation (required, passed automatically)
     
@@ -419,22 +402,23 @@ def search_by_performance_significance_tool(
     cooperative: str = None
 ) -> str:
     """
-    Search for analysis reports by performance significance level.
+    Search for analysis reports by performance significance.
     
     Use this tool when the user asks:
-    - "Show me highly significant results"
-    - "Find demos with significant improvement"
+    - "Show me statistically significant results"
+    - "Find demos with high significance"
+    - "What demos have low significance?"
     
     Args:
-        significance: Significance level - "highly_significant", "significant", "moderate", or "marginal"
+        significance: Significance level - "high", "medium", or "low"
         top_k: Number of results to return (default: 5)
         cooperative: Cooperative ID for data isolation (required, passed automatically)
     
     Returns:
         JSON string with significance-filtered analysis results
     """
-    significance_lower = significance.lower().strip().replace(" ", "_")
-    valid_levels = ["highly_significant", "significant", "moderate", "marginal"]
+    significance_lower = significance.lower().strip()
+    valid_levels = ["high", "medium", "low"]
     
     if significance_lower not in valid_levels:
         return f'{{"error": "Significance must be one of: {valid_levels}", "results": []}}'
@@ -445,6 +429,54 @@ def search_by_performance_significance_tool(
         "top_k": top_k,
         "cooperative": cooperative
     })
+
+
+@tool
+def search_by_applicant_tool(
+    applicant_name: str,
+    top_k: int = 5,
+    cooperative: str = None
+) -> str:
+    """
+    Search for analysis reports by applicant name.
+    
+    Use this tool when the user asks about demos or results from a specific applicant.
+    
+    Args:
+        applicant_name: Name of the applicant to search for
+        top_k: Number of results to return (default: 5)
+        cooperative: Cooperative ID for data isolation (required, passed automatically)
+    
+    Returns:
+        JSON string with applicant-specific analysis results
+    """
+    query = f"applicant: {applicant_name}"
+    return search_analysis_tool.invoke({
+        "query": query,
+        "top_k": top_k,
+        "cooperative": cooperative
+    })
+
+
+# Import advanced search tools from separate file
+from src.chatbot.tools.search_tools_advanced import (
+    search_by_form_type_tool,
+    search_by_date_range_tool,
+    search_by_metric_type_tool,
+    search_by_confidence_level_tool,
+    search_by_data_quality_tool,
+    search_by_control_product_tool,
+    search_by_speed_of_action_tool,
+    search_by_yield_status_tool,
+    search_by_yield_improvement_range_tool,
+    search_by_measurement_intervals_tool,
+    search_by_metrics_detected_tool,
+    search_by_risk_factors_tool,
+    search_by_opportunities_tool,
+    search_by_recommendations_tool,
+    search_by_key_observation_tool,
+    search_by_scale_info_tool
+)
 
 
 # Helper function to get all search tools with cooperative context
@@ -468,6 +500,23 @@ def get_search_tools(cooperative: str) -> List:
         search_by_improvement_range_tool,
         search_by_sentiment_tool,
         search_by_product_category_tool,
-        search_by_performance_significance_tool
+        search_by_performance_significance_tool,
+        # Newly added search tools
+        search_by_applicant_tool,
+        search_by_form_type_tool,
+        search_by_date_range_tool,
+        search_by_metric_type_tool,
+        search_by_confidence_level_tool,
+        search_by_data_quality_tool,
+        search_by_control_product_tool,
+        search_by_speed_of_action_tool,
+        search_by_yield_status_tool,
+        search_by_yield_improvement_range_tool,
+        search_by_measurement_intervals_tool,
+        search_by_metrics_detected_tool,
+        search_by_risk_factors_tool,
+        search_by_opportunities_tool,
+        search_by_recommendations_tool,
+        search_by_key_observation_tool,
+        search_by_scale_info_tool
     ]
-

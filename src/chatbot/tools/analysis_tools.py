@@ -8,6 +8,7 @@ from src.database.list_reports import report_lister
 from src.utils.clean_logger import get_clean_logger
 from src.utils.llm_helper import ainvoke_llm
 from src.utils.config import GEMINI_MODEL
+from src.chatbot.formatter.search_results_formatter import format_results_for_summary_tool
 import json
 import asyncio
 
@@ -152,12 +153,34 @@ def compare_products_tool(
                 best_avg = data.get("average_improvement", 0)
                 best_product = product
         
-        return json.dumps({
-            "products_compared": products,
-            "comparison": comparison_data,
-            "best_performing": best_product if best_product else None,
-            "best_average_improvement": round(best_avg, 2) if best_product else None
-        }, indent=2)
+        # Return as markdown (token-efficient)
+        markdown_lines = []
+        markdown_lines.append(f"## Product Comparison\n")
+        markdown_lines.append(f"**Products Compared:** {', '.join(products)}\n")
+        
+        if best_product:
+            markdown_lines.append(f"**Best Performing:** {best_product} ({round(best_avg, 2)}% average improvement)\n")
+        
+        for product, data in comparison_data.items():
+            markdown_lines.append(f"\n### {product}")
+            if not data.get("found"):
+                markdown_lines.append(f"- {data.get('message', 'No data found')}")
+                continue
+            
+            markdown_lines.append(f"- **Total Demos:** {data.get('total_demos', 0)}")
+            markdown_lines.append(f"- **Average Improvement:** {data.get('average_improvement', 0):.1f}%")
+            markdown_lines.append(f"- **Max Improvement:** {data.get('max_improvement', 0):.1f}%")
+            markdown_lines.append(f"- **Min Improvement:** {data.get('min_improvement', 0):.1f}%")
+            
+            locations = data.get("locations", [])
+            if locations:
+                markdown_lines.append(f"- **Locations:** {', '.join(locations[:5])}")
+            
+            crops = data.get("crops", [])
+            if crops:
+                markdown_lines.append(f"- **Crops:** {', '.join(crops[:5])}")
+        
+        return "\n".join(markdown_lines)
         
     except Exception as e:
         logger.error(f"Compare products tool error: {str(e)}", exc_info=True)
@@ -281,19 +304,15 @@ def generate_summary_tool(
         
         # Aggregate summaries
         if executive_summaries:
-            # Use LLM to synthesize multiple executive summaries
-            summaries_text = "\n\n".join([
-                f"Product: {s['product']}, Location: {s['location']}\n{s['summary']}"
-                for s in executive_summaries
-            ])
+            # Format results as markdown for LLM (token-efficient)
+            summaries_markdown = format_results_for_summary_tool(results, query)
             
             prompt = f"""You are an agricultural data analyst. Synthesize the following executive summaries from multiple demo reports into:
 1. A concise overall summary (2-3 sentences)
 2. Key insights (3-5 bullet points)
 3. Top recommendations (3-5 actionable items)
 
-Executive Summaries:
-{summaries_text}
+{summaries_markdown}
 
 Provide your response in JSON format:
 {{
@@ -330,15 +349,39 @@ Provide your response in JSON format:
                         if rec and rec not in final_recommendations:
                             final_recommendations.append(rec)
                 
-                return json.dumps({
-                    "query": query,
-                    "data_points_analyzed": len(results),
-                    "summary": summary_data.get("summary", "Summary synthesis failed"),
-                    "insights": summary_data.get("insights", insights[:5]),
-                    "recommendations": final_recommendations[:5],
-                    "risk_factors": list(set(all_risk_factors))[:3],
-                    "opportunities": list(set(all_opportunities))[:3]
-                }, indent=2)
+                # Return as markdown (token-efficient)
+                markdown_lines = []
+                markdown_lines.append(f"## Summary: {query}\n")
+                markdown_lines.append(f"**Data Points Analyzed:** {len(results)}\n")
+                markdown_lines.append(f"### Overall Summary\n{summary_data.get('summary', 'Summary synthesis failed')}\n")
+                
+                insights_list = summary_data.get("insights", insights[:5])
+                if insights_list:
+                    markdown_lines.append("### Key Insights")
+                    for insight in insights_list:
+                        markdown_lines.append(f"- {insight}")
+                    markdown_lines.append("")
+                
+                if final_recommendations:
+                    markdown_lines.append("### Recommendations")
+                    for rec in final_recommendations[:5]:
+                        markdown_lines.append(f"- {rec}")
+                    markdown_lines.append("")
+                
+                risk_factors_list = list(set(all_risk_factors))[:3]
+                if risk_factors_list:
+                    markdown_lines.append("### Risk Factors")
+                    for risk in risk_factors_list:
+                        markdown_lines.append(f"- {risk}")
+                    markdown_lines.append("")
+                
+                opportunities_list = list(set(all_opportunities))[:3]
+                if opportunities_list:
+                    markdown_lines.append("### Opportunities")
+                    for opp in opportunities_list:
+                        markdown_lines.append(f"- {opp}")
+                
+                return "\n".join(markdown_lines)
                 
             except Exception as llm_error:
                 logger.warning(f"LLM synthesis failed, using aggregated summaries: {str(llm_error)}")
@@ -480,22 +523,24 @@ def get_trends_tool(
             elif second_half_avg < first_half_avg * 0.9:
                 trend_direction = "declining"
         
-        return json.dumps({
-            "query": query,
-            "total_data_points": len(reports),
-            "trends": {
-                "average_improvement": round(avg_improvement, 2),
-                "max_improvement": round(max_improvement, 2),
-                "min_improvement": round(min_improvement, 2),
-                "trend_direction": trend_direction,
-                "data_points": len(improvements)
-            },
-            "filter_applied": {
-                "product": product_name or "all",
-                "location": location or "all",
-                "crop": crop or "all"
-            }
-        }, indent=2)
+        # Return as markdown (token-efficient)
+        markdown_lines = []
+        markdown_lines.append(f"## Trend Analysis\n")
+        markdown_lines.append(f"**Query:** {query}")
+        markdown_lines.append(f"**Data Points:** {len(improvements)} from {len(reports)} reports\n")
+        
+        markdown_lines.append("### Performance Metrics")
+        markdown_lines.append(f"- **Average Improvement:** {round(avg_improvement, 2)}%")
+        markdown_lines.append(f"- **Max Improvement:** {round(max_improvement, 2)}%")
+        markdown_lines.append(f"- **Min Improvement:** {round(min_improvement, 2)}%")
+        markdown_lines.append(f"- **Trend Direction:** {trend_direction}\n")
+        
+        markdown_lines.append("### Filters Applied")
+        markdown_lines.append(f"- **Product:** {product_name or 'all'}")
+        markdown_lines.append(f"- **Location:** {location or 'all'}")
+        markdown_lines.append(f"- **Crop:** {crop or 'all'}")
+        
+        return "\n".join(markdown_lines)
         
     except Exception as e:
         logger.error(f"Get trends tool error: {str(e)}", exc_info=True)

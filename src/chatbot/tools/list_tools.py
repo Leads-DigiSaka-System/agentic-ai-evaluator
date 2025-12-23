@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Any
 from langchain_core.tools import tool
 from src.database.list_reports import report_lister
 from src.utils.clean_logger import get_clean_logger
+from src.chatbot.formatter.search_results_formatter import format_search_results_to_markdown
 import json
 
 logger = get_clean_logger(__name__)
@@ -68,7 +69,7 @@ def list_reports_tool(
             )
         
         if not result or "reports" not in result:
-            return '{"message": "No reports found", "reports": [], "total": 0}'
+            return "## No Reports Found\n\nNo reports available in the system."
         
         reports = result.get("reports", [])
         total = result.get("total", len(reports))
@@ -76,27 +77,26 @@ def list_reports_tool(
         # Limit results
         limited_reports = reports[:limit]
         
-        # Format reports for LLM consumption (simplified)
-        formatted_reports = []
-        for report in limited_reports:
-            formatted_report = {
-                "id": report.get("id", ""),
-                "report_number": report.get("report_number", 0),
-                "product": report.get("product", "N/A"),
-                "location": report.get("location", "N/A"),
-                "crop": report.get("crop", "N/A"),
-                "improvement_percent": report.get("improvement_percent", 0.0),
-                "insertion_date": report.get("insertion_date", ""),
-                "form_type": report.get("form_type", "")
-            }
-            formatted_reports.append(formatted_report)
+        # Format as markdown (token-efficient)
+        # Only include essential fields
+        markdown_lines = []
+        markdown_lines.append(f"## Reports List\n")
+        markdown_lines.append(f"**Total Reports:** {total} | **Showing:** {len(limited_reports)}\n")
         
-        return json.dumps({
-            "total": total,
-            "returned": len(formatted_reports),
-            "limit": limit,
-            "reports": formatted_reports
-        }, indent=2)
+        for idx, report in enumerate(limited_reports, 1):
+            markdown_lines.append(f"\n### Report {idx}")
+            markdown_lines.append(f"- **Product:** {report.get('product', 'N/A')}")
+            markdown_lines.append(f"- **Location:** {report.get('location', 'N/A')}")
+            markdown_lines.append(f"- **Crop:** {report.get('crop', 'N/A')}")
+            
+            improvement = report.get("improvement_percent")
+            if improvement is not None:
+                markdown_lines.append(f"- **Improvement:** {improvement:.1f}%")
+            
+            if report.get("insertion_date"):
+                markdown_lines.append(f"- **Date:** {report.get('insertion_date')}")
+        
+        return "\n".join(markdown_lines)
         
     except Exception as e:
         logger.error(f"List reports tool error: {str(e)}", exc_info=True)
@@ -154,20 +154,35 @@ def get_stats_tool(
             )
         
         if not stats:
-            return '{"error": "Failed to get statistics"}'
+            return "## Error\n\nFailed to get statistics."
         
-        # Format stats for LLM consumption
-        formatted_stats = {
-            "total_reports": stats.get("total_reports", 0),
-            "unique_products": stats.get("unique_products", 0),
-            "unique_locations": stats.get("unique_locations", 0),
-            "unique_crops": stats.get("unique_crops", 0),
-            "products": stats.get("products", []),
-            "locations": stats.get("locations", []),
-            "crops": stats.get("crops", [])
-        }
+        # Format stats as markdown (token-efficient)
+        markdown_lines = []
+        markdown_lines.append("## Collection Statistics\n")
+        markdown_lines.append(f"- **Total Reports:** {stats.get('total_reports', 0)}")
+        markdown_lines.append(f"- **Unique Products:** {stats.get('unique_products', 0)}")
+        markdown_lines.append(f"- **Unique Locations:** {stats.get('unique_locations', 0)}")
+        markdown_lines.append(f"- **Unique Crops:** {stats.get('unique_crops', 0)}")
         
-        return json.dumps(formatted_stats, indent=2)
+        products = stats.get("products", [])
+        if products:
+            markdown_lines.append(f"\n### Products ({len(products)}):")
+            for product in products[:10]:  # Limit to 10
+                markdown_lines.append(f"- {product}")
+        
+        locations = stats.get("locations", [])
+        if locations:
+            markdown_lines.append(f"\n### Locations ({len(locations)}):")
+            for location in locations[:10]:  # Limit to 10
+                markdown_lines.append(f"- {location}")
+        
+        crops = stats.get("crops", [])
+        if crops:
+            markdown_lines.append(f"\n### Crops ({len(crops)}):")
+            for crop in crops[:10]:  # Limit to 10
+                markdown_lines.append(f"- {crop}")
+        
+        return "\n".join(markdown_lines)
         
     except Exception as e:
         logger.error(f"Get stats tool error: {str(e)}", exc_info=True)
