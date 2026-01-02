@@ -1,7 +1,3 @@
-"""
-OpenRouter helper for LLM integration
-Supports free Llama 3.3 70B Instruct model via OpenRouter API
-"""
 from typing import Optional, List, Dict, Any
 from openai import OpenAI
 from src.utils.clean_logger import get_clean_logger

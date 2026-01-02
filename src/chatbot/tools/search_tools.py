@@ -15,28 +15,39 @@ logger = get_clean_logger(__name__)
 def search_analysis_tool(
     query: str,
     top_k: int = 5,
-    cooperative: str = None
+    cooperative: str = None,
+    applicant: str = None,
+    location: str = None
 ) -> str:
     """
-    Search for agricultural analysis reports using natural language query.
+    CRITICAL: Use this tool to search the database for agricultural analysis reports.
     
-    Use this tool when the user asks about:
+    YOU MUST USE THIS TOOL when the user asks about:
+    - Trials, demos, or reports in any location (e.g., "May trials ba tayo sa Zambales?")
     - Products, crops, locations, or demo results
     - Performance data, improvement percentages
     - Analysis reports or findings
+    - Any question about agricultural data
+    
+    This tool searches the vector database and returns real data. Without calling this tool, you have NO ACCESS to the database.
     
     Args:
-        query: Natural language search query (e.g., "rice fertilizer demos", "best performing products")
+        query: Natural language search query (e.g., "trials in Zambales", "rice fertilizer demos", "best performing products")
         top_k: Number of results to return (default: 5, max: 100)
-        cooperative: Cooperative ID for data isolation (required, passed automatically)
+        cooperative: Cooperative ID for data isolation (required, passed automatically - DO NOT include in query)
+        applicant: Optional applicant name filter
+        location: Optional location name filter
     
     Returns:
-        JSON string with search results including product names, locations, improvement percentages, and summaries
+        Formatted markdown string with search results including product names, locations, improvement percentages, and summaries
     
     Example queries:
-        - "Show me rice fertilizer demos"
-        - "What products have high improvement?"
-        - "Find corn demos in Laguna"
+        - "trials in Zambales" → query="trials in Zambales"
+        - "Show me rice fertilizer demos" → query="rice fertilizer demos"
+        - "What products have high improvement?" → query="products with high improvement"
+        - "Find corn demos in Laguna" → query="corn demos in Laguna"
+    
+    IMPORTANT: Cooperative filtering is automatic - you don't need to include "cooperative" in the query.
     """
     try:
         if not query or not query.strip():
@@ -70,13 +81,13 @@ def search_analysis_tool(
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(
                     asyncio.run,
-                    analysis_searcher.search(query, top_k=top_k, cooperative=cooperative)
+                    analysis_searcher.search(query, top_k=top_k, cooperative=cooperative, applicant=applicant, location=location)
                 )
                 results = future.result(timeout=30)
         else:
             # Run in existing loop
             results = loop.run_until_complete(
-                analysis_searcher.search(query, top_k=top_k, cooperative=cooperative)
+                analysis_searcher.search(query, top_k=top_k, cooperative=cooperative, applicant=applicant, location=location)
             )
         
         if not results:
@@ -131,27 +142,33 @@ def search_by_product_tool(
 @tool
 def search_by_location_tool(
     location: str,
-    top_k: int = 5,
+    top_k: int = 10,  # Increased for better matching
     cooperative: str = None
 ) -> str:
     """
     Search for analysis reports by location.
     
     Use this tool when the user asks about demos in a specific location.
+    Handles partial matches (e.g., "Zambales" will match "PI, DIRITA, IBA, ZAMBALES").
     
     Args:
-        location: Location name (e.g., "Laguna", "Nueva Ecija")
-        top_k: Number of results to return (default: 5)
+        location: Location name (e.g., "Laguna", "Nueva Ecija", "Zambales")
+        top_k: Number of results to return (default: 10, increased for better matching)
         cooperative: Cooperative ID for data isolation (required, passed automatically)
     
     Returns:
         JSON string with location-specific analysis results
     """
-    query = f"location: {location}"
+    # Use location name directly for better semantic matching
+    # Remove "location:" prefix - just use the location name
+    # The search will match locations that contain this name (e.g., "Zambales" in "PI, DIRITA, IBA, ZAMBALES")
+    query = location.strip()
+    
     return search_analysis_tool.invoke({
         "query": query,
         "top_k": top_k,
-        "cooperative": cooperative
+        "cooperative": cooperative,
+        "location": query  # Pass location for post-filtering
     })
 
 
@@ -434,27 +451,38 @@ def search_by_performance_significance_tool(
 @tool
 def search_by_applicant_tool(
     applicant_name: str,
-    top_k: int = 5,
+    top_k: int = 10,  # Increased to get more results for filtering
     cooperative: str = None
 ) -> str:
     """
     Search for analysis reports by applicant name.
     
     Use this tool when the user asks about demos or results from a specific applicant.
+    Uses exact matching at database level for accurate results.
     
     Args:
-        applicant_name: Name of the applicant to search for
-        top_k: Number of results to return (default: 5)
+        applicant_name: Name of the applicant to search for (e.g., "JOEL AMOS O. MOLINA")
+        top_k: Number of results to return (default: 10, increased for better matching)
         cooperative: Cooperative ID for data isolation (required, passed automatically)
     
     Returns:
         JSON string with applicant-specific analysis results
     """
-    query = f"applicant: {applicant_name}"
+    # Clean the applicant name - remove extra spaces, normalize
+    applicant_clean = " ".join(applicant_name.split())
+    
+    # Use the name directly for semantic search
+    # The applicant filter will be applied at Qdrant level for exact matching
+    query = applicant_clean
+    
+    # Call search_analysis_tool with applicant parameter
+    # We need to modify search_analysis_tool to accept applicant parameter
+    # For now, use the query with applicant name
     return search_analysis_tool.invoke({
         "query": query,
         "top_k": top_k,
-        "cooperative": cooperative
+        "cooperative": cooperative,
+        "applicant": applicant_clean  # Pass applicant for exact matching
     })
 
 

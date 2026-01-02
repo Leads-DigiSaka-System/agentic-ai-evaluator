@@ -110,7 +110,7 @@ class QdrantDenseRetriever(BaseRetriever):
     
     # ✅ ONLY NEW LINE - ADD THIS DECORATOR
     @observe_operation(name="dense_vector_retrieval", capture_input=True, capture_output=True)
-    def _get_relevant_documents(self, query: str, cooperative: Optional[str] = None, limit: Optional[int] = None) -> List[Document]:
+    def _get_relevant_documents(self, query: str, cooperative: Optional[str] = None, applicant: Optional[str] = None, location: Optional[str] = None, limit: Optional[int] = None) -> List[Document]:
         """
         Retrieve documents using dense vector search with optional cooperative filtering.
         Same cooperative can see all data within that cooperative.
@@ -151,20 +151,42 @@ class QdrantDenseRetriever(BaseRetriever):
             # ✅ SECURITY FIX: Build Qdrant filter at database level for cooperative isolation
             # This ensures data security and better performance
             # Same cooperative can see all data within that cooperative
+            # Also support applicant filtering for exact name matching
             query_filter = None
+            filter_conditions = []
+            
             if cooperative:
-                query_filter = models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="cooperative",
-                            match=models.MatchValue(value=cooperative)
-                        )
-                    ]
+                filter_conditions.append(
+                    models.FieldCondition(
+                        key="cooperative",
+                        match=models.MatchValue(value=cooperative)
+                    )
                 )
                 self.logger.debug(f"Applying cooperative filter at database level: cooperative={cooperative}")
             
+            # ✅ Add applicant and location filters - but use semantic search + post-filtering for better flexibility
+            # Qdrant filters are case-sensitive, so we'll do semantic search first
+            # and filter by applicant/location in code for case-insensitive matching
+            # Store filters for post-filtering
+            applicant_for_filtering = None
+            location_for_filtering = None
+            
+            if applicant:
+                applicant_for_filtering = applicant.strip().lower()  # Normalize for case-insensitive matching
+                self.logger.debug(f"Will filter by applicant in post-processing: {applicant_for_filtering}")
+            
+            if location:
+                location_for_filtering = location.strip().lower()  # Normalize for case-insensitive matching
+                self.logger.debug(f"Will filter by location in post-processing: {location_for_filtering}")
+            
+            if filter_conditions:
+                query_filter = models.Filter(must=filter_conditions)
+            
             # ✅ Use provided limit or fallback to instance limit
-            search_limit = limit if limit is not None else self.search_limit
+            # If filtering by applicant or location, increase limit to get more candidates for post-filtering
+            base_limit = limit if limit is not None else self.search_limit
+            has_filter = applicant_for_filtering or location_for_filtering
+            search_limit = base_limit * 5 if has_filter else base_limit  # Get 5x more if filtering
             
             # ✅ Search with database-level filtering for security and performance
             search_results = self.client.search(
@@ -186,9 +208,109 @@ class QdrantDenseRetriever(BaseRetriever):
             
             # ORIGINAL CODE: Convert to LangChain Document format
             documents = []
+            exact_matches = []  # Store exact matches separately to boost them
+            
             for result in search_results:
                 # Extract user_id from payload for filtering
                 payload = result.payload or {}
+                
+                # ✅ Post-filter by applicant or location if specified (case-insensitive with fuzzy matching)
+                import re
+                def normalize_name(name):
+                    return re.sub(r'[^\w\s]', '', name.lower().strip())
+                
+                applicant_match = False
+                location_match = False
+                boost_amount = 0.0
+                match_flags = {}
+                
+                # Check applicant filter
+                if applicant_for_filtering:
+                    applicant_in_doc = payload.get("applicant", "").strip().lower()
+                    applicant_query_norm = normalize_name(applicant_for_filtering)
+                    applicant_doc_norm = normalize_name(applicant_in_doc)
+                    
+                    # Exact match after normalization
+                    if applicant_query_norm == applicant_doc_norm:
+                        applicant_match = True
+                        boost_amount = max(boost_amount, 0.2)  # Higher boost for exact
+                        match_flags["exact_applicant_match"] = True
+                    else:
+                        # Fuzzy match: check if all words match
+                        query_words = set(applicant_query_norm.split())
+                        doc_words = set(applicant_doc_norm.split())
+                        if len(query_words) > 0:
+                            match_ratio = len(query_words.intersection(doc_words)) / len(query_words)
+                            if match_ratio >= 0.8:  # 80%+ words match
+                                applicant_match = True
+                                boost_amount = max(boost_amount, 0.1)  # Smaller boost for fuzzy
+                                match_flags["fuzzy_applicant_match"] = True
+                
+                # Check location filter
+                if location_for_filtering:
+                    location_in_doc = payload.get("location", "").strip().lower()
+                    location_query_norm = normalize_name(location_for_filtering)
+                    location_doc_norm = normalize_name(location_in_doc)
+                    
+                    # Substring match (handles "Zambales" in "PI, DIRITA, IBA, ZAMBALES")
+                    if location_query_norm in location_doc_norm or location_doc_norm in location_query_norm:
+                        location_match = True
+                        boost_amount = max(boost_amount, 0.2)  # Higher boost for substring match
+                        match_flags["location_match"] = True
+                    else:
+                        # Word-level matching
+                        location_query_words = set(location_query_norm.split())
+                        location_doc_words = set(location_doc_norm.split())
+                        if len(location_query_words) > 0:
+                            match_ratio = len(location_query_words.intersection(location_doc_words)) / len(location_query_words)
+                            if match_ratio >= 0.7:  # 70%+ words match
+                                location_match = True
+                                boost_amount = max(boost_amount, 0.1)  # Smaller boost for fuzzy
+                                match_flags["location_fuzzy_match"] = True
+                
+                # Determine if we should include this document
+                # If both filters specified, both must match
+                # If only one filter specified, that one must match
+                if applicant_for_filtering and location_for_filtering:
+                    # Both filters - both must match
+                    if not (applicant_match and location_match):
+                        self.logger.debug(
+                            f"Skipping document - filter mismatch: "
+                            f"applicant_match={applicant_match}, location_match={location_match}"
+                        )
+                        continue
+                elif applicant_for_filtering:
+                    # Only applicant filter - must match
+                    if not applicant_match:
+                        self.logger.debug(
+                            f"Skipping document - applicant mismatch: "
+                            f"'{payload.get('applicant', '')}' != '{applicant_for_filtering}'"
+                        )
+                        continue
+                elif location_for_filtering:
+                    # Only location filter - must match
+                    if not location_match:
+                        self.logger.debug(
+                            f"Skipping document - location mismatch: "
+                            f"'{payload.get('location', '')}' doesn't contain '{location_for_filtering}'"
+                        )
+                        continue
+                
+                # If we have matches, add to exact_matches with boost
+                if boost_amount > 0:
+                    doc = Document(
+                        page_content=payload.get("summary_text", ""),
+                        metadata={
+                            **payload,
+                            "score": min(1.0, result.score + boost_amount),
+                            "id": result.id,
+                            **match_flags
+                        }
+                    )
+                    exact_matches.append(doc)
+                    continue
+                
+                # No applicant filter - add all documents
                 doc = Document(
                     page_content=payload.get("summary_text", ""),
                     metadata={
@@ -198,6 +320,9 @@ class QdrantDenseRetriever(BaseRetriever):
                     }
                 )
                 documents.append(doc)
+            
+            # Put exact matches first, then other documents
+            documents = exact_matches + documents
             
             # ORIGINAL CODE: Log and return
             self.logger.db_query("dense search", f"query: '{query[:50]}...'", len(documents))
@@ -210,7 +335,7 @@ class QdrantDenseRetriever(BaseRetriever):
             self.logger.db_error("dense search", str(e))
             raise
     
-    async def _aget_relevant_documents(self, query: str, cooperative: Optional[str] = None, limit: Optional[int] = None) -> List[Document]:
+    async def _aget_relevant_documents(self, query: str, cooperative: Optional[str] = None, applicant: Optional[str] = None, location: Optional[str] = None, limit: Optional[int] = None) -> List[Document]:
         """
         Async version of _get_relevant_documents.
         
@@ -229,7 +354,7 @@ class QdrantDenseRetriever(BaseRetriever):
         loop = asyncio.get_event_loop()
         # Run blocking operations (encoding + Qdrant search) in thread pool
         # ✅ Pass limit as parameter to avoid race conditions with shared state
-        return await loop.run_in_executor(None, self._get_relevant_documents, query, cooperative, limit)
+        return await loop.run_in_executor(None, self._get_relevant_documents, query, cooperative, applicant, location, limit)
     
     def __repr__(self) -> str:
         return (f"QdrantDenseRetriever(collection='{self.collection_name}', "

@@ -58,7 +58,7 @@ class AnalysisHybridSearch:
             raise
     
     @observe_operation(name="analysis_hybrid_search")
-    async def search(self, query: str, top_k: int = 5, cooperative: str = None) -> List[Dict[str, Any]]:
+    async def search(self, query: str, top_k: int = 5, cooperative: str = None, applicant: str = None, location: str = None) -> List[Dict[str, Any]]:
         """
         Search for relevant analysis documents with cooperative filtering for data isolation.
         Same cooperative can see all data within that cooperative.
@@ -103,6 +103,8 @@ class AnalysisHybridSearch:
             documents = await self.dense_retriever._aget_relevant_documents(
                 query, 
                 cooperative=cooperative,
+                applicant=applicant,  # ✅ Add applicant filter support
+                location=location,  # ✅ Add location filter support
                 limit=top_k  # ✅ Pass limit as parameter - thread-safe!
             )
             
@@ -115,17 +117,24 @@ class AnalysisHybridSearch:
             })
             
             # ✅ Filter documents by score threshold (adaptive)
+            # Check if we have exact filter (applicant, location) for adaptive threshold
+            has_exact_filter = applicant is not None or location is not None
+            
             try:
-                # Try strict threshold first (0.75)
-                filtered_documents = self._filter_relevant_documents(documents, query, strict=True)
+                # Try strict threshold first (adaptive based on query type)
+                filtered_documents = self._filter_relevant_documents(
+                    documents, query, strict=True, has_exact_filter=has_exact_filter
+                )
                 
-                # If no results with strict threshold, try more lenient (0.65)
+                # If no results with strict threshold, try more lenient
                 if len(filtered_documents) == 0 and len(documents) > 0:
                     self.logger.info(
-                        f"No results with strict threshold (0.75), trying lenient threshold (0.65) "
+                        f"No results with strict threshold, trying lenient threshold "
                         f"for query: '{query[:50]}...'"
                     )
-                    filtered_documents = self._filter_relevant_documents(documents, query, strict=False)
+                    filtered_documents = self._filter_relevant_documents(
+                        documents, query, strict=False, has_exact_filter=has_exact_filter
+                    )
             except Exception as filter_error:
                 self.logger.db_error("filter documents", str(filter_error))
                 # If filtering fails, use original documents (fallback)
@@ -185,16 +194,30 @@ class AnalysisHybridSearch:
             "product": doc.metadata.get("product", "").lower(),
             "location": doc.metadata.get("location", "").lower(),
             "crop": doc.metadata.get("crop", "").lower(),
+            "applicant": doc.metadata.get("applicant", "").lower(),
         }
         
-        # Check for exact match (case-insensitive)
+        # Check for exact match or substring match (case-insensitive)
+        # This handles "Zambales" matching "PI, DIRITA, IBA, ZAMBALES"
         for field_name, field_value in searchable_fields.items():
-            if query_lower in field_value or field_value in query_lower:
-                # Boost score for exact match
-                boost = 0.15  # Add 0.15 to score for exact match
+            # Exact match
+            if query_lower == field_value:
+                boost = 0.20  # Higher boost for exact match
                 boosted_score = min(1.0, original_score + boost)
                 self.logger.debug(
                     f"Exact match found in {field_name}: '{query_lower}' -> "
+                    f"score boosted from {original_score:.3f} to {boosted_score:.3f}"
+                )
+                return boosted_score
+            
+            # Substring match (query in field or field in query)
+            # This is important for locations like "Zambales" in "PI, DIRITA, IBA, ZAMBALES"
+            if query_lower in field_value or field_value in query_lower:
+                # Boost score for substring match
+                boost = 0.15  # Add 0.15 to score for substring match
+                boosted_score = min(1.0, original_score + boost)
+                self.logger.debug(
+                    f"Substring match found in {field_name}: '{query_lower}' in '{field_value[:50]}...' -> "
                     f"score boosted from {original_score:.3f} to {boosted_score:.3f}"
                 )
                 return boosted_score
@@ -217,19 +240,70 @@ class AnalysisHybridSearch:
         
         return original_score
     
-    def _filter_relevant_documents(self, documents: List[Document], query: str, strict: bool = True) -> List[Document]:
+    def _is_name_query(self, query: str) -> bool:
         """
-        Filter documents based on score threshold.
+        Detect if query is likely a name search (applicant, location, etc.).
         
-        Since we're using RAG with embedding models, the semantic similarity
-        is already handled by the embedding model. We only need to filter by
-        similarity score threshold to ensure only highly relevant results
-        are returned.
+        Args:
+            query: Search query string
+            
+        Returns:
+            True if query looks like a name search
+        """
+        query_lower = query.lower().strip()
+        
+        # Check for name-like patterns (multiple capitalized words, common name patterns)
+        name_indicators = [
+            len(query.split()) >= 2,  # Multiple words
+            any(word[0].isupper() for word in query.split() if word),  # Has capitals
+            not any(keyword in query_lower for keyword in ['improvement', 'performance', 'analysis', 'demo', 'trial'])  # Not semantic query
+        ]
+        
+        return all(name_indicators)
+    
+    def _get_adaptive_threshold(self, query: str, has_exact_filter: bool = False) -> float:
+        """
+        Get adaptive score threshold based on search type.
+        
+        - Exact filters (applicant, location): Lower threshold (0.5) - names need exact matching
+        - Name queries: Medium threshold (0.6) - semantic similarity less reliable
+        - Semantic queries: Standard threshold (0.75) - meaning-based matching
+        
+        Args:
+            query: Search query string
+            has_exact_filter: True if filtering by exact field (applicant, location)
+            
+        Returns:
+            Adaptive threshold value (0.0-1.0)
+        """
+        if has_exact_filter:
+            # Exact field filtering - lower threshold since we're already filtering
+            return 0.5
+        
+        if self._is_name_query(query):
+            # Name queries - medium threshold
+            return 0.6
+        
+        # Default semantic search threshold
+        try:
+            return constants.MIN_SEARCH_SCORE_THRESHOLD
+        except AttributeError:
+            return 0.75
+    
+    def _filter_relevant_documents(self, documents: List[Document], query: str, strict: bool = True, has_exact_filter: bool = False) -> List[Document]:
+        """
+        Filter documents based on adaptive score threshold.
+        
+        Uses adaptive thresholds based on search type:
+        - Exact matches: Lower threshold (0.5)
+        - Name queries: Medium threshold (0.6)
+        - Semantic queries: Standard threshold (0.75)
         
         Args:
             documents: List of Document objects from retriever
             query: Original search query (for logging purposes)
-            strict: If True, use strict threshold (0.8), else use lenient (0.6)
+            strict: If True, use strict threshold, else use lenient
+            has_exact_filter: True if filtering by exact field (applicant, location)
             
         Returns:
             Filtered list of documents that meet the score threshold
@@ -237,18 +311,17 @@ class AnalysisHybridSearch:
         if not documents:
             return []
         
-        try:
-            if strict:
-                # Get minimum score threshold (0.75 = production-ready filtering)
-                min_score = constants.MIN_SEARCH_SCORE_THRESHOLD
-            else:
-                # Use more lenient threshold (0.65) as fallback
-                min_score = 0.65
-                self.logger.debug(f"Using lenient threshold: {min_score}")
-        except AttributeError:
-            # Fallback if constant not found
-            min_score = 0.75 if strict else 0.65
-            self.logger.warning(f"MIN_SEARCH_SCORE_THRESHOLD not found, using default {min_score}")
+        # Get adaptive threshold
+        base_threshold = self._get_adaptive_threshold(query, has_exact_filter)
+        
+        if strict:
+            min_score = base_threshold
+        else:
+            # Use even more lenient threshold (reduce by 0.1)
+            min_score = max(0.4, base_threshold - 0.1)
+            self.logger.debug(f"Using lenient threshold: {min_score} (base: {base_threshold})")
+        
+        self.logger.debug(f"Using adaptive threshold: {min_score} (query type: {'name' if self._is_name_query(query) else 'semantic'}, exact_filter: {has_exact_filter})")
         
         filtered = []
         for doc in documents:
@@ -346,6 +419,7 @@ class AnalysisHybridSearch:
                 "location": payload.get("location", ""),
                 "cooperator": payload.get("cooperator", ""),
                 "crop": payload.get("crop", ""),
+                "applicant": payload.get("applicant", ""),
                 "form_type": payload.get("form_type", ""),
                 
                 # Performance Metrics

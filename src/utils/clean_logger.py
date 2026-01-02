@@ -490,21 +490,21 @@ class CleanLogger:
         self.logger.error(self._format_message("CLEANUP", msg))
     
     # Generic methods for backward compatibility
-    def info(self, message: str):
+    def info(self, message: str, **kwargs):
         """Generic info log"""
-        self.logger.info(self._format_message(self.module_name, message))
+        self.logger.info(self._format_message(self.module_name, message), **kwargs)
     
-    def warning(self, message: str):
+    def warning(self, message: str, **kwargs):
         """Generic warning log"""
-        self.logger.warning(self._format_message(self.module_name, message))
+        self.logger.warning(self._format_message(self.module_name, message), **kwargs)
     
-    def error(self, message: str):
+    def error(self, message: str, **kwargs):
         """Generic error log"""
-        self.logger.error(self._format_message(self.module_name, message))
+        self.logger.error(self._format_message(self.module_name, message), **kwargs)
     
-    def debug(self, message: str):
+    def debug(self, message: str, **kwargs):
         """Generic debug log"""
-        self.logger.debug(self._format_message(self.module_name, message))
+        self.logger.debug(self._format_message(self.module_name, message), **kwargs)
     
     # Utility Methods
     def log_step(self, step_number: int, total_steps: int, step_name: str, details: str = ""):
