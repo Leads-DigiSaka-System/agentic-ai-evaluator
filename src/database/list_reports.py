@@ -34,16 +34,13 @@ class ReportLister:
         """
         try:
             # Build filter for cooperative only
-            scroll_filter = None
+            # Note: Qdrant MatchValue is case-sensitive, so we'll do post-filtering
+            # Store cooperative for post-filtering (normalized matching)
+            scroll_filter = None  # Don't filter at Qdrant level - use post-filtering for case-insensitive matching
+            cooperative_for_filtering = None
             if cooperative:
-                scroll_filter = models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="cooperative",
-                            match=models.MatchValue(value=cooperative)
-                        )
-                    ]
-                )
+                cooperative_for_filtering = cooperative.strip()
+                self.logger.debug(f"Will filter by cooperative in post-processing (case-insensitive): {cooperative_for_filtering}")
             
             # Fetch points - scroll through collection with filter
             all_points = []
@@ -95,10 +92,32 @@ class ReportLister:
                 # Fallback
                 return default if default is not None else {}
             
+            # Normalize cooperative for matching (same logic as search tools)
+            def normalize_coop(name):
+                """Normalize cooperative name by removing common suffixes"""
+                name = name.lower().strip()
+                for suffix in [" agri", " agriculture", " cooperative", " coop"]:
+                    if name.endswith(suffix):
+                        name = name[:-len(suffix)].strip()
+                return name
+            
+            query_coop_norm = normalize_coop(cooperative_for_filtering) if cooperative_for_filtering else None
+            
             # Format ALL results with COMPLETE data
             reports = []
             for point in all_points:
                 payload = point.payload or {}
+                
+                # Post-filter by cooperative (case-insensitive with normalization)
+                if cooperative_for_filtering:
+                    doc_cooperative = payload.get("cooperative", "").strip()
+                    doc_coop_norm = normalize_coop(doc_cooperative)
+                    
+                    # Match if normalized names match, or if one contains the other
+                    if (query_coop_norm != doc_coop_norm and 
+                        query_coop_norm not in doc_coop_norm and 
+                        doc_coop_norm not in query_coop_norm):
+                        continue  # Skip this document
                 
                 # Helper to safely convert to float
                 def safe_float(value, default=0.0):

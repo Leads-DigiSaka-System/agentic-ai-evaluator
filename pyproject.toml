@@ -35,4 +35,5 @@ dependencies = [
     "deepagents>=0.0.5",
     "tavily-python>=0.7.16",
     "langchain-openai>=0.3.35",
+    "psycopg2-binary>=2.9.9",
 ]

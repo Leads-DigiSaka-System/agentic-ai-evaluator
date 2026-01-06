@@ -152,17 +152,17 @@ class QdrantDenseRetriever(BaseRetriever):
             # This ensures data security and better performance
             # Same cooperative can see all data within that cooperative
             # Also support applicant filtering for exact name matching
+            # NOTE: Qdrant MatchValue is case-sensitive, so we do post-filtering for case-insensitive matching
+            # This handles cases where database has "Leads" but header sends "leads" or "LEADS"
             query_filter = None
             filter_conditions = []
             
+            # Store cooperative for post-filtering (case-insensitive)
+            # We do post-filtering instead of Qdrant filter to handle case sensitivity
+            cooperative_for_filtering = None
             if cooperative:
-                filter_conditions.append(
-                    models.FieldCondition(
-                        key="cooperative",
-                        match=models.MatchValue(value=cooperative)
-                    )
-                )
-                self.logger.debug(f"Applying cooperative filter at database level: cooperative={cooperative}")
+                cooperative_for_filtering = cooperative.strip()
+                self.logger.debug(f"Will filter by cooperative in post-processing (case-insensitive): {cooperative_for_filtering}")
             
             # ✅ Add applicant and location filters - but use semantic search + post-filtering for better flexibility
             # Qdrant filters are case-sensitive, so we'll do semantic search first
@@ -183,10 +183,12 @@ class QdrantDenseRetriever(BaseRetriever):
                 query_filter = models.Filter(must=filter_conditions)
             
             # ✅ Use provided limit or fallback to instance limit
-            # If filtering by applicant or location, increase limit to get more candidates for post-filtering
+            # If filtering by applicant, location, or cooperative (post-filtering), increase limit to get more candidates
             base_limit = limit if limit is not None else self.search_limit
-            has_filter = applicant_for_filtering or location_for_filtering
-            search_limit = base_limit * 5 if has_filter else base_limit  # Get 5x more if filtering
+            # If we're doing post-filtering (case-insensitive), we need more candidates
+            # Note: cooperative_for_filtering means we'll do post-filtering (case-insensitive check)
+            has_post_filter = applicant_for_filtering or location_for_filtering or cooperative_for_filtering
+            search_limit = base_limit * 5 if has_post_filter else base_limit  # Get 5x more if post-filtering
             
             # ✅ Search with database-level filtering for security and performance
             search_results = self.client.search(
@@ -211,8 +213,39 @@ class QdrantDenseRetriever(BaseRetriever):
             exact_matches = []  # Store exact matches separately to boost them
             
             for result in search_results:
-                # Extract user_id from payload for filtering
+                # Extract payload for filtering
                 payload = result.payload or {}
+                
+                # ✅ Post-filter by cooperative (case-insensitive with partial matching)
+                # Handles cases like "Leads" vs "Leads Agri" - matches if one contains the other
+                if cooperative_for_filtering:
+                    doc_cooperative = payload.get("cooperative", "").strip()
+                    query_coop_lower = cooperative_for_filtering.lower()
+                    doc_coop_lower = doc_cooperative.lower()
+                    
+                    # Normalize: remove common suffixes/prefixes for matching
+                    # "Leads Agri" -> "Leads", "Leads" -> "Leads"
+                    def normalize_coop(name):
+                        name = name.lower().strip()
+                        # Remove common suffixes
+                        for suffix in [" agri", " agriculture", " cooperative", " coop"]:
+                            if name.endswith(suffix):
+                                name = name[:-len(suffix)].strip()
+                        return name
+                    
+                    query_coop_norm = normalize_coop(cooperative_for_filtering)
+                    doc_coop_norm = normalize_coop(doc_cooperative)
+                    
+                    # Match if normalized names match, or if one contains the other
+                    if (query_coop_norm != doc_coop_norm and 
+                        query_coop_norm not in doc_coop_norm and 
+                        doc_coop_norm not in query_coop_norm):
+                        self.logger.debug(
+                            f"Document filtered out by cooperative post-processing: "
+                            f"'{doc_cooperative}' (normalized: '{doc_coop_norm}') != "
+                            f"'{cooperative_for_filtering}' (normalized: '{query_coop_norm}')"
+                        )
+                        continue  # Skip this document
                 
                 # ✅ Post-filter by applicant or location if specified (case-insensitive with fuzzy matching)
                 import re

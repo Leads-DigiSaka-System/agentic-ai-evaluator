@@ -42,6 +42,11 @@ from src.chatbot.tools.analysis_tools import (
     generate_summary_tool,
     get_trends_tool
 )
+from src.chatbot.tools.memory_tools import (
+    read_conversation_memory,
+    write_to_conversation_memory,
+    get_conversation_summary
+)
 
 __all__ = [
     # Basic search tools (11)
@@ -81,5 +86,9 @@ __all__ = [
     "compare_products_tool",
     "generate_summary_tool",
     "get_trends_tool",
+    # Memory tools (3)
+    "read_conversation_memory",
+    "write_to_conversation_memory",
+    "get_conversation_summary",
 ]
 

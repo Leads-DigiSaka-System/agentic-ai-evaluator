@@ -173,8 +173,8 @@ async def chat(
         
         # Clear conversation if requested
         if body.reset_conversation:
-            from src.chatbot.memory.conversation_store import clear_conversation_memory
-            clear_conversation_memory(thread_id)
+            from src.chatbot.memory.simple_memory import clear_thread_memory
+            clear_thread_memory(thread_id)
             logger.info(f"Conversation memory cleared for thread: {thread_id}")
         
         # Invoke agent

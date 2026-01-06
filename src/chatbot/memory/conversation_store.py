@@ -1,15 +1,29 @@
 """
-Conversation memory store for chat agent using LangGraph Store
+Conversation memory store for chat agent using LangGraph PostgresSaver
+Automatically uses PostgreSQL for persistent storage if configured
 """
 from typing import Dict, Any, Optional, List
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from src.utils.clean_logger import get_clean_logger
+from src.utils.config import POSTGRES_URL
 import os
-import json
-from datetime import datetime, timedelta
 
 logger = get_clean_logger(__name__)
+
+# Try to import PostgresSaver - may fail if version incompatible
+PostgresSaver = None
+try:
+    from langgraph.checkpoint.postgres import PostgresSaver
+    POSTGRES_SAVER_AVAILABLE = True
+except ImportError as e:
+    POSTGRES_SAVER_AVAILABLE = False
+    logger.warning(f"⚠️ PostgresSaver not available: {e}")
+    logger.info("💡 Using MemorySaver for conversation history (in-memory)")
+except Exception as e:
+    POSTGRES_SAVER_AVAILABLE = False
+    logger.warning(f"⚠️ PostgresSaver import failed: {e}")
+    logger.info("💡 Using MemorySaver for conversation history (in-memory)")
 
 # Global store instance (shared across agents)
 _store: Optional[BaseCheckpointSaver] = None
@@ -19,17 +33,13 @@ def get_conversation_store() -> BaseCheckpointSaver:
     """
     Get or create the conversation memory store.
     
-    Uses LangGraph MemorySaver for in-memory storage.
-    This stores conversation state within the application process.
+    Uses LangGraph PostgresSaver for persistent storage in PostgreSQL if configured.
+    Falls back to MemorySaver if PostgreSQL is not configured.
     
-    According to Deep Agents docs:
-    - StoreBackend uses this store for persistent file storage
-    - Files in /memories/ path persist across conversations
-    - Files in / path are ephemeral (StateBackend)
-    
-    Note: We use MemorySaver (simple, no external dependencies)
-    - Qdrant is used for data storage (reports, analysis)
-    - MemorySaver is used for conversation memory (chat state)
+    According to LangChain docs:
+    - PostgresSaver automatically creates tables on setup()
+    - Handles state persistence across restarts
+    - Works seamlessly with LangChain agents
     
     Returns:
         BaseCheckpointSaver instance for conversation memory
@@ -37,11 +47,53 @@ def get_conversation_store() -> BaseCheckpointSaver:
     global _store
     
     if _store is None:
-        # Use MemorySaver (in-memory, persists within thread)
-        # Simple, no external dependencies needed
-        _store = MemorySaver()
-        logger.info("✅ Conversation memory store initialized (MemorySaver)")
-        logger.info("💡 Memory persists within thread, Qdrant used for data storage")
+        try:
+            # Check if PostgresSaver is available and PostgreSQL is configured
+            if not POSTGRES_SAVER_AVAILABLE or PostgresSaver is None:
+                logger.warning("⚠️ PostgresSaver not available, using MemorySaver (in-memory)")
+                logger.info("💡 To enable persistent memory, install compatible langgraph-checkpoint-postgres")
+                _store = MemorySaver()
+                logger.info("✅ Conversation memory store initialized (MemorySaver)")
+                return _store
+            
+            if not POSTGRES_URL:
+                logger.warning("⚠️ POSTGRES_URL not configured, using MemorySaver (in-memory)")
+                logger.info("💡 To enable persistent memory, add PostgreSQL config to .env")
+                _store = MemorySaver()
+                logger.info("✅ Conversation memory store initialized (MemorySaver)")
+                return _store
+            
+            # Use PostgresSaver for persistent storage (following LangChain docs pattern)
+            # Docs pattern: with PostgresSaver.from_conn_string(DB_URI) as checkpointer:
+            # Since we need a global store, we'll use it without context manager but call setup()
+            logger.info(f"Initializing PostgresSaver for persistent memory...")
+            logger.info("💡 Following LangChain docs pattern: PostgresSaver.from_conn_string()")
+            
+            try:
+                # Following docs pattern: PostgresSaver.from_conn_string(DB_URI)
+                _store = PostgresSaver.from_conn_string(POSTGRES_URL)
+                
+                # Setup creates tables automatically (idempotent - safe to call multiple times)
+                # Docs pattern: checkpointer.setup() # auto create tables in PostgresSql
+                _store.setup()
+                
+                logger.info("✅ Conversation memory store initialized (PostgresSaver)")
+                # Log database info (hide password)
+                db_info = POSTGRES_URL.split('@')[-1] if '@' in POSTGRES_URL else POSTGRES_URL
+                logger.info(f"💡 PostgreSQL: {db_info}")
+                logger.info("💡 Tables created automatically by PostgresSaver.setup()")
+            except Exception as setup_error:
+                logger.error(f"❌ Failed to setup PostgresSaver: {setup_error}")
+                logger.warning("⚠️ Falling back to MemorySaver")
+                logger.info("💡 To enable PostgreSQL, update langgraph to compatible version")
+                _store = MemorySaver()
+                logger.info("✅ Conversation memory store initialized (MemorySaver - fallback)")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize PostgresSaver: {e}")
+            logger.warning("⚠️ Falling back to MemorySaver")
+            _store = MemorySaver()
+            logger.info("✅ Conversation memory store initialized (MemorySaver - fallback)")
     
     return _store
 

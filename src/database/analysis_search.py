@@ -321,8 +321,6 @@ class AnalysisHybridSearch:
             min_score = max(0.4, base_threshold - 0.1)
             self.logger.debug(f"Using lenient threshold: {min_score} (base: {base_threshold})")
         
-        self.logger.debug(f"Using adaptive threshold: {min_score} (query type: {'name' if self._is_name_query(query) else 'semantic'}, exact_filter: {has_exact_filter})")
-        
         filtered = []
         for doc in documents:
             try:

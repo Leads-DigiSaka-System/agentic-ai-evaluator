@@ -89,3 +89,24 @@ else:
         REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
     else:
         REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+
+# PostgreSQL Configuration (for LangChain checkpointer)
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", "5433"))
+POSTGRES_DB = os.getenv("POSTGRES_DB", "agentic_ai_evaluator")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
+
+# Build PostgreSQL URL
+def get_postgres_url() -> str:
+    """Get PostgreSQL connection URL"""
+    postgres_url = os.getenv("POSTGRES_URL")
+    if postgres_url:
+        return postgres_url
+    
+    if POSTGRES_PASSWORD:
+        return f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+    else:
+        return f"postgresql://{POSTGRES_USER}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+
+POSTGRES_URL = get_postgres_url()

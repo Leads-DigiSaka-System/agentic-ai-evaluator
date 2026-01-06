@@ -1,0 +1,414 @@
+"""
+PostgreSQL-backed Conversation Memory for Chat Agent
+Extends ConversationBufferMemory to persist to PostgreSQL
+Compatible with LangChain 0.3.27 AgentExecutor
+"""
+from typing import Dict, Optional, List, Any
+from langchain.memory import ConversationBufferMemory
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+from src.utils.clean_logger import get_clean_logger
+from src.utils.config import POSTGRES_URL
+import psycopg2
+from psycopg2.extras import Json
+import json
+from datetime import datetime
+
+logger = get_clean_logger(__name__)
+
+
+class PostgresConversationMemory(ConversationBufferMemory):
+    """
+    PostgreSQL-backed ConversationBufferMemory.
+    Persists conversation history to PostgreSQL while maintaining ConversationBufferMemory interface.
+    """
+    
+    def __init__(self, thread_id: str, **kwargs):
+        """
+        Initialize PostgreSQL-backed memory.
+        
+        Args:
+            thread_id: Thread ID for this conversation
+            **kwargs: Additional arguments for ConversationBufferMemory
+        """
+        super().__init__(**kwargs)
+        self.thread_id = thread_id
+        self._loaded = False
+        
+        # Load existing conversation from PostgreSQL
+        self._load_from_postgres()
+    
+    def _get_connection(self):
+        """Get PostgreSQL connection"""
+        try:
+            return psycopg2.connect(POSTGRES_URL)
+        except Exception as e:
+            logger.error(f"Failed to connect to PostgreSQL: {e}")
+            return None
+    
+    def _load_from_postgres(self) -> bool:
+        """
+        Load conversation history from PostgreSQL.
+        
+        Returns:
+            True if loaded successfully, False otherwise
+        """
+        if self._loaded:
+            return True
+        
+        try:
+            conn = self._get_connection()
+            if not conn:
+                return False
+            
+            cursor = conn.cursor()
+            
+            # Load messages from PostgreSQL
+            cursor.execute("""
+                SELECT message_role, message_content, tools_used, created_at
+                FROM conversation_messages
+                WHERE thread_id = %s
+                ORDER BY message_order ASC
+            """, (self.thread_id,))
+            
+            rows = cursor.fetchall()
+            
+            # Rebuild conversation in memory
+            for row in rows:
+                message_role, message_content, tools_used, created_at = row
+                
+                if message_role == 'user':
+                    self.chat_memory.add_user_message(message_content)
+                elif message_role == 'assistant':
+                    self.chat_memory.add_ai_message(message_content)
+            
+            cursor.close()
+            conn.close()
+            
+            self._loaded = True
+            logger.debug(f"✅ Loaded {len(rows)} messages from PostgreSQL for thread: {self.thread_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error loading from PostgreSQL: {e}")
+            return False
+    
+    def _extract_entities(self, text: str) -> Dict[str, Any]:
+        """
+        Extract entities (location, product, crop, applicant) from text.
+        Used for context-only memory storage.
+        
+        Args:
+            text: Text to extract entities from
+        
+        Returns:
+            Dictionary with extracted entities
+        """
+        entities = {}
+        text_lower = text.lower()
+        
+        # Common location patterns
+        location_keywords = ["sa ", "location:", "lugar", "trial sa", "demo sa"]
+        # Common product patterns
+        product_keywords = ["product:", "produkto", "product name"]
+        # Common crop patterns
+        crop_keywords = ["crop:", "crop type", "palay", "corn", "rice"]
+        # Common applicant patterns
+        applicant_keywords = ["applicant:", "applicant name", "cooperator"]
+        
+        # Simple extraction - can be enhanced with NER later
+        # For now, extract if keywords are present
+        if any(kw in text_lower for kw in location_keywords):
+            # Try to extract location after "sa " or "location:"
+            import re
+            location_match = re.search(r'(?:sa|location:)\s+([A-Z][a-zA-Z\s,]+)', text, re.IGNORECASE)
+            if location_match:
+                entities["location"] = location_match.group(1).strip()
+        
+        if any(kw in text_lower for kw in product_keywords):
+            product_match = re.search(r'product[:\s]+([A-Z][a-zA-Z0-9\s]+)', text, re.IGNORECASE)
+            if product_match:
+                entities["product"] = product_match.group(1).strip()
+        
+        if any(kw in text_lower for kw in crop_keywords):
+            crop_match = re.search(r'crop[:\s]+([A-Z][a-zA-Z\s]+)', text, re.IGNORECASE)
+            if crop_match:
+                entities["crop"] = crop_match.group(1).strip()
+        
+        return entities
+    
+    def _extract_query_context(self, user_input: str, tools_used: List[str] = None) -> Dict[str, Any]:
+        """
+        Extract query context for memory storage.
+        Stores what was asked and how, not the actual data.
+        
+        Args:
+            user_input: User's query
+            tools_used: List of tools used
+        
+        Returns:
+            Context dictionary with entities and query type
+        """
+        entities = self._extract_entities(user_input)
+        
+        # Determine query type from tools used
+        query_type = "general"
+        if tools_used:
+            if "search_by_location_tool" in tools_used:
+                query_type = "location_search"
+            elif "search_by_product_tool" in tools_used:
+                query_type = "product_search"
+            elif "search_by_crop_tool" in tools_used:
+                query_type = "crop_search"
+            elif "search_by_applicant_tool" in tools_used:
+                query_type = "applicant_search"
+            elif "search_analysis_tool" in tools_used:
+                query_type = "general_search"
+        
+        return {
+            "query_type": query_type,
+            "entities": entities,
+            "tools_used": tools_used or []
+        }
+    
+    def _save_to_postgres(self, user_input: str, ai_output: str, tools_used: List[str] = None, metadata: Dict = None) -> bool:
+        """
+        Save conversation turn to PostgreSQL.
+        
+        CONTEXT-ONLY APPROACH: Stores entities and conversation flow, NOT data values.
+        This ensures memory helps construct queries but doesn't become stale.
+        
+        Args:
+            user_input: User's message
+            ai_output: Agent's response (stored for conversation flow, but entities extracted)
+            tools_used: List of tools used
+            metadata: Additional metadata
+        
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        try:
+            conn = self._get_connection()
+            if not conn:
+                return False
+            
+            cursor = conn.cursor()
+            
+            # Extract context (entities, query type) - NOT data values
+            query_context = self._extract_query_context(user_input, tools_used)
+            
+            # Get or create thread
+            cursor.execute("""
+                INSERT INTO conversation_threads (thread_id, cooperative, user_id, session_id, message_count, last_message_at)
+                VALUES (%s, %s, %s, %s, 0, NOW())
+                ON CONFLICT (thread_id) DO UPDATE
+                SET message_count = conversation_threads.message_count + 2,
+                    updated_at = NOW(),
+                    last_message_at = NOW()
+                RETURNING message_count
+            """, (
+                self.thread_id,
+                self._extract_cooperative(),
+                self._extract_user_id(),
+                self._extract_session_id()
+            ))
+            
+            result = cursor.fetchone()
+            current_count = result[0] if result else 0
+            
+            # Get next message order
+            cursor.execute("""
+                SELECT COALESCE(MAX(message_order), 0) + 1
+                FROM conversation_messages
+                WHERE thread_id = %s
+            """, (self.thread_id,))
+            
+            next_order = cursor.fetchone()[0]
+            
+            # ✅ CONTEXT-ONLY: Store user query (for conversation flow)
+            # Store original query for context, but extract entities separately
+            user_metadata = {
+                "entities": query_context.get("entities", {}),
+                "query_type": query_context.get("query_type", "general"),
+                "original_query": user_input  # Keep for conversation flow
+            }
+            
+            # Save user message with context metadata
+            cursor.execute("""
+                INSERT INTO conversation_messages 
+                (thread_id, message_role, message_content, message_order, tools_used, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                self.thread_id,
+                'user',
+                user_input,  # Store original query for conversation flow
+                next_order,
+                Json(tools_used or []),
+                Json(user_metadata)  # Store entities and context, NOT data
+            ))
+            
+            # ✅ CONTEXT-ONLY: Store assistant response summary (NOT data values)
+            # Extract only entities from response, don't store actual data
+            response_entities = self._extract_entities(ai_output)
+            
+            # Create summary without data values
+            # Just indicate what was found, not the actual values
+            response_summary = self._create_response_summary(ai_output, tools_used)
+            
+            assistant_metadata = {
+                "entities_found": response_entities,
+                "query_type": query_context.get("query_type", "general"),
+                "response_summary": response_summary,  # Summary without data values
+                "tools_used": tools_used or []
+            }
+            
+            # Save assistant message with context-only metadata
+            cursor.execute("""
+                INSERT INTO conversation_messages 
+                (thread_id, message_role, message_content, message_order, tools_used, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                self.thread_id,
+                'assistant',
+                response_summary,  # Store summary, not full response with data
+                next_order + 1,
+                Json(tools_used or []),
+                Json(assistant_metadata)  # Store context, NOT data values
+            ))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            logger.debug(f"💾 Saved conversation context to PostgreSQL for thread: {self.thread_id}")
+            logger.debug(f"   Entities: {query_context.get('entities', {})}")
+            logger.debug(f"   Query type: {query_context.get('query_type', 'general')}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving to PostgreSQL: {e}")
+            if conn:
+                conn.rollback()
+                conn.close()
+            return False
+    
+    def _create_response_summary(self, ai_output: str, tools_used: List[str] = None) -> str:
+        """
+        Create a summary of the response without storing actual data values.
+        
+        Example:
+            Input: "Mayroong 1 trial sa Zambales na may improvement_percent na 15%"
+            Output: "Found trials in Zambales. Used search_by_location_tool."
+        
+        Args:
+            ai_output: Full agent response
+            tools_used: List of tools used
+        
+        Returns:
+            Summary without data values
+        """
+        # Extract key information without data values
+        summary_parts = []
+        
+        # Check if results were found
+        if any(word in ai_output.lower() for word in ["found", "nahanap", "mayroon", "meron"]):
+            summary_parts.append("Results found")
+        elif any(word in ai_output.lower() for word in ["wala", "no results", "hindi nahanap"]):
+            summary_parts.append("No results found")
+        
+        # Extract location/product/crop mentions (entities only, not values)
+        entities = self._extract_entities(ai_output)
+        if entities.get("location"):
+            summary_parts.append(f"Location: {entities['location']}")
+        if entities.get("product"):
+            summary_parts.append(f"Product: {entities['product']}")
+        if entities.get("crop"):
+            summary_parts.append(f"Crop: {entities['crop']}")
+        
+        # Add tools used
+        if tools_used:
+            summary_parts.append(f"Tools: {', '.join(tools_used)}")
+        
+        return ". ".join(summary_parts) if summary_parts else "Query processed"
+    
+    def _extract_cooperative(self) -> str:
+        """Extract cooperative from thread_id"""
+        # thread_id format: chat_{cooperative}_{user_id}_{session_id}
+        # Example: "chat_leads_10_test_session_001"
+        parts = self.thread_id.split('_')
+        if len(parts) >= 2:
+            return parts[1]  # cooperative
+        return 'unknown'
+    
+    def _extract_user_id(self) -> str:
+        """Extract user_id from thread_id"""
+        # thread_id format: chat_{cooperative}_{user_id}_{session_id}
+        # Example: "chat_leads_10_test_session_001"
+        parts = self.thread_id.split('_')
+        if len(parts) >= 3:
+            return parts[2]  # user_id
+        return 'unknown'
+    
+    def _extract_session_id(self) -> Optional[str]:
+        """Extract session_id from thread_id"""
+        # thread_id format: chat_{cooperative}_{user_id}_{session_id}
+        # Example: "chat_leads_10_test_session_001"
+        parts = self.thread_id.split('_')
+        if len(parts) >= 4:
+            return '_'.join(parts[3:])  # session_id (may contain underscores)
+        return None
+    
+    def save_context(self, inputs: Dict[str, Any], outputs: Dict[str, str]) -> None:
+        """
+        Save conversation context to both memory and PostgreSQL.
+        
+        Overrides ConversationBufferMemory.save_context() to add PostgreSQL persistence.
+        """
+        # Save to in-memory first (parent class)
+        super().save_context(inputs, outputs)
+        
+        # Extract user input and AI output
+        user_input = inputs.get(self.input_key, "")
+        ai_output = outputs.get(self.output_key, "")
+        
+        # Extract tools_used and metadata from outputs if available
+        tools_used = outputs.get("tools_used", [])
+        metadata = outputs.get("metadata", {})
+        
+        # Save to PostgreSQL
+        self._save_to_postgres(user_input, ai_output, tools_used, metadata)
+    
+    def clear(self) -> None:
+        """
+        Clear conversation from both memory and PostgreSQL.
+        
+        Overrides ConversationBufferMemory.clear() to also clear PostgreSQL.
+        """
+        # Clear in-memory
+        super().clear()
+        
+        # Clear from PostgreSQL
+        try:
+            conn = self._get_connection()
+            if not conn:
+                return
+            
+            cursor = conn.cursor()
+            
+            # Delete messages (CASCADE will handle it, but explicit is better)
+            cursor.execute("DELETE FROM conversation_messages WHERE thread_id = %s", (self.thread_id,))
+            
+            # Delete thread
+            cursor.execute("DELETE FROM conversation_threads WHERE thread_id = %s", (self.thread_id,))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            logger.info(f"🗑️ Cleared conversation from PostgreSQL for thread: {self.thread_id}")
+            
+        except Exception as e:
+            logger.error(f"Error clearing from PostgreSQL: {e}")
+            if conn:
+                conn.rollback()
+                conn.close()
+

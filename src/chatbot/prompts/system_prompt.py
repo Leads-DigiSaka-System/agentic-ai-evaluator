@@ -62,4 +62,3 @@ WORKFLOW:
 3. Read the tool results
 4. Convert results to conversational response
 5. If no results, explain politely and suggest alternatives"""
-

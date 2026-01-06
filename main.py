@@ -43,6 +43,17 @@ except Exception as e:
     logger.warning(f"Langfuse initialization failed: {e}")
     logger.info("ℹContinuing without Langfuse observability")
 
+# Setup PostgreSQL conversation memory (if configured)
+try:
+    from src.database.postgres_memory_schema import setup_postgres_memory
+    if setup_postgres_memory():
+        logger.info("✅ PostgreSQL conversation memory ready (production mode)")
+    else:
+        logger.info("ℹ️ Using in-memory conversation memory (development mode)")
+except Exception as e:
+    logger.warning(f"⚠️ PostgreSQL memory setup skipped: {e}")
+    logger.info("ℹ️ Using in-memory conversation memory (development mode)")
+
 # Graceful shutdown handler
 def shutdown_handler():
     """Handle graceful shutdown"""
