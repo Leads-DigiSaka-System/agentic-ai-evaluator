@@ -24,6 +24,7 @@ from src.utils.clean_logger import get_clean_logger
 from src.chatbot.prompts.system_prompt import get_chat_agent_system_prompt
 from src.utils.llm_helper import get_langfuse_handler
 from src.chatbot.memory.conversation_store import generate_thread_id
+from src.chatbot.memory.postgres_memory import PostgresConversationMemory
 from src.utils.llm_factory import create_llm_for_agent, get_available_providers
 from src.utils.gemini_helper import create_gemini_llm, is_gemini_configured
 
@@ -69,6 +70,11 @@ from src.chatbot.tools import (
 )
 
 logger = get_clean_logger(__name__)
+
+# Configuration: Limit number of messages used for context
+# This prevents token limit issues and keeps context relevant
+# Last 10 messages = 5 conversation turns (user + assistant pairs) - Very short context
+MAX_CONTEXT_MESSAGES = 10
 
 
 def _clean_agent_response(response_text: str) -> str:
@@ -132,30 +138,58 @@ def _bind_cooperative_to_tool(tool, cooperative: str) -> StructuredTool:
         New tool with cooperative parameter pre-filled
     """
     try:
+        # Simple wrapper that injects cooperative - tools are called with kwargs only
         def tool_wrapper(**kwargs):
             """Wrapper that automatically injects cooperative parameter"""
-            if 'cooperative' not in kwargs:
-                kwargs['cooperative'] = cooperative
+            # Clean up 'None' string values - remove them entirely instead of setting to None
+            # This avoids Pydantic validation errors for str = None parameters
+            cleaned_kwargs = {}
+            for key, value in kwargs.items():
+                # Skip 'None' string values entirely (don't pass them to tool)
+                if isinstance(value, str) and (value.lower() == 'none' or value.lower() == 'null'):
+                    continue  # Don't include this parameter
+                # Also skip actual None values for optional parameters
+                elif value is None:
+                    continue  # Don't include None values
+                else:
+                    cleaned_kwargs[key] = value
+            
+            # Inject cooperative if not present or None
+            if 'cooperative' not in cleaned_kwargs or cleaned_kwargs['cooperative'] is None:
+                cleaned_kwargs['cooperative'] = cooperative
+            
+            # Log non-None filters for debugging
+            active_filters = {k: v for k, v in cleaned_kwargs.items() if v is not None and k != 'cooperative'}
+            if active_filters:
+                logger.debug(f"🔍 Tool {tool.name} called with active filters: {active_filters}")
+            
             try:
-                return tool.invoke(kwargs)
+                return tool.invoke(cleaned_kwargs)
             except Exception as e:
                 logger.debug(f"Tool invoke failed, retrying with explicit cooperative: {e}")
-                return tool.invoke({**kwargs, 'cooperative': cooperative})
+                return tool.invoke({**cleaned_kwargs, 'cooperative': cooperative})
         
-        # Create new tool with bound cooperative
+        # Create new tool with bound cooperative - preserve original schema
         bound_tool = StructuredTool.from_function(
             func=tool_wrapper,
             name=tool.name,
             description=tool.description
         )
         
-        # Preserve original tool's schema if available
+        # CRITICAL: Preserve original tool's schema completely
         if hasattr(tool, 'args_schema'):
             bound_tool.args_schema = tool.args_schema
         
+        # Note: input_schema is read-only, so we don't try to set it
+        # The schema is automatically preserved by StructuredTool.from_function
+        
+        logger.debug(f"✅ Bound cooperative '{cooperative}' to tool '{tool.name}'")
         return bound_tool
     except Exception as e:
+        import traceback
         logger.warning(f"Error binding cooperative to tool {tool.name}: {e}")
+        logger.debug(traceback.format_exc())
+        # Return original tool if binding fails
         return tool
 
 
@@ -294,12 +328,21 @@ def create_chat_agent(
     provider_model = GEMINI_MODEL if provider_lower == "gemini" else OPENROUTER_MODEL
     logger.info(f"🚀 {model_provider.capitalize()} LLM configured: {provider_model}")
     
-    # Create prompt template
+    # Create prompt template with chat_history placeholder for memory
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
+        MessagesPlaceholder(variable_name="chat_history"),  # For conversation memory
         ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
+    
+    # Verify tools before creating agent
+    if not bound_tools:
+        raise ValueError("No tools available for agent creation")
+    
+    logger.info(f"📋 Creating agent with {len(bound_tools)} tools")
+    tool_names = [t.name for t in bound_tools[:5]]
+    logger.debug(f"Sample tools: {tool_names}...")
     
     # Create agent using create_openai_tools_agent (direct, no try-except)
     agent = create_openai_tools_agent(
@@ -308,10 +351,16 @@ def create_chat_agent(
         prompt=prompt
     )
     
+    # Verify agent was created with tools
+    if hasattr(agent, 'tools'):
+        logger.debug(f"✅ Agent created with {len(agent.tools)} tools")
+    else:
+        logger.warning("⚠️ Agent created but tools attribute not found")
+    
     # Create agent executor with proper configuration
     agent_executor = AgentExecutor(
         agent=agent,
-        tools=bound_tools,
+        tools=bound_tools,  # Also pass tools to executor for redundancy
         verbose=True,  # Enable verbose mode for debugging
         handle_parsing_errors=True,
         max_iterations=15,
@@ -358,19 +407,84 @@ def invoke_agent(
     """
     try:
         # Generate thread_id if not provided
-        if not thread_id and session_id and user_id:
+        if not thread_id and cooperative and user_id and session_id:
             thread_id = generate_thread_id(
-                cooperative or "default",
+                cooperative,
                 user_id,
                 session_id
             )
         
-        # Prepare input for agent
-        # AgentExecutor expects a dict with "input" key
-        agent_input = {"input": message}
+        # Initialize memory for this thread
+        memory = None
+        chat_history = []
+        
+        if thread_id:
+            try:
+                logger.info(f"🔍 Loading memory for thread: {thread_id}")
+                # Create PostgreSQL-backed memory
+                memory = PostgresConversationMemory(
+                    thread_id=thread_id,
+                    return_messages=True,  # Return as messages for prompt
+                    input_key="input",
+                    output_key="output",
+                    memory_key="chat_history"  # Explicitly set memory key
+                )
+                
+                # Load chat history from memory
+                if hasattr(memory, 'chat_memory') and hasattr(memory.chat_memory, 'messages'):
+                    all_messages = memory.chat_memory.messages
+                    
+                    # Limit to most recent messages to prevent token limit issues
+                    if len(all_messages) > MAX_CONTEXT_MESSAGES:
+                        chat_history = all_messages[-MAX_CONTEXT_MESSAGES:]
+                        logger.info(f"✅ Loaded {len(all_messages)} total messages, using last {len(chat_history)} for context (thread: {thread_id})")
+                    else:
+                        chat_history = all_messages
+                        logger.info(f"✅ Loaded {len(chat_history)} messages from chat_memory for thread: {thread_id}")
+                    
+                    if chat_history:
+                        for i, msg in enumerate(chat_history[-4:], 1):
+                            msg_type = type(msg).__name__
+                            content = msg.content[:80] if hasattr(msg, 'content') else str(msg)[:80]
+                            logger.debug(f"   Recent message {i}: {msg_type} - {content}...")
+                else:
+                    # Try loading from memory variables
+                    memory_vars = memory.load_memory_variables({})
+                    all_history = memory_vars.get('chat_history', memory_vars.get('history', []))
+                    
+                    # Limit to most recent messages to prevent token limit issues
+                    if len(all_history) > MAX_CONTEXT_MESSAGES:
+                        chat_history = all_history[-MAX_CONTEXT_MESSAGES:]
+                        logger.info(f"✅ Loaded {len(all_history)} total messages, using last {len(chat_history)} for context (thread: {thread_id})")
+                    else:
+                        chat_history = all_history
+                        logger.info(f"✅ Loaded {len(chat_history)} messages from memory variables for thread: {thread_id}")
+                
+                if not chat_history:
+                    logger.warning(f"⚠️ No chat history found for thread: {thread_id} (this might be a new conversation)")
+            except Exception as e:
+                import traceback
+                logger.warning(f"Failed to load memory for thread {thread_id}: {e}")
+                logger.debug(traceback.format_exc())
+                logger.info("Continuing without memory (conversation will not have context)")
+        
+        # Prepare input for agent with chat history
+        agent_input = {
+            "input": message,
+            "chat_history": chat_history  # Add chat history to input
+        }
         
         # Invoke agent
-        logger.debug(f"Invoking agent with message: {message[:100]}...")
+        logger.info(f"🔍 Invoking agent with message: {message[:100]}...")
+        logger.debug(f"Agent input keys: {list(agent_input.keys())}")
+        logger.debug(f"Chat history length: {len(chat_history) if chat_history else 0}")
+        
+        # Log available tools for debugging
+        if hasattr(agent, 'tools'):
+            logger.debug(f"Agent has {len(agent.tools)} tools available")
+            tool_names = [t.name for t in agent.tools[:5]]  # Log first 5
+            logger.debug(f"Sample tool names: {tool_names}")
+        
         result = agent.invoke(agent_input)
         
         # Debug: Log full result structure
@@ -420,8 +534,42 @@ def invoke_agent(
                         logger.debug(f"Added tool to tools_used: {tool_name}")
         
         if not tools_used:
-            logger.warning(f"No tools were called for query: {message[:100]}...")
+            logger.warning(f"⚠️ No tools were called for query: {message[:100]}...")
             logger.warning(f"Agent output: {response_text[:200] if response_text else 'EMPTY'}...")
+            logger.warning(f"⚠️ This should not happen - agent MUST use tools for data queries!")
+            
+            # Try to force tool usage by re-invoking with explicit instruction
+            if "intermediate_steps" not in result or len(result.get("intermediate_steps", [])) == 0:
+                logger.info("🔄 Attempting to force tool usage with explicit instruction...")
+                forced_message = f"MUST USE TOOLS: {message}\n\nIMPORTANT: You MUST call a search tool (search_analysis_tool, search_by_location_tool, etc.) to answer this question. You cannot answer without using tools."
+                try:
+                    forced_result = agent.invoke({
+                        "input": forced_message,
+                        "chat_history": chat_history
+                    })
+                    if "intermediate_steps" in forced_result and len(forced_result["intermediate_steps"]) > 0:
+                        logger.info("✅ Forced tool usage succeeded")
+                        result = forced_result
+                        response_text = forced_result.get("output", response_text)
+                        # Re-extract tools_used
+                        tools_used = []
+                        for step in forced_result["intermediate_steps"]:
+                            if len(step) > 0:
+                                action = step[0]
+                                if hasattr(action, 'tool'):
+                                    tool_name = action.tool
+                                elif isinstance(action, dict):
+                                    tool_name = action.get('tool', '')
+                                elif hasattr(action, 'tool_name'):
+                                    tool_name = action.tool_name
+                                else:
+                                    tool_name = str(action)
+                                if tool_name and tool_name not in tools_used:
+                                    tools_used.append(tool_name)
+                    else:
+                        logger.error("❌ Forced tool usage also failed - agent is not recognizing tools")
+                except Exception as e:
+                    logger.error(f"Error during forced tool usage: {e}")
         
         # Clean and convert technical responses to conversational
         response_text = _clean_agent_response(response_text)
@@ -436,13 +584,34 @@ def invoke_agent(
                 "Pwede niyo po bang subukan ulit o ibahin ang inyong tanong?"
             )
         
+        # Save conversation to memory
+        if memory and thread_id:
+            try:
+                # Save context to PostgreSQL memory
+                memory.save_context(
+                    inputs={"input": message},
+                    outputs={
+                        "output": response_text,
+                        "tools_used": tools_used,
+                        "metadata": {
+                            "cooperative": cooperative,
+                            "user_id": user_id,
+                            "session_id": session_id
+                        }
+                    }
+                )
+                logger.debug(f"💾 Saved conversation to PostgreSQL memory for thread: {thread_id}")
+            except Exception as e:
+                logger.warning(f"Failed to save conversation to memory: {e}")
+        
         return {
             "response": response_text,
             "session_id": session_id or thread_id,
             "tools_used": tools_used,
             "metadata": {
                 "model": OPENROUTER_MODEL,
-                "cooperative": cooperative
+                "cooperative": cooperative,
+                "thread_id": thread_id
             },
             "sources": []
         }

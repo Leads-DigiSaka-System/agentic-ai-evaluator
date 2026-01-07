@@ -14,7 +14,7 @@ logger = get_clean_logger(__name__)
 # Try to import PostgresSaver - may fail if version incompatible
 PostgresSaver = None
 try:
-    from langgraph.checkpoint.postgres import PostgresSaver
+    from langgraph.checkpoint.postgres import PostgresSaver  # type: ignore
     POSTGRES_SAVER_AVAILABLE = True
 except ImportError as e:
     POSTGRES_SAVER_AVAILABLE = False
@@ -117,13 +117,20 @@ def generate_thread_id(cooperative: str, user_id: str, session_id: Optional[str]
         Thread ID string for LangGraph checkpoint
     """
     if session_id:
-        # Use provided session_id
-        return f"chat_{cooperative}_{user_id}_{session_id}"
+        # Use provided session_id (may already have prefix, so check)
+        if session_id.startswith(f"chat_{cooperative}_{user_id}"):
+            # Already has prefix, use as-is
+            return session_id
+        else:
+            # Add prefix
+            return f"chat_{cooperative}_{user_id}_{session_id}"
     else:
         # Generate new session-based thread ID
         from src.monitoring.session.langfuse_session_helper import generate_session_id
+        # Generate session_id with prefix, then add to thread_id format
         session_id = generate_session_id(prefix=f"chat_{cooperative}_{user_id}")
-        return f"chat_{cooperative}_{user_id}_{session_id}"
+        # session_id already has prefix, so just use it directly
+        return session_id
 
 
 def clear_conversation_memory(thread_id: str) -> bool:

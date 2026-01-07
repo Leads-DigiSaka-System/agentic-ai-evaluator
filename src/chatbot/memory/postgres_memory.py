@@ -15,6 +15,11 @@ from datetime import datetime
 
 logger = get_clean_logger(__name__)
 
+# Configuration: Limit number of messages loaded from PostgreSQL
+# This prevents token limit issues and keeps context relevant
+# Last 10 messages = 5 conversation turns (user + assistant pairs) - Very short context
+MAX_MESSAGES_TO_LOAD = 10
+
 
 class PostgresConversationMemory(ConversationBufferMemory):
     """
@@ -31,8 +36,9 @@ class PostgresConversationMemory(ConversationBufferMemory):
             **kwargs: Additional arguments for ConversationBufferMemory
         """
         super().__init__(**kwargs)
-        self.thread_id = thread_id
-        self._loaded = False
+        # Use object.__setattr__ to bypass Pydantic validation for custom field
+        object.__setattr__(self, 'thread_id', thread_id)
+        object.__setattr__(self, '_loaded', False)
         
         # Load existing conversation from PostgreSQL
         self._load_from_postgres()
@@ -52,7 +58,8 @@ class PostgresConversationMemory(ConversationBufferMemory):
         Returns:
             True if loaded successfully, False otherwise
         """
-        if self._loaded:
+        # Check if already loaded (using getattr to handle Pydantic model)
+        if getattr(self, '_loaded', False):
             return True
         
         try:
@@ -63,18 +70,28 @@ class PostgresConversationMemory(ConversationBufferMemory):
             cursor = conn.cursor()
             
             # Load messages from PostgreSQL
+            thread_id = getattr(self, 'thread_id', None)
+            if not thread_id:
+                logger.error("thread_id not set in PostgresConversationMemory")
+                return False
+            
+            # Load only recent messages to prevent token limit issues
             cursor.execute("""
-                SELECT message_role, message_content, tools_used, created_at
+                SELECT message_role, message_content, tools_used, created_at, message_order
                 FROM conversation_messages
                 WHERE thread_id = %s
-                ORDER BY message_order ASC
-            """, (self.thread_id,))
+                ORDER BY message_order DESC
+                LIMIT %s
+            """, (thread_id, MAX_MESSAGES_TO_LOAD))
             
             rows = cursor.fetchall()
             
-            # Rebuild conversation in memory
+            # Reverse to get chronological order (oldest to newest)
+            rows = list(reversed(rows))
+            
+            # Rebuild conversation in memory (only recent messages)
             for row in rows:
-                message_role, message_content, tools_used, created_at = row
+                message_role, message_content, tools_used, created_at, message_order = row
                 
                 if message_role == 'user':
                     self.chat_memory.add_user_message(message_content)
@@ -84,8 +101,8 @@ class PostgresConversationMemory(ConversationBufferMemory):
             cursor.close()
             conn.close()
             
-            self._loaded = True
-            logger.debug(f"✅ Loaded {len(rows)} messages from PostgreSQL for thread: {self.thread_id}")
+            object.__setattr__(self, '_loaded', True)
+            logger.debug(f"✅ Loaded {len(rows)} messages from PostgreSQL for thread: {getattr(self, 'thread_id', 'unknown')}")
             return True
             
         except Exception as e:
@@ -196,6 +213,12 @@ class PostgresConversationMemory(ConversationBufferMemory):
             # Extract context (entities, query type) - NOT data values
             query_context = self._extract_query_context(user_input, tools_used)
             
+            # Get thread_id safely
+            thread_id = getattr(self, 'thread_id', None)
+            if not thread_id:
+                logger.error("thread_id not set in PostgresConversationMemory")
+                return False
+            
             # Get or create thread
             cursor.execute("""
                 INSERT INTO conversation_threads (thread_id, cooperative, user_id, session_id, message_count, last_message_at)
@@ -206,7 +229,7 @@ class PostgresConversationMemory(ConversationBufferMemory):
                     last_message_at = NOW()
                 RETURNING message_count
             """, (
-                self.thread_id,
+                thread_id,
                 self._extract_cooperative(),
                 self._extract_user_id(),
                 self._extract_session_id()
@@ -220,7 +243,7 @@ class PostgresConversationMemory(ConversationBufferMemory):
                 SELECT COALESCE(MAX(message_order), 0) + 1
                 FROM conversation_messages
                 WHERE thread_id = %s
-            """, (self.thread_id,))
+            """, (thread_id,))
             
             next_order = cursor.fetchone()[0]
             
@@ -238,7 +261,7 @@ class PostgresConversationMemory(ConversationBufferMemory):
                 (thread_id, message_role, message_content, message_order, tools_used, metadata)
                 VALUES (%s, %s, %s, %s, %s, %s)
             """, (
-                self.thread_id,
+                thread_id,
                 'user',
                 user_input,  # Store original query for conversation flow
                 next_order,
@@ -267,7 +290,7 @@ class PostgresConversationMemory(ConversationBufferMemory):
                 (thread_id, message_role, message_content, message_order, tools_used, metadata)
                 VALUES (%s, %s, %s, %s, %s, %s)
             """, (
-                self.thread_id,
+                thread_id,
                 'assistant',
                 response_summary,  # Store summary, not full response with data
                 next_order + 1,
@@ -279,7 +302,7 @@ class PostgresConversationMemory(ConversationBufferMemory):
             cursor.close()
             conn.close()
             
-            logger.debug(f"💾 Saved conversation context to PostgreSQL for thread: {self.thread_id}")
+            logger.debug(f"💾 Saved conversation context to PostgreSQL for thread: {thread_id}")
             logger.debug(f"   Entities: {query_context.get('entities', {})}")
             logger.debug(f"   Query type: {query_context.get('query_type', 'general')}")
             return True
@@ -334,7 +357,8 @@ class PostgresConversationMemory(ConversationBufferMemory):
         """Extract cooperative from thread_id"""
         # thread_id format: chat_{cooperative}_{user_id}_{session_id}
         # Example: "chat_leads_10_test_session_001"
-        parts = self.thread_id.split('_')
+        thread_id = getattr(self, 'thread_id', '')
+        parts = thread_id.split('_') if thread_id else []
         if len(parts) >= 2:
             return parts[1]  # cooperative
         return 'unknown'
@@ -343,7 +367,8 @@ class PostgresConversationMemory(ConversationBufferMemory):
         """Extract user_id from thread_id"""
         # thread_id format: chat_{cooperative}_{user_id}_{session_id}
         # Example: "chat_leads_10_test_session_001"
-        parts = self.thread_id.split('_')
+        thread_id = getattr(self, 'thread_id', '')
+        parts = thread_id.split('_') if thread_id else []
         if len(parts) >= 3:
             return parts[2]  # user_id
         return 'unknown'
@@ -352,7 +377,8 @@ class PostgresConversationMemory(ConversationBufferMemory):
         """Extract session_id from thread_id"""
         # thread_id format: chat_{cooperative}_{user_id}_{session_id}
         # Example: "chat_leads_10_test_session_001"
-        parts = self.thread_id.split('_')
+        thread_id = getattr(self, 'thread_id', '')
+        parts = thread_id.split('_') if thread_id else []
         if len(parts) >= 4:
             return '_'.join(parts[3:])  # session_id (may contain underscores)
         return None
@@ -394,17 +420,22 @@ class PostgresConversationMemory(ConversationBufferMemory):
             
             cursor = conn.cursor()
             
+            thread_id = getattr(self, 'thread_id', None)
+            if not thread_id:
+                logger.warning("thread_id not set, cannot clear conversation")
+                return
+            
             # Delete messages (CASCADE will handle it, but explicit is better)
-            cursor.execute("DELETE FROM conversation_messages WHERE thread_id = %s", (self.thread_id,))
+            cursor.execute("DELETE FROM conversation_messages WHERE thread_id = %s", (thread_id,))
             
             # Delete thread
-            cursor.execute("DELETE FROM conversation_threads WHERE thread_id = %s", (self.thread_id,))
+            cursor.execute("DELETE FROM conversation_threads WHERE thread_id = %s", (thread_id,))
             
             conn.commit()
             cursor.close()
             conn.close()
             
-            logger.info(f"🗑️ Cleared conversation from PostgreSQL for thread: {self.thread_id}")
+            logger.info(f"🗑️ Cleared conversation from PostgreSQL for thread: {thread_id}")
             
         except Exception as e:
             logger.error(f"Error clearing from PostgreSQL: {e}")

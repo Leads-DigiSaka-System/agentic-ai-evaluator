@@ -58,21 +58,54 @@ class AnalysisHybridSearch:
             raise
     
     @observe_operation(name="analysis_hybrid_search")
-    async def search(self, query: str, top_k: int = 5, cooperative: str = None, applicant: str = None, location: str = None) -> List[Dict[str, Any]]:
+    async def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        cooperative: str = None,
+        # All filter parameters (optional - extract from query)
+        location: str = None,
+        product: str = None,
+        crop: str = None,
+        season: str = None,
+        applicant: str = None,
+        cooperator: str = None,
+        form_type: str = None,
+        product_category: str = None,
+        # Date filters
+        application_date: str = None,  # YYYY-MM-DD format
+        planting_date: str = None  # YYYY-MM-DD format
+    ) -> List[Dict[str, Any]]:
         """
-        Search for relevant analysis documents with cooperative filtering for data isolation.
-        Same cooperative can see all data within that cooperative.
+        Search for relevant analysis documents with multiple filter support.
+        Results must match ALL specified filters (AND logic).
         
         Args:
             query: Search query string
             top_k: Number of top results to return (default: 5)
-            cooperative: Optional cooperative ID - if provided, only returns results belonging to that cooperative
+            cooperative: Cooperative ID for data isolation (required, passed automatically)
+            location: Optional location filter (e.g., "Zambales", "Laguna")
+            product: Optional product name filter (e.g., "iSMART NANO UREA")
+            crop: Optional crop type filter (e.g., "rice", "corn")
+            season: Optional season filter (e.g., "wet", "dry")
+            applicant: Optional applicant name filter
+            cooperator: Optional cooperator name filter
+            form_type: Optional form type filter
+            product_category: Optional product category filter
+            application_date: Optional application date filter (YYYY-MM-DD)
+            planting_date: Optional planting date filter (YYYY-MM-DD)
             
         Returns:
-            List of formatted analysis results with metadata (filtered by cooperative if provided)
+            List of formatted analysis results matching ALL specified filters
             
         Example:
-            >>> results = searcher.search("rice fertilizer demo", top_k=3, cooperative="coop001")
+            >>> results = searcher.search(
+            ...     "rice fertilizer demo",
+            ...     top_k=3,
+            ...     cooperative="Leads",
+            ...     location="Zambales",
+            ...     crop="rice"
+            ... )
         """
         if not query or not query.strip():
             self.logger.warning("Empty search query provided")
@@ -101,10 +134,19 @@ class AnalysisHybridSearch:
             # Each request has its own limit parameter, no shared state modification
             # This ensures concurrent searches don't interfere with each other
             documents = await self.dense_retriever._aget_relevant_documents(
-                query, 
+                query,
                 cooperative=cooperative,
-                applicant=applicant,  # ✅ Add applicant filter support
-                location=location,  # ✅ Add location filter support
+                # Pass all filter parameters
+                location=location,
+                product=product,
+                crop=crop,
+                season=season,
+                applicant=applicant,
+                cooperator=cooperator,
+                form_type=form_type,
+                product_category=product_category,
+                application_date=application_date,
+                planting_date=planting_date,
                 limit=top_k  # ✅ Pass limit as parameter - thread-safe!
             )
             
@@ -117,8 +159,19 @@ class AnalysisHybridSearch:
             })
             
             # ✅ Filter documents by score threshold (adaptive)
-            # Check if we have exact filter (applicant, location) for adaptive threshold
-            has_exact_filter = applicant is not None or location is not None
+            # Check if we have exact filter for adaptive threshold
+            has_exact_filter = any([
+                applicant is not None,
+                location is not None,
+                product is not None,
+                crop is not None,
+                season is not None,
+                cooperator is not None,
+                form_type is not None,
+                product_category is not None,
+                application_date is not None,
+                planting_date is not None
+            ])
             
             try:
                 # Try strict threshold first (adaptive based on query type)
@@ -419,6 +472,10 @@ class AnalysisHybridSearch:
                 "crop": payload.get("crop", ""),
                 "applicant": payload.get("applicant", ""),
                 "form_type": payload.get("form_type", ""),
+                # Date fields
+                "application_date": payload.get("application_date", ""),
+                "planting_date": payload.get("planting_date", ""),
+                "season": payload.get("season", ""),
                 
                 # Performance Metrics
                 "improvement_percent": float(payload.get("improvement_percent", 0.0)),

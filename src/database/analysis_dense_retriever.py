@@ -110,18 +110,43 @@ class QdrantDenseRetriever(BaseRetriever):
     
     # ✅ ONLY NEW LINE - ADD THIS DECORATOR
     @observe_operation(name="dense_vector_retrieval", capture_input=True, capture_output=True)
-    def _get_relevant_documents(self, query: str, cooperative: Optional[str] = None, applicant: Optional[str] = None, location: Optional[str] = None, limit: Optional[int] = None) -> List[Document]:
+    def _get_relevant_documents(
+        self,
+        query: str,
+        cooperative: Optional[str] = None,
+        limit: Optional[int] = None,
+        # All filter parameters (optional - extract from query)
+        location: Optional[str] = None,
+        product: Optional[str] = None,
+        crop: Optional[str] = None,
+        season: Optional[str] = None,
+        applicant: Optional[str] = None,
+        cooperator: Optional[str] = None,
+        form_type: Optional[str] = None,
+        product_category: Optional[str] = None,
+        # Date filters
+        application_date: Optional[str] = None,  # YYYY-MM-DD format
+        planting_date: Optional[str] = None  # YYYY-MM-DD format
+    ) -> List[Document]:
         """
-        Retrieve documents using dense vector search with optional cooperative filtering.
-        Same cooperative can see all data within that cooperative.
+        Retrieve documents using dense vector search with multiple filter support.
+        Results must match ALL specified filters (AND logic).
         
         Args:
             query: Search query string
-            cooperative: Optional cooperative ID for cooperative-specific access - filters at database level
+            cooperative: Cooperative ID for data isolation (required, passed automatically)
             limit: Optional limit override (if None, uses self.search_limit)
+            location: Optional location filter (e.g., "Zambales", "Laguna")
+            product: Optional product name filter (e.g., "iSMART NANO UREA")
+            crop: Optional crop type filter (e.g., "rice", "corn")
+            season: Optional season filter (e.g., "wet", "dry")
+            applicant: Optional applicant name filter
+            cooperator: Optional cooperator name filter
+            form_type: Optional form type filter
+            product_category: Optional product category filter
             
         Returns:
-            List of Document objects with metadata and scores
+            List of Document objects matching ALL specified filters
             
         Raises:
             ValueError: If query is empty or encoding fails
@@ -164,30 +189,62 @@ class QdrantDenseRetriever(BaseRetriever):
                 cooperative_for_filtering = cooperative.strip()
                 self.logger.debug(f"Will filter by cooperative in post-processing (case-insensitive): {cooperative_for_filtering}")
             
-            # ✅ Add applicant and location filters - but use semantic search + post-filtering for better flexibility
+            # ✅ Store all filters for post-filtering (case-insensitive matching)
             # Qdrant filters are case-sensitive, so we'll do semantic search first
-            # and filter by applicant/location in code for case-insensitive matching
-            # Store filters for post-filtering
-            applicant_for_filtering = None
-            location_for_filtering = None
-            
-            if applicant:
-                applicant_for_filtering = applicant.strip().lower()  # Normalize for case-insensitive matching
-                self.logger.debug(f"Will filter by applicant in post-processing: {applicant_for_filtering}")
+            # and filter by all parameters in code for case-insensitive matching
+            filters_for_post_processing = {}
             
             if location:
-                location_for_filtering = location.strip().lower()  # Normalize for case-insensitive matching
-                self.logger.debug(f"Will filter by location in post-processing: {location_for_filtering}")
+                # Keep location case for matching, but normalize for comparison
+                filters_for_post_processing['location'] = location.strip()
+                self.logger.info(f"🔍 Will filter by location: '{location.strip()}' (original: '{location}')")
+            
+            if product:
+                filters_for_post_processing['product'] = product.strip().lower()
+                self.logger.debug(f"Will filter by product: {filters_for_post_processing['product']}")
+            
+            if crop:
+                filters_for_post_processing['crop'] = crop.strip().lower()
+                self.logger.debug(f"Will filter by crop: {filters_for_post_processing['crop']}")
+            
+            if season:
+                filters_for_post_processing['season'] = season.strip().lower()
+                self.logger.debug(f"Will filter by season: {filters_for_post_processing['season']}")
+            
+            if applicant:
+                filters_for_post_processing['applicant'] = applicant.strip().lower()
+                self.logger.debug(f"Will filter by applicant: {filters_for_post_processing['applicant']}")
+            
+            if cooperator:
+                filters_for_post_processing['cooperator'] = cooperator.strip().lower()
+                self.logger.debug(f"Will filter by cooperator: {filters_for_post_processing['cooperator']}")
+            
+            if form_type:
+                filters_for_post_processing['form_type'] = form_type.strip().lower()
+                self.logger.debug(f"Will filter by form_type: {filters_for_post_processing['form_type']}")
+            
+            if product_category:
+                filters_for_post_processing['product_category'] = product_category.strip().lower()
+                self.logger.debug(f"Will filter by product_category: {filters_for_post_processing['product_category']}")
+            
+            if application_date:
+                # Keep date as-is (not lowercased) for date matching
+                filters_for_post_processing['application_date'] = application_date.strip()
+                self.logger.debug(f"Will filter by application_date: {filters_for_post_processing['application_date']}")
+            
+            if planting_date:
+                # Keep date as-is (not lowercased) for date matching
+                filters_for_post_processing['planting_date'] = planting_date.strip()
+                self.logger.debug(f"Will filter by planting_date: {filters_for_post_processing['planting_date']}")
             
             if filter_conditions:
                 query_filter = models.Filter(must=filter_conditions)
             
             # ✅ Use provided limit or fallback to instance limit
-            # If filtering by applicant, location, or cooperative (post-filtering), increase limit to get more candidates
+            # If filtering by any parameter (post-filtering), increase limit to get more candidates
             base_limit = limit if limit is not None else self.search_limit
             # If we're doing post-filtering (case-insensitive), we need more candidates
-            # Note: cooperative_for_filtering means we'll do post-filtering (case-insensitive check)
-            has_post_filter = applicant_for_filtering or location_for_filtering or cooperative_for_filtering
+            has_post_filter = len(filters_for_post_processing) > 0 or cooperative_for_filtering
             search_limit = base_limit * 5 if has_post_filter else base_limit  # Get 5x more if post-filtering
             
             # ✅ Search with database-level filtering for security and performance
@@ -200,8 +257,13 @@ class QdrantDenseRetriever(BaseRetriever):
             )
             
             # ✅ NEW: Log search results
+            self.logger.info(f"🔍 Qdrant search returned {len(search_results)} results before post-filtering")
             if search_results:
                 scores = [result.score for result in search_results]
+                # Log first few results for debugging
+                for i, result in enumerate(search_results[:3]):
+                    payload = result.payload or {}
+                    self.logger.debug(f"  Result {i+1}: score={result.score:.4f}, location={payload.get('location', 'N/A')}, cooperative={payload.get('cooperative', 'N/A')}")
                 update_trace_with_metrics({
                     "results_found": len(search_results),
                     "top_score": scores[0],
@@ -247,117 +309,150 @@ class QdrantDenseRetriever(BaseRetriever):
                         )
                         continue  # Skip this document
                 
-                # ✅ Post-filter by applicant or location if specified (case-insensitive with fuzzy matching)
+                # ✅ Post-filter by ALL specified filters (AND logic - ALL must match)
                 import re
                 def normalize_name(name):
+                    """Normalize name for case-insensitive matching"""
                     return re.sub(r'[^\w\s]', '', name.lower().strip())
                 
-                applicant_match = False
-                location_match = False
+                def check_filter_match(filter_value: str, doc_value: str, filter_type: str) -> tuple[bool, float]:
+                    """
+                    Check if document value matches filter value.
+                    Returns: (match, boost_amount)
+                    """
+                    if not filter_value or not doc_value:
+                        return False, 0.0
+                    
+                    # Special handling for date fields
+                    if filter_type in ['application_date', 'planting_date']:
+                        # For dates, check exact match or date range
+                        filter_date = filter_value.strip()
+                        doc_date = doc_value.strip()
+                        
+                        # Exact date match
+                        if filter_date == doc_date:
+                            return True, 0.3  # Higher boost for exact date match
+                        
+                        # Date range support (e.g., "2025-06" matches "2025-06-19")
+                        if len(filter_date) == 7 and filter_date[4] == '-':  # YYYY-MM format
+                            if doc_date.startswith(filter_date):
+                                return True, 0.2
+                        
+                        # Year-only match (e.g., "2025" matches "2025-06-19")
+                        if len(filter_date) == 4 and filter_date.isdigit():
+                            if doc_date.startswith(filter_date):
+                                return True, 0.1
+                        
+                        return False, 0.0
+                    
+                    # For non-date fields, use text matching
+                    filter_norm = normalize_name(filter_value)
+                    doc_norm = normalize_name(doc_value)
+                    
+                    # Exact match
+                    if filter_norm == doc_norm:
+                        return True, 0.2
+                    
+                    # Substring match (for location: "Zambales" in "PI, DIRITA, IBA, ZAMBALES")
+                    if filter_type == 'location':
+                        # Case-insensitive substring match
+                        if filter_norm in doc_norm or doc_norm in filter_norm:
+                            self.logger.debug(f"✅ Location match: '{filter_value}' found in '{doc_value}'")
+                            return True, 0.2
+                        else:
+                            self.logger.debug(f"❌ Location mismatch: '{filter_value}' not in '{doc_value}'")
+                    
+                    # Word-level matching (for names, products, etc.)
+                    filter_words = set(filter_norm.split())
+                    doc_words = set(doc_norm.split())
+                    if len(filter_words) > 0:
+                        match_ratio = len(filter_words.intersection(doc_words)) / len(filter_words)
+                        if match_ratio >= 0.8:  # 80%+ words match
+                            return True, 0.1
+                        elif match_ratio >= 0.6:  # 60%+ words match (fuzzy)
+                            return True, 0.05
+                    
+                    return False, 0.0
+                
+                # Check ALL filters - ALL must match (AND logic)
+                all_filters_passed = True
                 boost_amount = 0.0
                 match_flags = {}
+                failed_filters = []
                 
-                # Check applicant filter
-                if applicant_for_filtering:
-                    applicant_in_doc = payload.get("applicant", "").strip().lower()
-                    applicant_query_norm = normalize_name(applicant_for_filtering)
-                    applicant_doc_norm = normalize_name(applicant_in_doc)
-                    
-                    # Exact match after normalization
-                    if applicant_query_norm == applicant_doc_norm:
-                        applicant_match = True
-                        boost_amount = max(boost_amount, 0.2)  # Higher boost for exact
-                        match_flags["exact_applicant_match"] = True
+                for filter_name, filter_value in filters_for_post_processing.items():
+                    doc_value = payload.get(filter_name, "").strip()
+                    # For date fields, don't normalize (keep original format)
+                    if filter_name in ['application_date', 'planting_date']:
+                        match, boost = check_filter_match(filter_value, doc_value, filter_name)
                     else:
-                        # Fuzzy match: check if all words match
-                        query_words = set(applicant_query_norm.split())
-                        doc_words = set(applicant_doc_norm.split())
-                        if len(query_words) > 0:
-                            match_ratio = len(query_words.intersection(doc_words)) / len(query_words)
-                            if match_ratio >= 0.8:  # 80%+ words match
-                                applicant_match = True
-                                boost_amount = max(boost_amount, 0.1)  # Smaller boost for fuzzy
-                                match_flags["fuzzy_applicant_match"] = True
-                
-                # Check location filter
-                if location_for_filtering:
-                    location_in_doc = payload.get("location", "").strip().lower()
-                    location_query_norm = normalize_name(location_for_filtering)
-                    location_doc_norm = normalize_name(location_in_doc)
+                        # For other fields, use normalized matching
+                        match, boost = check_filter_match(filter_value, doc_value, filter_name)
                     
-                    # Substring match (handles "Zambales" in "PI, DIRITA, IBA, ZAMBALES")
-                    if location_query_norm in location_doc_norm or location_doc_norm in location_query_norm:
-                        location_match = True
-                        boost_amount = max(boost_amount, 0.2)  # Higher boost for substring match
-                        match_flags["location_match"] = True
+                    if match:
+                        boost_amount = max(boost_amount, boost)
+                        match_flags[f"{filter_name}_match"] = True
+                        self.logger.debug(f"✅ Filter match: {filter_name}='{filter_value}' matches doc value '{doc_value}'")
                     else:
-                        # Word-level matching
-                        location_query_words = set(location_query_norm.split())
-                        location_doc_words = set(location_doc_norm.split())
-                        if len(location_query_words) > 0:
-                            match_ratio = len(location_query_words.intersection(location_doc_words)) / len(location_query_words)
-                            if match_ratio >= 0.7:  # 70%+ words match
-                                location_match = True
-                                boost_amount = max(boost_amount, 0.1)  # Smaller boost for fuzzy
-                                match_flags["location_fuzzy_match"] = True
+                        all_filters_passed = False
+                        failed_filters.append(filter_name)
+                        self.logger.debug(
+                            f"❌ Filter mismatch - {filter_name}: "
+                            f"'{doc_value}' doesn't match '{filter_value}'"
+                        )
                 
-                # Determine if we should include this document
-                # If both filters specified, both must match
-                # If only one filter specified, that one must match
-                if applicant_for_filtering and location_for_filtering:
-                    # Both filters - both must match
-                    if not (applicant_match and location_match):
-                        self.logger.debug(
-                            f"Skipping document - filter mismatch: "
-                            f"applicant_match={applicant_match}, location_match={location_match}"
-                        )
-                        continue
-                elif applicant_for_filtering:
-                    # Only applicant filter - must match
-                    if not applicant_match:
-                        self.logger.debug(
-                            f"Skipping document - applicant mismatch: "
-                            f"'{payload.get('applicant', '')}' != '{applicant_for_filtering}'"
-                        )
-                        continue
-                elif location_for_filtering:
-                    # Only location filter - must match
-                    if not location_match:
-                        self.logger.debug(
-                            f"Skipping document - location mismatch: "
-                            f"'{payload.get('location', '')}' doesn't contain '{location_for_filtering}'"
-                        )
-                        continue
+                # If ANY filter fails, skip this document (AND logic)
+                if not all_filters_passed:
+                    self.logger.info(
+                        f"❌ Document filtered out - failed filters: {failed_filters}. "
+                        f"Location in doc: '{payload.get('location', 'N/A')}', "
+                        f"Cooperative in doc: '{payload.get('cooperative', 'N/A')}'"
+                    )
+                    continue
+                else:
+                    self.logger.info(f"✅ Document passed all filters! Location: '{payload.get('location', 'N/A')}', Cooperative: '{payload.get('cooperative', 'N/A')}'")
                 
-                # If we have matches, add to exact_matches with boost
+                # All filters passed - add document
+                # Boost score if we have exact/fuzzy matches
+                final_score = result.score
                 if boost_amount > 0:
+                    final_score = min(1.0, result.score + boost_amount)
+                    # Add to exact_matches for priority sorting
                     doc = Document(
                         page_content=payload.get("summary_text", ""),
                         metadata={
                             **payload,
-                            "score": min(1.0, result.score + boost_amount),
+                            "score": final_score,
                             "id": result.id,
                             **match_flags
                         }
                     )
                     exact_matches.append(doc)
-                    continue
-                
-                # No applicant filter - add all documents
-                doc = Document(
-                    page_content=payload.get("summary_text", ""),
-                    metadata={
-                        **payload,  # Include all payload fields (including user_id if present)
-                        "score": result.score,
-                        "id": result.id
-                    }
-                )
-                documents.append(doc)
+                else:
+                    # No boost - add to regular documents
+                    doc = Document(
+                        page_content=payload.get("summary_text", ""),
+                        metadata={
+                            **payload,
+                            "score": final_score,
+                            "id": result.id
+                        }
+                    )
+                    documents.append(doc)
             
             # Put exact matches first, then other documents
             documents = exact_matches + documents
             
             # ORIGINAL CODE: Log and return
+            self.logger.info(f"📊 Final results: {len(documents)} documents after filtering (exact matches: {len(exact_matches)})")
+            if documents:
+                for i, doc in enumerate(documents[:3]):
+                    location = doc.metadata.get('location', 'N/A')
+                    cooperative = doc.metadata.get('cooperative', 'N/A')
+                    self.logger.info(f"  Result {i+1}: location='{location}', cooperative='{cooperative}'")
+            else:
+                self.logger.warning(f"⚠️ No documents found after filtering! Check cooperative and location matching.")
+            
             self.logger.db_query("dense search", f"query: '{query[:50]}...'", len(documents))
             return documents
             
@@ -368,7 +463,24 @@ class QdrantDenseRetriever(BaseRetriever):
             self.logger.db_error("dense search", str(e))
             raise
     
-    async def _aget_relevant_documents(self, query: str, cooperative: Optional[str] = None, applicant: Optional[str] = None, location: Optional[str] = None, limit: Optional[int] = None) -> List[Document]:
+    async def _aget_relevant_documents(
+        self,
+        query: str,
+        cooperative: Optional[str] = None,
+        limit: Optional[int] = None,
+        # All filter parameters
+        location: Optional[str] = None,
+        product: Optional[str] = None,
+        crop: Optional[str] = None,
+        season: Optional[str] = None,
+        applicant: Optional[str] = None,
+        cooperator: Optional[str] = None,
+        form_type: Optional[str] = None,
+        product_category: Optional[str] = None,
+        # Date filters
+        application_date: Optional[str] = None,
+        planting_date: Optional[str] = None
+    ) -> List[Document]:
         """
         Async version of _get_relevant_documents.
         
@@ -387,7 +499,13 @@ class QdrantDenseRetriever(BaseRetriever):
         loop = asyncio.get_event_loop()
         # Run blocking operations (encoding + Qdrant search) in thread pool
         # ✅ Pass limit as parameter to avoid race conditions with shared state
-        return await loop.run_in_executor(None, self._get_relevant_documents, query, cooperative, applicant, location, limit)
+        return await loop.run_in_executor(
+            None,
+            self._get_relevant_documents,
+            query, cooperative, limit,
+            location, product, crop, season, applicant, cooperator, form_type, product_category,
+            application_date, planting_date
+        )
     
     def __repr__(self) -> str:
         return (f"QdrantDenseRetriever(collection='{self.collection_name}', "

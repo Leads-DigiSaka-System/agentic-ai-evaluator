@@ -40,6 +40,14 @@ def format_search_results_to_markdown(
             "executive_summary",  # Most important - already synthesized
             "performance_significance"
         ]
+        
+        # Add date fields if query mentions dates/planting/application
+        if query:
+            query_lower = query.lower()
+            if any(keyword in query_lower for keyword in ["planting", "plant", "tanim", "planted", "planting_date"]):
+                include_fields.append("planting_date")
+            if any(keyword in query_lower for keyword in ["application", "applied", "application_date", "apply"]):
+                include_fields.append("application_date")
     
     markdown_lines = []
     
@@ -197,6 +205,16 @@ def extract_most_relevant_parts(
         if "season" in query_lower or "wet" in query_lower or "dry" in query_lower:
             if result.get("season"):
                 relevant["season"] = result.get("season")
+        
+        # If query mentions planting/planted/tanim, include planting_date
+        if any(keyword in query_lower for keyword in ["planting", "plant", "tanim", "planted", "planting_date", "kailan"]):
+            if result.get("planting_date"):
+                relevant["planting_date"] = result.get("planting_date")
+        
+        # If query mentions application/applied, include application_date
+        if any(keyword in query_lower for keyword in ["application", "applied", "application_date", "apply"]):
+            if result.get("application_date"):
+                relevant["application_date"] = result.get("application_date")
     
     # Remove None/empty values
     return {k: v for k, v in relevant.items() if v is not None and v != "" and v != "N/A"}

@@ -148,6 +148,70 @@ def create_conversation_tables() -> bool:
         return False
 
 
+def create_database_if_not_exists() -> bool:
+    """
+    Create PostgreSQL database if it doesn't exist.
+    
+    Connects to 'postgres' database first (default PostgreSQL database),
+    then creates the target database if needed.
+    
+    Returns:
+        True if database exists or was created successfully, False otherwise
+    """
+    try:
+        # Build default database URL (connect to 'postgres' database)
+        # Handle both cases: POSTGRES_URL from env or built from components
+        if '/' in POSTGRES_URL:
+            # Extract base URL (everything before the last /)
+            default_db_url = POSTGRES_URL.rsplit('/', 1)[0] + '/postgres'
+        else:
+            # Fallback: build from components
+            if POSTGRES_PASSWORD:
+                default_db_url = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/postgres"
+            else:
+                default_db_url = f"postgresql://{POSTGRES_USER}@{POSTGRES_HOST}:{POSTGRES_PORT}/postgres"
+        
+        logger.info(f"🔍 Checking if database '{POSTGRES_DB}' exists...")
+        conn = psycopg2.connect(default_db_url)
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        cursor = conn.cursor()
+        
+        # Check if database exists
+        cursor.execute("""
+            SELECT 1 FROM pg_database WHERE datname = %s
+        """, (POSTGRES_DB,))
+        
+        exists = cursor.fetchone()
+        
+        if not exists:
+            logger.info(f"📦 Creating database '{POSTGRES_DB}'...")
+            # Create database (must be done outside transaction)
+            cursor.execute(sql.SQL("CREATE DATABASE {}").format(
+                sql.Identifier(POSTGRES_DB)
+            ))
+            logger.info(f"✅ Database '{POSTGRES_DB}' created successfully!")
+        else:
+            logger.info(f"✅ Database '{POSTGRES_DB}' already exists")
+        
+        cursor.close()
+        conn.close()
+        return True
+        
+    except psycopg2.OperationalError as e:
+        if "password authentication failed" in str(e).lower():
+            logger.error(f"❌ PostgreSQL authentication failed. Check POSTGRES_USER and POSTGRES_PASSWORD")
+        elif "could not connect" in str(e).lower():
+            logger.error(f"❌ Could not connect to PostgreSQL at {POSTGRES_HOST}:{POSTGRES_PORT}. Is PostgreSQL running?")
+        else:
+            logger.error(f"❌ PostgreSQL connection error: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Failed to create database: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
+        return False
+
+
 def setup_postgres_memory() -> bool:
     """
     Complete setup: Create database (if needed) and conversation memory tables.
@@ -157,7 +221,6 @@ def setup_postgres_memory() -> bool:
     """
     try:
         # Step 1: Create database if needed
-        from src.database.postgres_setup import create_database_if_not_exists
         if not create_database_if_not_exists():
             logger.error("❌ Failed to create database")
             return False

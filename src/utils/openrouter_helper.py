@@ -68,6 +68,10 @@ def create_openrouter_llm(
         # OpenRouter is OpenAI-compatible, so we can use ChatOpenAI
         # Try different parameter combinations to ensure API key is set correctly
         
+        # CRITICAL: Disable streaming for tool-based agents
+        # Tools are not supported in streaming mode
+        streaming = False
+        
         # Method 1: Try with api_key parameter (newer langchain versions)
         try:
             llm = ChatOpenAI(
@@ -76,6 +80,7 @@ def create_openrouter_llm(
                 base_url="https://openrouter.ai/api/v1",
                 temperature=temperature,
                 max_tokens=max_tokens,
+                streaming=streaming,  # Disable streaming for tools
                 callbacks=callbacks,
             )
             logger.debug("Using api_key parameter (newer format)")
@@ -89,6 +94,7 @@ def create_openrouter_llm(
                     base_url="https://openrouter.ai/api/v1",
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    streaming=streaming,  # Disable streaming for tools
                     callbacks=callbacks,
                 )
                 logger.debug("Using openai_api_key parameter")
@@ -102,6 +108,7 @@ def create_openrouter_llm(
                         openai_api_base="https://openrouter.ai/api/v1",
                         temperature=temperature,
                         max_tokens=max_tokens,
+                        streaming=streaming,  # Disable streaming for tools
                         callbacks=callbacks,
                     )
                     logger.debug("Using model_name and openai_api_base parameters")
