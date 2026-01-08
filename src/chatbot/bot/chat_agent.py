@@ -13,6 +13,7 @@ Features:
 """
 from typing import List, Optional, Dict, Any
 import re
+from datetime import datetime, timedelta
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -76,6 +77,104 @@ logger = get_clean_logger(__name__)
 # This prevents token limit issues and keeps context relevant
 # Last 10 messages = 5 conversation turns (user + assistant pairs) - Very short context
 # Value is now loaded from config.py (MAX_CONTEXT_MESSAGES env var, default: 10)
+
+
+def _is_clarification_response(response_text: str) -> bool:
+    """
+    Check if the agent's response is asking for clarification.
+    
+    This is used to determine if the agent correctly identified an ambiguous query
+    and is asking for clarification instead of calling tools.
+    
+    Args:
+        response_text: Agent's response text
+    
+    Returns:
+        True if response appears to be asking for clarification, False otherwise
+    """
+    if not response_text:
+        return False
+    
+    response_lower = response_text.lower()
+    
+    # Check for clarification patterns
+    clarification_indicators = [
+        'ano pong specific',
+        'pwede niyo po bang',
+        'gusto niyo pong',
+        'mayroon kaming',
+        'o gusto niyo pong',
+        'specific na',
+        'clarification',
+        'clarify',
+    ]
+    
+    # Check if response contains question marks and clarification keywords
+    has_question_mark = '?' in response_text
+    has_clarification_keywords = any(indicator in response_lower for indicator in clarification_indicators)
+    
+    # If it has both question marks and clarification keywords, it's likely a clarification
+    if has_question_mark and has_clarification_keywords:
+        return True
+    
+    # Also check if response is asking what the user wants (common clarification pattern)
+    asking_patterns = [
+        r'ano\s+pong\s+.*\?',
+        r'gusto\s+niyo\s+pong\s+.*\?',
+        r'pwede\s+niyo\s+po\s+bang\s+.*\?',
+    ]
+    
+    for pattern in asking_patterns:
+        if re.search(pattern, response_lower):
+            return True
+    
+    return False
+
+
+def _extract_clarification_questions(response_text: str) -> List[str]:
+    """
+    Extract clarification questions from agent response.
+    
+    Looks for patterns like:
+    - "Ano pong specific na..."
+    - "Pwede niyo po bang..."
+    - Questions ending with "?"
+    
+    Args:
+        response_text: Agent's response text
+    
+    Returns:
+        List of clarification questions found in response
+    """
+    if not response_text:
+        return []
+    
+    questions = []
+    
+    # Pattern 1: Questions starting with "Ano pong" or "Pwede niyo po bang"
+    clarification_patterns = [
+        r'(Ano pong[^?]+\?)',
+        r'(Pwede niyo po bang[^?]+\?)',
+        r'(Gusto niyo pong[^?]+\?)',
+        r'(Mayroon kaming[^?]+\?)',
+    ]
+    
+    for pattern in clarification_patterns:
+        matches = re.findall(pattern, response_text, re.IGNORECASE)
+        questions.extend(matches)
+    
+    # Pattern 2: Multiple questions separated by newlines or periods
+    # Look for sentences ending with "?" that seem like clarification
+    question_sentences = re.findall(r'([^.!?]*\?)', response_text)
+    for q in question_sentences:
+        q = q.strip()
+        # Filter for clarification-like questions (contain keywords)
+        if any(keyword in q.lower() for keyword in ['specific', 'gusto', 'ano', 'pwede', 'mayroon']):
+            if q not in questions:
+                questions.append(q)
+    
+    # Limit to 2-3 most relevant questions
+    return questions[:3]
 
 
 def _clean_agent_response(response_text: str) -> str:
@@ -418,6 +517,7 @@ def invoke_agent(
         # Initialize memory for this thread
         memory = None
         chat_history = []
+        session_expired = False
         
         if thread_id:
             try:
@@ -430,6 +530,40 @@ def invoke_agent(
                     output_key="output",
                     memory_key="chat_history"  # Explicitly set memory key
                 )
+                
+                # Check if session expired (memory._load_from_postgres returns session_expired flag)
+                # The memory is loaded automatically in __init__, so we check the result
+                if hasattr(memory, '_loaded') and not memory._loaded:
+                    # If memory wasn't loaded, check if it's because session expired
+                    # We'll detect this by checking if chat_history is empty after initialization
+                    if not hasattr(memory, 'chat_memory') or not memory.chat_memory.messages:
+                        # Check if session expired by querying directly
+                        from src.utils.postgres_pool import get_postgres_connection, return_connection
+                        from src.utils.config import SESSION_TIMEOUT_MINUTES
+                        conn = get_postgres_connection()
+                        if conn:
+                            try:
+                                cursor = conn.cursor()
+                                cursor.execute("""
+                                    SELECT last_message_at
+                                    FROM conversation_threads
+                                    WHERE thread_id = %s
+                                """, (thread_id,))
+                                thread_info = cursor.fetchone()
+                                if thread_info and thread_info[0]:
+                                    last_message_at = thread_info[0]
+                                    if isinstance(last_message_at, datetime):
+                                        if last_message_at.tzinfo is not None:
+                                            last_message_at = last_message_at.replace(tzinfo=None)
+                                    timeout_threshold = datetime.now() - timedelta(minutes=SESSION_TIMEOUT_MINUTES)
+                                    if last_message_at < timeout_threshold:
+                                        session_expired = True
+                                        logger.info(f"⏰ Session expired detected for thread {thread_id}")
+                                cursor.close()
+                            except Exception as e:
+                                logger.debug(f"Could not check session expiration: {e}")
+                            finally:
+                                return_connection(conn)
                 
                 # Load chat history from memory
                 if hasattr(memory, 'chat_memory') and hasattr(memory.chat_memory, 'messages'):
@@ -470,12 +604,14 @@ def invoke_agent(
                 logger.info("Continuing without memory (conversation will not have context)")
         
         # Prepare input for agent with chat history
+        # NOTE: We trust the LLM to determine if query is ambiguous based on system prompt
+        # The LLM will handle clarification requests according to the system prompt instructions
         agent_input = {
             "input": message,
             "chat_history": chat_history  # Add chat history to input
         }
         
-        # Invoke agent
+        # Invoke agent - LLM will determine if clarification is needed based on system prompt
         logger.info(f"🔍 Invoking agent with message: {message[:100]}...")
         logger.debug(f"Agent input keys: {list(agent_input.keys())}")
         logger.debug(f"Chat history length: {len(chat_history) if chat_history else 0}")
@@ -548,40 +684,48 @@ def invoke_agent(
         if not tools_used:
             logger.warning(f"⚠️ No tools were called for query: {message[:100]}...")
             logger.warning(f"Agent output: {response_text[:200] if response_text else 'EMPTY'}...")
-            logger.warning(f"⚠️ This should not happen - agent MUST use tools for data queries!")
             
-            # Try to force tool usage by re-invoking with explicit instruction
-            if "intermediate_steps" not in result or len(result.get("intermediate_steps", [])) == 0:
-                logger.info("🔄 Attempting to force tool usage with explicit instruction...")
-                forced_message = f"MUST USE TOOLS: {message}\n\nIMPORTANT: You MUST call a search tool (search_analysis_tool, search_by_location_tool, etc.) to answer this question. You cannot answer without using tools."
-                try:
-                    forced_result = agent.invoke({
-                        "input": forced_message,
-                        "chat_history": chat_history
-                    })
-                    if "intermediate_steps" in forced_result and len(forced_result["intermediate_steps"]) > 0:
-                        logger.info("✅ Forced tool usage succeeded")
-                        result = forced_result
-                        response_text = forced_result.get("output", response_text)
-                        # Re-extract tools_used
-                        tools_used = []
-                        for step in forced_result["intermediate_steps"]:
-                            if len(step) > 0:
-                                action = step[0]
-                                if hasattr(action, 'tool'):
-                                    tool_name = action.tool
-                                elif isinstance(action, dict):
-                                    tool_name = action.get('tool', '')
-                                elif hasattr(action, 'tool_name'):
-                                    tool_name = action.tool_name
-                                else:
-                                    tool_name = str(action)
-                                if tool_name and tool_name not in tools_used:
-                                    tools_used.append(tool_name)
-                    else:
-                        logger.error("❌ Forced tool usage also failed - agent is not recognizing tools")
-                except Exception as e:
-                    logger.error(f"Error during forced tool usage: {e}")
+            # Check if agent is asking for clarification (this is CORRECT behavior, don't force tools)
+            is_clarification = _is_clarification_response(response_text)
+            
+            if is_clarification:
+                logger.info("✅ Agent is asking for clarification - this is correct, no tools needed")
+                # This is expected behavior for ambiguous queries - don't force tool usage
+            else:
+                logger.warning(f"⚠️ This should not happen - agent MUST use tools for data queries!")
+                
+                # Try to force tool usage by re-invoking with explicit instruction
+                if "intermediate_steps" not in result or len(result.get("intermediate_steps", [])) == 0:
+                    logger.info("🔄 Attempting to force tool usage with explicit instruction...")
+                    forced_message = f"MUST USE TOOLS: {message}\n\nIMPORTANT: You MUST call a search tool (search_analysis_tool, search_by_location_tool, etc.) to answer this question. You cannot answer without using tools."
+                    try:
+                        forced_result = agent.invoke({
+                            "input": forced_message,
+                            "chat_history": chat_history
+                        })
+                        if "intermediate_steps" in forced_result and len(forced_result["intermediate_steps"]) > 0:
+                            logger.info("✅ Forced tool usage succeeded")
+                            result = forced_result
+                            response_text = forced_result.get("output", response_text)
+                            # Re-extract tools_used
+                            tools_used = []
+                            for step in forced_result["intermediate_steps"]:
+                                if len(step) > 0:
+                                    action = step[0]
+                                    if hasattr(action, 'tool'):
+                                        tool_name = action.tool
+                                    elif isinstance(action, dict):
+                                        tool_name = action.get('tool', '')
+                                    elif hasattr(action, 'tool_name'):
+                                        tool_name = action.tool_name
+                                    else:
+                                        tool_name = str(action)
+                                    if tool_name and tool_name not in tools_used:
+                                        tools_used.append(tool_name)
+                        else:
+                            logger.error("❌ Forced tool usage also failed - agent is not recognizing tools")
+                    except Exception as e:
+                        logger.error(f"Error during forced tool usage: {e}")
         
         # Clean and convert technical responses to conversational
         response_text = _clean_agent_response(response_text)
@@ -616,6 +760,9 @@ def invoke_agent(
             except Exception as e:
                 logger.warning(f"Failed to save conversation to memory: {e}")
         
+        # Extract clarification questions from response
+        clarification_questions = _extract_clarification_questions(response_text)
+        
         return {
             "response": response_text,
             "session_id": session_id or thread_id,
@@ -625,7 +772,10 @@ def invoke_agent(
                 "cooperative": cooperative,
                 "thread_id": thread_id
             },
-            "sources": []
+            "sources": [],
+            "clarification_questions": clarification_questions,
+            "session_expired": session_expired,
+            "session_active": not session_expired
         }
         
     except Exception as e:

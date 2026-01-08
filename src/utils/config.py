@@ -134,6 +134,12 @@ MAX_RETRY_ATTEMPTS = int(os.getenv("MAX_RETRY_ATTEMPTS", "3"))
 # LLM timeout in seconds for each API call
 LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
 
+# Session timeout configuration
+# Session expires after this many minutes of inactivity (default: 30 minutes)
+SESSION_TIMEOUT_MINUTES = int(os.getenv("SESSION_TIMEOUT_MINUTES", "30"))
+# Auto-cleanup expired sessions older than this many days (default: 7 days)
+SESSION_CLEANUP_DAYS = int(os.getenv("SESSION_CLEANUP_DAYS", "7"))
+
 # Retry delay configuration (exponential backoff)
 # Base delay in seconds (will be multiplied by 2^attempt)
 LLM_RETRY_BASE_DELAY = float(os.getenv("LLM_RETRY_BASE_DELAY", "1.0"))

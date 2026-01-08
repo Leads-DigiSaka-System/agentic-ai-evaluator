@@ -64,6 +64,9 @@ class ChatResponse(BaseModel):
     session_id: str = Field(..., description="Session ID for this conversation")
     tools_used: List[str] = Field(default_factory=list, description="List of tools used by agent")
     sources: List[Dict[str, Any]] = Field(default_factory=list, description="Data sources/references used")
+    clarification_questions: Optional[List[str]] = Field(default_factory=list, description="Follow-up questions if query needs clarification")
+    session_expired: bool = Field(default=False, description="True if session was expired and cleared")
+    session_active: bool = Field(default=True, description="True if session is still active")
 
 
 @router.post("")
@@ -197,6 +200,9 @@ async def chat(
             response_text = result.get("response", "I'm sorry, I couldn't process your request.")
             tools_used = result.get("tools_used", [])
             metadata = result.get("metadata", {})
+            clarification_questions = result.get("clarification_questions", [])
+            session_expired = result.get("session_expired", False)
+            session_active = result.get("session_active", True)
             
             # Extract sources - use sources from result if available
             sources = result.get("sources", [])
@@ -212,18 +218,22 @@ async def chat(
                 "message_length": len(body.message),
                 "response_length": len(response_text),
                 "tools_used_count": len(tools_used),
+                "clarification_asked": len(clarification_questions) > 0,
                 "session_id": session_id,
                 "cooperative": cooperative,
                 "user_id": user_id
             })
             
-            logger.info(f"Chat response generated (tools used: {len(tools_used)})")
+            logger.info(f"Chat response generated (tools used: {len(tools_used)}, clarifications: {len(clarification_questions)})")
             
             return ChatResponse(
                 response=response_text,
                 session_id=session_id,
                 tools_used=tools_used,
-                sources=sources
+                sources=sources,
+                clarification_questions=clarification_questions,
+                session_expired=session_expired,
+                session_active=session_active
             )
             
         except Exception as agent_error:
@@ -429,6 +439,66 @@ async def chat_health_check(
             "error": str(e),
             "timestamp": datetime.now().isoformat()
         }
+
+
+@router.post("/reset")
+@limiter.limit("10/minute")
+@observe_operation(name="reset_conversation")
+async def reset_conversation(
+    request: Request,
+    session_id: str = Query(..., description="Session ID to reset"),
+    cooperative: str = Depends(get_cooperative),
+    user_id: str = Depends(get_user_id)
+):
+    """
+    Reset/end a conversation session.
+    
+    This clears all conversation history for the specified session.
+    Use this when you want to start a fresh conversation.
+    
+    Args:
+        session_id: Session ID to reset
+        cooperative: Cooperative ID (from header)
+        user_id: User ID (from header)
+    
+    Returns:
+        Reset confirmation
+    """
+    try:
+        # Generate thread_id
+        thread_id = generate_thread_id(
+            cooperative=cooperative,
+            user_id=user_id,
+            session_id=session_id
+        )
+        
+        # Clear conversation memory
+        from src.chatbot.memory.simple_memory import clear_thread_memory
+        success = clear_thread_memory(thread_id)
+        
+        if success:
+            logger.info(f"✅ Conversation reset for session: {session_id} (thread: {thread_id})")
+            return {
+                "status": "success",
+                "message": "Conversation reset successfully",
+                "session_id": session_id,
+                "thread_id": thread_id
+            }
+        else:
+            logger.warning(f"⚠️ Failed to reset conversation for session: {session_id}")
+            return {
+                "status": "partial",
+                "message": "Conversation reset attempted (some data may remain)",
+                "session_id": session_id,
+                "thread_id": thread_id
+            }
+    except Exception as e:
+        import traceback
+        logger.error(f"Failed to reset conversation: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to reset conversation. Please try again later."
+        )
 
 
 @router.delete("/cache")

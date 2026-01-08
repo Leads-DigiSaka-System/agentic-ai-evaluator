@@ -7,12 +7,12 @@ from typing import Dict, Optional, List, Any
 from langchain.memory import ConversationBufferMemory
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from src.utils.clean_logger import get_clean_logger
-from src.utils.config import POSTGRES_URL, MAX_MESSAGES_TO_LOAD
+from src.utils.config import POSTGRES_URL, MAX_MESSAGES_TO_LOAD, SESSION_TIMEOUT_MINUTES
 from src.utils.postgres_pool import get_postgres_connection, return_connection
 import psycopg2
 from psycopg2.extras import Json
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = get_clean_logger(__name__)
 
@@ -53,16 +53,18 @@ class PostgresConversationMemory(ConversationBufferMemory):
         """
         return get_postgres_connection()
     
-    def _load_from_postgres(self) -> bool:
+    def _load_from_postgres(self) -> tuple[bool, bool]:
         """
         Load conversation history from PostgreSQL.
         
         Returns:
-            True if loaded successfully, False otherwise
+            tuple: (loaded_successfully, session_expired)
+            - loaded_successfully: True if loaded successfully, False otherwise
+            - session_expired: True if session was expired and cleared, False otherwise
         """
         # Check if already loaded (using getattr to handle Pydantic model)
         if getattr(self, '_loaded', False):
-            return True
+            return True, False
         
         try:
             conn = self._get_connection()
@@ -76,6 +78,35 @@ class PostgresConversationMemory(ConversationBufferMemory):
             if not thread_id:
                 logger.error("thread_id not set in PostgresConversationMemory")
                 return False
+            
+            # Check if session is expired (inactive for more than SESSION_TIMEOUT_MINUTES)
+            cursor.execute("""
+                SELECT last_message_at
+                FROM conversation_threads
+                WHERE thread_id = %s
+            """, (thread_id,))
+            
+            thread_info = cursor.fetchone()
+            if thread_info:
+                last_message_at = thread_info[0]
+                if last_message_at:
+                    # Check if session expired (inactive for more than SESSION_TIMEOUT_MINUTES)
+                    # Handle timezone-aware datetime from PostgreSQL
+                    if isinstance(last_message_at, datetime):
+                        # If timezone-aware, convert to naive for comparison
+                        if last_message_at.tzinfo is not None:
+                            from datetime import timezone
+                            last_message_at = last_message_at.replace(tzinfo=None)
+                    
+                    timeout_threshold = datetime.now() - timedelta(minutes=SESSION_TIMEOUT_MINUTES)
+                    if last_message_at < timeout_threshold:
+                        logger.info(f"⏰ Session expired for thread {thread_id} (last activity: {last_message_at}, timeout: {SESSION_TIMEOUT_MINUTES} minutes)")
+                        # Clear expired session
+                        self.clear()
+                        session_expired = True
+                        return False, True  # Don't load expired session, return expired flag
+                    else:
+                        logger.debug(f"✅ Session active for thread {thread_id} (last activity: {last_message_at})")
             
             # Load only recent messages to prevent token limit issues
             cursor.execute("""
@@ -106,14 +137,14 @@ class PostgresConversationMemory(ConversationBufferMemory):
             
             object.__setattr__(self, '_loaded', True)
             logger.debug(f"✅ Loaded {len(rows)} messages from PostgreSQL for thread: {getattr(self, 'thread_id', 'unknown')}")
-            return True
+            return True, False
             
         except Exception as e:
             logger.error(f"Error loading from PostgreSQL: {e}")
             # Return connection to pool even on error
             if 'conn' in locals():
                 return_connection(conn)
-            return False
+            return False, False
     
     def _extract_entities(self, text: str) -> Dict[str, Any]:
         """
@@ -452,4 +483,64 @@ class PostgresConversationMemory(ConversationBufferMemory):
                 conn.rollback()
                 # Return connection to pool even on error
                 return_connection(conn)
+
+
+def cleanup_expired_sessions(cleanup_days: int = 7) -> int:
+    """
+    Clean up expired sessions older than specified days.
+    
+    This function should be called periodically (e.g., daily cron job) to remove
+    old conversation data and free up database space.
+    
+    Args:
+        cleanup_days: Number of days old sessions to keep (default: 7)
+    
+    Returns:
+        Number of sessions cleaned up
+    """
+    try:
+        from src.utils.config import SESSION_CLEANUP_DAYS
+        cleanup_days = cleanup_days or SESSION_CLEANUP_DAYS
+        
+        conn = get_postgres_connection()
+        if not conn:
+            logger.warning("No PostgreSQL connection available for cleanup")
+            return 0
+        
+        cursor = conn.cursor()
+        
+        # Calculate cutoff date
+        cutoff_date = datetime.now() - timedelta(days=cleanup_days)
+        
+        # Delete old messages first (foreign key constraint)
+        cursor.execute("""
+            DELETE FROM conversation_messages
+            WHERE thread_id IN (
+                SELECT thread_id
+                FROM conversation_threads
+                WHERE last_message_at < %s
+            )
+        """, (cutoff_date,))
+        messages_deleted = cursor.rowcount
+        
+        # Delete old threads
+        cursor.execute("""
+            DELETE FROM conversation_threads
+            WHERE last_message_at < %s
+        """, (cutoff_date,))
+        threads_deleted = cursor.rowcount
+        
+        conn.commit()
+        cursor.close()
+        return_connection(conn)
+        
+        logger.info(f"🧹 Cleaned up {threads_deleted} expired sessions and {messages_deleted} messages (older than {cleanup_days} days)")
+        return threads_deleted
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up expired sessions: {e}")
+        if 'conn' in locals():
+            conn.rollback()
+            return_connection(conn)
+        return 0
 
