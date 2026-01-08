@@ -18,7 +18,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import StructuredTool
 
-from src.utils.config import OPENROUTER_MODEL, GEMINI_MODEL
+from src.utils.config import OPENROUTER_MODEL, GEMINI_MODEL, MAX_CONTEXT_MESSAGES
 from src.utils.openrouter_helper import create_openrouter_llm, is_openrouter_configured
 from src.utils.clean_logger import get_clean_logger
 from src.chatbot.prompts.system_prompt import get_chat_agent_system_prompt
@@ -27,6 +27,7 @@ from src.chatbot.memory.conversation_store import generate_thread_id
 from src.chatbot.memory.postgres_memory import PostgresConversationMemory
 from src.utils.llm_factory import create_llm_for_agent, get_available_providers
 from src.utils.gemini_helper import create_gemini_llm, is_gemini_configured
+from src.utils.retry_helper import retry_llm_call
 
 # Import all available tools
 from src.chatbot.tools import (
@@ -74,7 +75,7 @@ logger = get_clean_logger(__name__)
 # Configuration: Limit number of messages used for context
 # This prevents token limit issues and keeps context relevant
 # Last 10 messages = 5 conversation turns (user + assistant pairs) - Very short context
-MAX_CONTEXT_MESSAGES = 10
+# Value is now loaded from config.py (MAX_CONTEXT_MESSAGES env var, default: 10)
 
 
 def _clean_agent_response(response_text: str) -> str:
@@ -485,7 +486,18 @@ def invoke_agent(
             tool_names = [t.name for t in agent.tools[:5]]  # Log first 5
             logger.debug(f"Sample tool names: {tool_names}")
         
-        result = agent.invoke(agent_input)
+        # Invoke agent with retry logic for LLM API calls
+        # This handles transient API failures (network issues, rate limits, etc.)
+        try:
+            result = retry_llm_call(
+                agent.invoke,
+                agent_input,
+                max_attempts=3  # Use config default or override
+            )
+        except Exception as e:
+            # If retry fails, log and re-raise
+            logger.error(f"Agent invocation failed after retries: {str(e)}")
+            raise
         
         # Debug: Log full result structure
         logger.debug(f"Agent result keys: {list(result.keys()) if isinstance(result, dict) else 'not a dict'}")

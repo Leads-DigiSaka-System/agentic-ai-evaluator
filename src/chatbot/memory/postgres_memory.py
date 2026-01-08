@@ -7,7 +7,8 @@ from typing import Dict, Optional, List, Any
 from langchain.memory import ConversationBufferMemory
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from src.utils.clean_logger import get_clean_logger
-from src.utils.config import POSTGRES_URL
+from src.utils.config import POSTGRES_URL, MAX_MESSAGES_TO_LOAD
+from src.utils.postgres_pool import get_postgres_connection, return_connection
 import psycopg2
 from psycopg2.extras import Json
 import json
@@ -18,7 +19,7 @@ logger = get_clean_logger(__name__)
 # Configuration: Limit number of messages loaded from PostgreSQL
 # This prevents token limit issues and keeps context relevant
 # Last 10 messages = 5 conversation turns (user + assistant pairs) - Very short context
-MAX_MESSAGES_TO_LOAD = 10
+# Value is now loaded from config.py (MAX_MESSAGES_TO_LOAD env var, default: 10)
 
 
 class PostgresConversationMemory(ConversationBufferMemory):
@@ -44,12 +45,13 @@ class PostgresConversationMemory(ConversationBufferMemory):
         self._load_from_postgres()
     
     def _get_connection(self):
-        """Get PostgreSQL connection"""
-        try:
-            return psycopg2.connect(POSTGRES_URL)
-        except Exception as e:
-            logger.error(f"Failed to connect to PostgreSQL: {e}")
-            return None
+        """
+        Get PostgreSQL connection from pool.
+        
+        Returns:
+            psycopg2 connection object or None if pool unavailable
+        """
+        return get_postgres_connection()
     
     def _load_from_postgres(self) -> bool:
         """
@@ -99,7 +101,8 @@ class PostgresConversationMemory(ConversationBufferMemory):
                     self.chat_memory.add_ai_message(message_content)
             
             cursor.close()
-            conn.close()
+            # Return connection to pool instead of closing
+            return_connection(conn)
             
             object.__setattr__(self, '_loaded', True)
             logger.debug(f"✅ Loaded {len(rows)} messages from PostgreSQL for thread: {getattr(self, 'thread_id', 'unknown')}")
@@ -107,6 +110,9 @@ class PostgresConversationMemory(ConversationBufferMemory):
             
         except Exception as e:
             logger.error(f"Error loading from PostgreSQL: {e}")
+            # Return connection to pool even on error
+            if 'conn' in locals():
+                return_connection(conn)
             return False
     
     def _extract_entities(self, text: str) -> Dict[str, Any]:
@@ -300,7 +306,8 @@ class PostgresConversationMemory(ConversationBufferMemory):
             
             conn.commit()
             cursor.close()
-            conn.close()
+            # Return connection to pool instead of closing
+            return_connection(conn)
             
             logger.debug(f"💾 Saved conversation context to PostgreSQL for thread: {thread_id}")
             logger.debug(f"   Entities: {query_context.get('entities', {})}")
@@ -311,7 +318,8 @@ class PostgresConversationMemory(ConversationBufferMemory):
             logger.error(f"Error saving to PostgreSQL: {e}")
             if conn:
                 conn.rollback()
-                conn.close()
+                # Return connection to pool even on error
+                return_connection(conn)
             return False
     
     def _create_response_summary(self, ai_output: str, tools_used: List[str] = None) -> str:
@@ -433,7 +441,8 @@ class PostgresConversationMemory(ConversationBufferMemory):
             
             conn.commit()
             cursor.close()
-            conn.close()
+            # Return connection to pool instead of closing
+            return_connection(conn)
             
             logger.info(f"🗑️ Cleared conversation from PostgreSQL for thread: {thread_id}")
             
@@ -441,5 +450,6 @@ class PostgresConversationMemory(ConversationBufferMemory):
             logger.error(f"Error clearing from PostgreSQL: {e}")
             if conn:
                 conn.rollback()
-                conn.close()
+                # Return connection to pool even on error
+                return_connection(conn)
 

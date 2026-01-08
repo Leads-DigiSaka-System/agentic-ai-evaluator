@@ -114,6 +114,24 @@ async def startup_event():
     """FastAPI startup event - initialize services and cleanup"""
     logger.info("Application starting up...")
     
+    # Validate configuration first (fail fast if critical configs are missing)
+    try:
+        from src.utils.config import validate_and_log_config
+        validate_and_log_config()
+    except ValueError as e:
+        logger.error(f"❌ Configuration validation failed: {e}")
+        logger.error("Application cannot start without required configuration.")
+        raise
+    
+    # Initialize PostgreSQL connection pool (if PostgreSQL is configured)
+    try:
+        from src.utils.postgres_pool import get_postgres_pool
+        pool = get_postgres_pool()
+        if pool:
+            logger.info("✅ PostgreSQL connection pool ready")
+    except Exception as e:
+        logger.warning(f"PostgreSQL pool initialization failed (non-critical): {e}")
+    
     # Clean up expired cache entries on startup
     try:
         from src.services.cache_service import agent_cache
@@ -125,13 +143,20 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"Cache cleanup on startup failed (non-critical): {e}")
     
-    logger.info("Startup complete")
+    logger.info("✅ Startup complete")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """FastAPI shutdown event - cleanup resources before shutdown"""
     logger.info("Application shutting down...")
+    
+    # Close PostgreSQL connection pool
+    try:
+        from src.utils.postgres_pool import close_pool
+        close_pool()
+    except Exception as e:
+        logger.debug(f"PostgreSQL pool cleanup failed (non-critical): {e}")
     
     # Clean up expired cache entries on shutdown
     try:

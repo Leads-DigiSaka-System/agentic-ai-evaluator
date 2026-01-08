@@ -122,7 +122,13 @@ CRITICAL INSTRUCTIONS:
    - If a word is unclear, provide best interpretation with "[?]" if uncertain
    - Preserve sentence structure and punctuation
 
-5. **EXTRACT ALL SECTIONS**:
+5. **EXTRACT FORM TITLE FIRST**:
+   - Look at the TOP of the form for the printed title (e.g., "Leads Agri Foliar/Biostimulant Demo Form", "Leads Agri Herbicide Demo Form", etc.)
+   - This title is usually in a colored box or prominently displayed at the top
+   - Extract the EXACT title as it appears on the form - this will be used as the main header (# header)
+   - DO NOT use generic titles like "Agricultural Demo Form Extraction" - use the actual form title
+
+6. **EXTRACT ALL SECTIONS**:
    - Cooperator Information (name, location, contact, dates)
    - Treatment details (products, rates, methods, timing)
    - Crop Vigor observations (tiller counts, LCC values)
@@ -130,14 +136,15 @@ CRITICAL INSTRUCTIONS:
    - Remarks/Feedback (full paragraph extraction)
    - Signatures (mark as "[SIGNATURE]" if present)
 
-6. **HANDLE MULTIPLE PAGES/IMAGES**:
+7. **HANDLE MULTIPLE PAGES/IMAGES**:
    - If this is a PDF with multiple pages/images, extract each form separately
    - Use '### REPORT_END ###' as separator between different forms/pages
    - Each page/image should be treated as a separate form if it contains a complete form
+   - For each form, extract its own title from the top of that specific form/page
 
 OUTPUT FORMAT:
 
-# Agricultural Demo Form Extraction
+# [EXTRACT THE ACTUAL FORM TITLE FROM THE DOCUMENT - e.g., "Leads Agri Foliar/Biostimulant Demo Form", "Leads Agri Herbicide Demo Form", etc. The title is usually printed at the top of the form. DO NOT use a generic title like "Agricultural Demo Form Extraction" - use the EXACT title visible on the form.]
 
 ## Cooperator Information
 - **Name/Position/Area**: [handwritten value]

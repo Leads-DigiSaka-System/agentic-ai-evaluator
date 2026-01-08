@@ -12,7 +12,13 @@ from src.chatbot.bot.chat_agent import create_chat_agent, invoke_agent
 from src.chatbot.memory.conversation_store import generate_thread_id, get_conversation_store
 from src.utils.clean_logger import get_clean_logger
 from src.utils.limiter_config import limiter
-from src.utils.config import LANGFUSE_CONFIGURED, OPENROUTER_API_KEY, OPENROUTER_MODEL
+from src.utils.config import (
+    LANGFUSE_CONFIGURED, 
+    OPENROUTER_API_KEY, 
+    OPENROUTER_MODEL,
+    MAX_CACHE_SIZE,
+    CACHE_TTL_HOURS
+)
 from src.utils.openrouter_helper import is_openrouter_configured
 from src.monitoring.trace.langfuse_helper import (
     observe_operation,
@@ -26,8 +32,7 @@ logger = get_clean_logger(__name__)
 
 # Cache agents per cooperative with TTL and size limits
 _agent_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
-MAX_CACHE_SIZE = 50  # Maximum number of cached agents
-CACHE_TTL_HOURS = 24  # Cache TTL in hours
+# MAX_CACHE_SIZE and CACHE_TTL_HOURS are now loaded from config.py
 
 
 class ChatRequest(BaseModel):
