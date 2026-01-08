@@ -79,102 +79,199 @@ logger = get_clean_logger(__name__)
 # Value is now loaded from config.py (MAX_CONTEXT_MESSAGES env var, default: 10)
 
 
-def _is_clarification_response(response_text: str) -> bool:
-    """
-    Check if the agent's response is asking for clarification.
-    
-    This is used to determine if the agent correctly identified an ambiguous query
-    and is asking for clarification instead of calling tools.
-    
-    Args:
-        response_text: Agent's response text
-    
-    Returns:
-        True if response appears to be asking for clarification, False otherwise
-    """
-    if not response_text:
-        return False
-    
-    response_lower = response_text.lower()
-    
-    # Check for clarification patterns
-    clarification_indicators = [
-        'ano pong specific',
-        'pwede niyo po bang',
-        'gusto niyo pong',
-        'mayroon kaming',
-        'o gusto niyo pong',
-        'specific na',
-        'clarification',
-        'clarify',
-    ]
-    
-    # Check if response contains question marks and clarification keywords
-    has_question_mark = '?' in response_text
-    has_clarification_keywords = any(indicator in response_lower for indicator in clarification_indicators)
-    
-    # If it has both question marks and clarification keywords, it's likely a clarification
-    if has_question_mark and has_clarification_keywords:
-        return True
-    
-    # Also check if response is asking what the user wants (common clarification pattern)
-    asking_patterns = [
-        r'ano\s+pong\s+.*\?',
-        r'gusto\s+niyo\s+pong\s+.*\?',
-        r'pwede\s+niyo\s+po\s+bang\s+.*\?',
-    ]
-    
-    for pattern in asking_patterns:
-        if re.search(pattern, response_lower):
-            return True
-    
-    return False
-
-
 def _extract_clarification_questions(response_text: str) -> List[str]:
     """
     Extract clarification questions from agent response.
     
-    Looks for patterns like:
-    - "Ano pong specific na..."
-    - "Pwede niyo po bang..."
-    - Questions ending with "?"
+    This is used ONLY for extracting questions to return to frontend.
+    We do NOT use this to determine if we should force tools - we trust the LLM.
     
     Args:
         response_text: Agent's response text
     
     Returns:
-        List of clarification questions found in response
+        List of clarification questions found in response (max 2-3)
     """
     if not response_text:
         return []
     
     questions = []
     
-    # Pattern 1: Questions starting with "Ano pong" or "Pwede niyo po bang"
+    # First, remove quoted example questions (they're examples, not actual clarification questions)
+    # Pattern: "Pwede niyo pong itanong \"Question?\" o \"Question?\""
+    # We want to extract the main clarification question, not the examples
+    text_without_examples = re.sub(
+        r'Pwede niyo pong itanong\s+["\']([^"\']+\?)["\']\s*(?:o\s+["\']([^"\']+\?)["\'])?',
+        '',
+        response_text,
+        flags=re.IGNORECASE
+    )
+    
+    # Pattern 1: Main clarification questions (the ones the agent is actually asking)
+    # These typically start with clarification keywords and are NOT in quotes
     clarification_patterns = [
-        r'(Ano pong[^?]+\?)',
-        r'(Pwede niyo po bang[^?]+\?)',
-        r'(Gusto niyo pong[^?]+\?)',
-        r'(Mayroon kaming[^?]+\?)',
+        r'(Ano pong[^?]+\?)',  # "Ano pong specific na..."
+        r'(Pwede niyo po bang[^?]+\?)',  # "Pwede niyo po bang..."
+        r'(Gusto niyo pong[^?]+\?)',  # "Gusto niyo pong..."
+        r'(Mayroon kaming[^?]+\?)',  # "Mayroon kaming..."
     ]
     
+    # Extract from the text without examples first
     for pattern in clarification_patterns:
-        matches = re.findall(pattern, response_text, re.IGNORECASE)
-        questions.extend(matches)
+        matches = re.findall(pattern, text_without_examples, re.IGNORECASE)
+        for match in matches:
+            question = match.strip()
+            # Skip if it's in quotes (likely an example)
+            if not (question.startswith('"') or question.startswith("'")):
+                if question and question not in questions:
+                    questions.append(question)
     
-    # Pattern 2: Multiple questions separated by newlines or periods
-    # Look for sentences ending with "?" that seem like clarification
-    question_sentences = re.findall(r'([^.!?]*\?)', response_text)
-    for q in question_sentences:
+    # Pattern 2: If no main clarification found, look for questions in first part of response
+    # (clarification questions usually come first, before examples)
+    if not questions:
+        # Get first 200 characters (where clarification usually appears)
+        first_part = text_without_examples[:200] if len(text_without_examples) > 200 else text_without_examples
+        question_sentences = re.findall(r'([^.!?]*\?)', first_part)
+        
+        for q in question_sentences:
+            q = q.strip()
+            # Filter for clarification-like questions
+            clarification_keywords = ['specific', 'gusto niyo pong', 'ano pong', 'pwede niyo po bang']
+            is_clarification = any(keyword in q.lower() for keyword in clarification_keywords)
+            
+            # Skip quoted examples and very short questions
+            if is_clarification and len(q) > 10 and not (q.startswith('"') or q.startswith("'")):
+                if q and q not in questions:
+                    questions.append(q)
+    
+    # Clean questions: remove quotes, normalize
+    cleaned_questions = []
+    for q in questions[:3]:  # Limit to 3
         q = q.strip()
-        # Filter for clarification-like questions (contain keywords)
-        if any(keyword in q.lower() for keyword in ['specific', 'gusto', 'ano', 'pwede', 'mayroon']):
-            if q not in questions:
-                questions.append(q)
+        # Remove surrounding quotes if present
+        q = q.strip('"\'')
+        # Remove trailing punctuation that's not a question mark
+        if q and not q.endswith('?'):
+            q = q.rstrip('.,;:') + '?'
+        if q and len(q) > 5:  # Minimum length
+            cleaned_questions.append(q)
     
-    # Limit to 2-3 most relevant questions
-    return questions[:3]
+    return cleaned_questions
+
+
+def _extract_follow_up_questions(response_text: str) -> List[str]:
+    """
+    Extract follow-up question suggestions from agent response.
+    
+    The agent naturally suggests follow-up questions in its response. This function
+    intelligently extracts them from various natural language patterns.
+    
+    Follow-up questions are different from clarification questions:
+    - Clarification: Asked when query is ambiguous (before tools)
+    - Follow-up: Suggested after providing answer (to guide next steps)
+    
+    The agent may suggest follow-ups in natural ways like:
+    - "Kung gusto niyo pong makita ang performance, pwede niyo pong itanong 'Ano ang performance?'"
+    - "Pwede niyo rin pong itanong 'Paano po ito ikumpara sa ibang products?'"
+    - Or simply include questions at the end: "Ano ang best performing product?"
+    
+    Args:
+        response_text: Agent's complete response text
+    
+    Returns:
+        List of follow-up questions (max 3), empty if none found
+    """
+    if not response_text:
+        return []
+    
+    questions = []
+    
+    # Pattern 1: Look for explicit "FOLLOW-UP QUESTIONS:" section (backward compatibility)
+    # Some agents might still use this format
+    follow_up_section_pattern = r'(?i)\*\*FOLLOW-UP QUESTIONS?:\*\*\s*\n?(.*?)(?=\n\n|\n\*\*|$)'
+    section_match = re.search(follow_up_section_pattern, response_text, re.DOTALL | re.IGNORECASE)
+    
+    if section_match:
+        section_text = section_match.group(1)
+        numbered_pattern = r'(?:^|\n)\s*\d+[.)]\s*([^\n]+?)(?=\n\s*\d+[.)]|\n\n|$)'
+        numbered_matches = re.findall(numbered_pattern, section_text, re.MULTILINE)
+        
+        for match in numbered_matches:
+            question = match.strip()
+            if question and not question.endswith('?'):
+                question = question.rstrip('.,;:')
+            if question:
+                questions.append(question)
+    
+    # Pattern 2: Extract from natural language suggestions
+    # Look for patterns like "pwede niyo pong itanong '...'" or "kung gusto niyo pong... itanong '...'"
+    if len(questions) < 3:
+        # Pattern: "pwede niyo pong itanong 'Question?'" or "itanong 'Question?'"
+        natural_patterns = [
+            r"pwede niyo pong itanong ['\"]([^'\"]+\?)['\"]",  # "pwede niyo pong itanong 'Question?'"
+            r"kung gusto niyo pong[^?]*itanong ['\"]([^'\"]+\?)['\"]",  # "kung gusto niyo pong... itanong 'Question?'"
+            r"pwede niyo rin pong itanong ['\"]([^'\"]+\?)['\"]",  # "pwede niyo rin pong itanong 'Question?'"
+            r"itanong ['\"]([^'\"]+\?)['\"]",  # "itanong 'Question?'"
+        ]
+        
+        for pattern in natural_patterns:
+            matches = re.findall(pattern, response_text, re.IGNORECASE)
+            for match in matches:
+                question = match.strip()
+                if question and question not in questions:
+                    questions.append(question)
+    
+    # Pattern 3: Extract questions from the last portion of response (natural follow-ups)
+    # Follow-up questions typically appear at the end after the main answer
+    if len(questions) < 3:
+        response_length = len(response_text)
+        # Look at last 40% of response (where follow-ups usually appear)
+        last_section = response_text[int(response_length * 0.6):] if response_length > 100 else response_text
+        
+        # Find all questions in the last section
+        question_sentences = re.findall(r'([^.!?]*\?)', last_section)
+        
+        for q in question_sentences:
+            q = q.strip()
+            if not q or len(q) < 10:  # Skip very short questions
+                continue
+            
+            # Filter out clarification questions
+            clarification_keywords = [
+                'specific', 'gusto niyo pong', 'ano pong specific', 
+                'pwede niyo po bang', 'clarification', 'ano pong'
+            ]
+            is_clarification = any(keyword in q.lower() for keyword in clarification_keywords)
+            
+            if is_clarification:
+                continue
+            
+            # Identify follow-up questions by keywords or context
+            follow_up_indicators = [
+                'gusto ko pong', 'paano po', 'ano ang', 'kailan po', 
+                'mayroon ba', 'ikumpara', 'performance', 'ibang', 
+                'saan pa', 'best', 'compare', 'highest', 'lowest'
+            ]
+            is_follow_up = any(indicator in q.lower() for indicator in follow_up_indicators)
+            
+            # Also consider questions that are longer (likely follow-ups, not clarifications)
+            if is_follow_up or (len(q) > 20 and '?' in q):
+                if q not in questions:
+                    questions.append(q)
+    
+    # Clean and normalize questions
+    cleaned_questions = []
+    for q in questions[:3]:  # Limit to 3
+        q = q.strip()
+        # Remove quotes if present
+        q = q.strip("'\"")
+        # Ensure it ends with ?
+        if q and not q.endswith('?'):
+            q = q.rstrip('.,;:') + '?'
+        if q and len(q) > 5:  # Minimum length check
+            cleaned_questions.append(q)
+    
+    return cleaned_questions
 
 
 def _clean_agent_response(response_text: str) -> str:
@@ -217,11 +314,44 @@ def _clean_agent_response(response_text: str) -> str:
     cleaned = re.sub(r'\*([^*]+)\*', r'\1', cleaned)  # Remove italic
     cleaned = re.sub(r'`([^`]+)`', r'\1', cleaned)  # Remove code blocks
     
-    # Clean up excessive newlines
+    # Remove quoted example questions from clarification responses
+    # Pattern: "Pwede niyo pong itanong \"Question?\" o \"Question?\""
+    # These are examples, not part of the main clarification question
+    cleaned = re.sub(
+        r'\s*Pwede niyo pong itanong\s+["\']([^"\']+\?)["\']\s*(?:o\s+["\']([^"\']+\?)["\'])?[^.]*\.?',
+        '',
+        cleaned,
+        flags=re.IGNORECASE
+    )
+    
+    # Also remove patterns like "pwede niyo pong itanong 'Question?'" or "itanong 'Question?'"
+    cleaned = re.sub(
+        r'\s*(?:pwede niyo pong|pwede niyo rin pong|kung gusto niyo pong)\s+itanong\s+["\']([^"\']+\?)["\']\s*(?:o\s+["\']([^"\']+\?)["\'])?[^.]*\.?',
+        '',
+        cleaned,
+        flags=re.IGNORECASE
+    )
+    
+    # Remove explicit "FOLLOW-UP QUESTIONS:" section if present (old format)
+    # But keep naturally embedded questions - they're part of the conversation flow
+    # We extract them separately for frontend, but they can also stay in the response
+    cleaned = re.sub(
+        r'(?i)\*\*FOLLOW-UP QUESTIONS?:\*\*\s*\n?.*$',
+        '',
+        cleaned,
+        flags=re.DOTALL | re.MULTILINE
+    )
+    
+    # Clean up excessive newlines and spaces
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    cleaned = re.sub(r'\s{3,}', ' ', cleaned)  # Remove excessive spaces
     
     # Remove leading/trailing whitespace
     cleaned = cleaned.strip()
+    
+    # Remove trailing periods if the response ends with a question mark
+    if cleaned.endswith('?'):
+        cleaned = cleaned.rstrip('.')
     
     return cleaned
 
@@ -646,18 +776,7 @@ def invoke_agent(
         response_text = result.get("output", "")
         logger.debug(f"Initial response_text length: {len(response_text) if response_text else 0}")
         
-        # Fallback: try to extract from intermediate_steps if output is empty
-        if not response_text and "intermediate_steps" in result:
-            logger.debug("Response text is empty, checking intermediate_steps...")
-            for step in reversed(result["intermediate_steps"]):
-                if len(step) >= 2:
-                    observation = step[1]
-                    if isinstance(observation, str) and observation:
-                        logger.debug(f"Found response in intermediate_steps: {observation[:100]}...")
-                        response_text = observation
-                        break
-        
-        # Extract tools used from intermediate_steps
+        # Extract tools used from intermediate_steps FIRST (before checking for clarification)
         tools_used = []
         if "intermediate_steps" in result:
             logger.debug(f"Extracting tools from {len(result['intermediate_steps'])} intermediate steps...")
@@ -681,28 +800,49 @@ def invoke_agent(
                         tools_used.append(tool_name)
                         logger.debug(f"Added tool to tools_used: {tool_name}")
         
+        # Fallback: try to extract response from intermediate_steps if output is empty
+        # This helps capture clarification responses that might not be in the output field
+        if not response_text and "intermediate_steps" in result:
+            logger.debug("Response text is empty, checking intermediate_steps for response...")
+            for step in reversed(result["intermediate_steps"]):
+                if len(step) >= 2:
+                    observation = step[1]
+                    if isinstance(observation, str) and observation:
+                        # Check if this looks like a clarification (not a tool result)
+                        if not any(tool_name.lower() in observation.lower() for tool_name in tools_used):
+                            logger.debug(f"Found potential response in intermediate_steps: {observation[:100]}...")
+                            response_text = observation
+                            break
+        
+        # Trust the LLM's decision - if it provided a response (even without tools), trust it
+        # The system prompt already instructs the LLM to ask for clarification when needed
+        # We should NOT programmatically detect clarification - let the LLM handle it
         if not tools_used:
-            logger.warning(f"⚠️ No tools were called for query: {message[:100]}...")
-            logger.warning(f"Agent output: {response_text[:200] if response_text else 'EMPTY'}...")
-            
-            # Check if agent is asking for clarification (this is CORRECT behavior, don't force tools)
-            is_clarification = _is_clarification_response(response_text)
-            
-            if is_clarification:
-                logger.info("✅ Agent is asking for clarification - this is correct, no tools needed")
-                # This is expected behavior for ambiguous queries - don't force tool usage
-            else:
-                logger.warning(f"⚠️ This should not happen - agent MUST use tools for data queries!")
+            if response_text and len(response_text.strip()) > 10:
+                # LLM provided a response without tools - this could be:
+                # 1. Clarification request (correct behavior for ambiguous queries)
+                # 2. General conversation (correct behavior)
+                # Trust the LLM's decision completely
+                logger.info(f"✅ Agent provided response without tools: {response_text[:100]}... (trusting LLM decision)")
+            elif not response_text or len(response_text.strip()) < 10:
+                # Response is empty or too short - this might be an error
+                # Only force tools if response is truly empty/invalid AND no intermediate steps
+                logger.warning(f"⚠️ No tools called AND response is empty/invalid for query: {message[:100]}...")
+                logger.warning(f"Agent output: {response_text[:200] if response_text else 'EMPTY'}...")
                 
-                # Try to force tool usage by re-invoking with explicit instruction
+                # Only force tool usage if response is truly empty AND no intermediate steps
+                # This is a last resort - the LLM should handle most cases via system prompt
                 if "intermediate_steps" not in result or len(result.get("intermediate_steps", [])) == 0:
                     logger.info("🔄 Attempting to force tool usage with explicit instruction...")
                     forced_message = f"MUST USE TOOLS: {message}\n\nIMPORTANT: You MUST call a search tool (search_analysis_tool, search_by_location_tool, etc.) to answer this question. You cannot answer without using tools."
                     try:
+                        # Call agent.invoke directly (not through retry_llm_call to avoid streaming issues)
+                        # Agent.invoke() already handles retries internally via LangChain
                         forced_result = agent.invoke({
                             "input": forced_message,
                             "chat_history": chat_history
                         })
+                        
                         if "intermediate_steps" in forced_result and len(forced_result["intermediate_steps"]) > 0:
                             logger.info("✅ Forced tool usage succeeded")
                             result = forced_result
@@ -723,11 +863,26 @@ def invoke_agent(
                                     if tool_name and tool_name not in tools_used:
                                         tools_used.append(tool_name)
                         else:
-                            logger.error("❌ Forced tool usage also failed - agent is not recognizing tools")
+                            logger.warning("⚠️ Forced tool usage did not result in tool calls - agent may need clarification")
                     except Exception as e:
                         logger.error(f"Error during forced tool usage: {e}")
+                        # If forced tool usage fails, don't break - use the original response
+                        # This is better than crashing - the LLM's original response (even if empty) is better than an error
+        
+        # Extract clarification questions BEFORE cleaning (so we can parse the raw format)
+        # This ensures we capture the full clarification question before cleaning removes examples
+        clarification_questions = _extract_clarification_questions(response_text)
+        
+        # Extract follow-up questions BEFORE cleaning (so we can parse the raw format)
+        # Follow-up questions are only extracted if tools were used (meaning we provided an answer)
+        follow_up_questions = []
+        if tools_used:  # Only suggest follow-ups after providing an answer
+            follow_up_questions = _extract_follow_up_questions(response_text)
+            if follow_up_questions:
+                logger.info(f"✅ Extracted {len(follow_up_questions)} follow-up question suggestions")
         
         # Clean and convert technical responses to conversational
+        # This will remove quoted example questions and follow-up sections from the main response
         response_text = _clean_agent_response(response_text)
         
         # Validate response
@@ -760,9 +915,6 @@ def invoke_agent(
             except Exception as e:
                 logger.warning(f"Failed to save conversation to memory: {e}")
         
-        # Extract clarification questions from response
-        clarification_questions = _extract_clarification_questions(response_text)
-        
         return {
             "response": response_text,
             "session_id": session_id or thread_id,
@@ -774,6 +926,7 @@ def invoke_agent(
             },
             "sources": [],
             "clarification_questions": clarification_questions,
+            "follow_up_questions": follow_up_questions,  # Add follow-up questions to response
             "session_expired": session_expired,
             "session_active": not session_expired
         }

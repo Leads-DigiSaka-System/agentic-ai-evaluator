@@ -65,6 +65,7 @@ class ChatResponse(BaseModel):
     tools_used: List[str] = Field(default_factory=list, description="List of tools used by agent")
     sources: List[Dict[str, Any]] = Field(default_factory=list, description="Data sources/references used")
     clarification_questions: Optional[List[str]] = Field(default_factory=list, description="Follow-up questions if query needs clarification")
+    follow_up_questions: Optional[List[str]] = Field(default_factory=list, description="Suggested follow-up questions to guide user's next steps")
     session_expired: bool = Field(default=False, description="True if session was expired and cleared")
     session_active: bool = Field(default=True, description="True if session is still active")
 
@@ -201,6 +202,7 @@ async def chat(
             tools_used = result.get("tools_used", [])
             metadata = result.get("metadata", {})
             clarification_questions = result.get("clarification_questions", [])
+            follow_up_questions = result.get("follow_up_questions", [])  # Extract follow-up questions
             session_expired = result.get("session_expired", False)
             session_active = result.get("session_active", True)
             
@@ -219,12 +221,13 @@ async def chat(
                 "response_length": len(response_text),
                 "tools_used_count": len(tools_used),
                 "clarification_asked": len(clarification_questions) > 0,
+                "follow_up_suggested": len(follow_up_questions) > 0,
                 "session_id": session_id,
                 "cooperative": cooperative,
                 "user_id": user_id
             })
             
-            logger.info(f"Chat response generated (tools used: {len(tools_used)}, clarifications: {len(clarification_questions)})")
+            logger.info(f"Chat response generated (tools used: {len(tools_used)}, clarifications: {len(clarification_questions)}, follow-ups: {len(follow_up_questions)})")
             
             return ChatResponse(
                 response=response_text,
@@ -232,6 +235,7 @@ async def chat(
                 tools_used=tools_used,
                 sources=sources,
                 clarification_questions=clarification_questions,
+                follow_up_questions=follow_up_questions,  # Include follow-up questions in response
                 session_expired=session_expired,
                 session_active=session_active
             )

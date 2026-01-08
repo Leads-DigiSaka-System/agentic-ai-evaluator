@@ -12,6 +12,7 @@ from src.utils.postgres_pool import get_postgres_connection, return_connection
 import psycopg2
 from psycopg2.extras import Json
 import json
+import re
 from datetime import datetime, timedelta
 
 logger = get_clean_logger(__name__)
@@ -171,9 +172,9 @@ class PostgresConversationMemory(ConversationBufferMemory):
         
         # Simple extraction - can be enhanced with NER later
         # For now, extract if keywords are present
+        # Note: 're' is imported at module level to avoid scoping issues
         if any(kw in text_lower for kw in location_keywords):
             # Try to extract location after "sa " or "location:"
-            import re
             location_match = re.search(r'(?:sa|location:)\s+([A-Z][a-zA-Z\s,]+)', text, re.IGNORECASE)
             if location_match:
                 entities["location"] = location_match.group(1).strip()
