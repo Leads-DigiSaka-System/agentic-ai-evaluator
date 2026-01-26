@@ -130,7 +130,20 @@ Extract → Validate Content → Analyze → Evaluate Analysis
 │  │   Router     │  │   Router     │  │   Router     │     │
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘     │
 │         │                 │                  │              │
-│         └────────┬────────┴──────────────────┘             │
+│         │                 │                  │              │
+│         │                 │         ┌────────▼────────┐     │
+│         │                 │         │  Chat Agent    │     │
+│         │                 │         │  (LangChain)   │     │
+│         │                 │         └────────┬────────┘     │
+│         │                 │                  │              │
+│         │                 │         ┌────────▼────────┐     │
+│         │                 │         │  30 Tools      │     │
+│         │                 │         │  (Search,      │     │
+│         │                 │         │   Analysis,    │     │
+│         │                 │         │   Memory)      │     │
+│         │                 │         └────────┬────────┘     │
+│         │                 │                  │              │
+│         └────────┬─────────┴──────────────────┘             │
 │                  │                                          │
 │         ┌────────▼────────┐                                │
 │         │  LangGraph      │                                │
@@ -155,6 +168,12 @@ Extract → Validate Content → Analyze → Evaluate Analysis
 │Vector │    │   Memory    │      │   ARQ Jobs │  │  Tracing │
 │  DB   │    │              │      │            │  │          │
 └───────┘    └──────────────┘      └────────────┘  └──────────┘
+     ▲                ▲                    │
+     │                │                    │
+     └────────────────┴────────────────────┘
+                      │
+              (Tools access databases
+               for search & retrieval)
 ```
 
 ### Workflow Architecture
@@ -229,6 +248,63 @@ Vector Storage (Qdrant)
     ▼
 Search & Retrieval (Hybrid Search)
 ```
+
+### Tools & Capabilities
+
+The system includes **30 specialized tools** for comprehensive data querying and analysis:
+
+#### Basic Search Tools (11)
+- **search_analysis_tool** - Unified search across all analysis fields
+- **search_by_product_tool** - Search by product name
+- **search_by_location_tool** - Search by location/farm site
+- **search_by_crop_tool** - Search by crop type/variety
+- **search_by_cooperator_tool** - Search by cooperator name
+- **search_by_season_tool** - Search by season (wet/dry)
+- **search_by_improvement_range_tool** - Search by improvement percentage range
+- **search_by_sentiment_tool** - Search by cooperator feedback sentiment
+- **search_by_product_category_tool** - Search by product category (herbicide, foliar, etc.)
+- **search_by_performance_significance_tool** - Search by performance significance level
+- **search_by_applicant_tool** - Search by applicant name
+
+#### Advanced Search Tools (16)
+- **search_by_form_type_tool** - Search by form/document type
+- **search_by_date_range_tool** - Search by application/planting date range
+- **search_by_metric_type_tool** - Search by metric type (rating, percentage, count, measurement)
+- **search_by_confidence_level_tool** - Search by confidence level (high/medium/low)
+- **search_by_data_quality_tool** - Search by data quality score
+- **search_by_control_product_tool** - Search by control product used
+- **search_by_speed_of_action_tool** - Search by speed of action (fast/moderate/slow)
+- **search_by_yield_status_tool** - Search by yield data availability
+- **search_by_yield_improvement_range_tool** - Search by yield improvement range
+- **search_by_measurement_intervals_tool** - Search by measurement intervals (3 DAA, 7 DAA, etc.)
+- **search_by_metrics_detected_tool** - Search by specific metrics detected
+- **search_by_risk_factors_tool** - Search by identified risk factors
+- **search_by_opportunities_tool** - Search by identified opportunities
+- **search_by_recommendations_tool** - Search by recommendations provided
+- **search_by_key_observation_tool** - Search by key observations
+- **search_by_scale_info_tool** - Search by rating scale information
+
+#### List & Retrieval Tools (3)
+- **list_reports_tool** - List all available reports with pagination
+- **get_stats_tool** - Get aggregated statistics across all reports
+- **get_report_by_id_tool** - Retrieve specific report by ID
+
+#### Analysis Tools (3)
+- **compare_products_tool** - Compare performance across multiple products
+- **generate_summary_tool** - Generate comprehensive summary of selected reports
+- **get_trends_tool** - Analyze trends over time or across locations
+
+#### Memory Tools (3)
+- **read_conversation_memory** - Read conversation history
+- **write_to_conversation_memory** - Store conversation context
+- **get_conversation_summary** - Get summary of conversation
+
+**Tool Features:**
+- All tools support cooperative-based data filtering
+- Multi-parameter filtering (AND logic)
+- Natural language query parsing
+- Automatic parameter extraction from queries
+- Context-aware tool selection
 
 ---
 
