@@ -1,185 +1,407 @@
 # Agentic AI Evaluator
 
-Agentic AI for Product Demo Trials Evaluation - A FastAPI-based application for evaluating product demo trials using AI-powered analysis.
+> **Enterprise-grade AI system for automated agricultural product demo trial evaluation and analysis**
 
-## Table of Contents
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.116+-green.svg)](https://fastapi.tiangolo.com/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-- [Prerequisites](#prerequisites)
-- [Step 1: Install UV](#step-1-install-uv)
-- [Step 2: Clone Repository](#step-2-clone-repository)
-- [Step 3: Install Dependencies with UV](#step-3-install-dependencies-with-uv)
-- [Step 4: Setup Qdrant with Docker](#step-4-setup-qdrant-with-docker)
-- [Step 5: Verify Qdrant is Running](#step-5-verify-qdrant-is-running)
-- [Step 6: Configure Environment Variables](#step-6-configure-environment-variables)
-- [Step 7: Run FastAPI Application with UV](#step-7-run-fastapi-application-with-uv)
-- [Step 8: Verify FastAPI is Running](#step-8-verify-fastapi-is-running)
+## 📋 Table of Contents
+
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Architecture](#architecture)
+- [Technology Stack](#technology-stack)
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [API Documentation](#api-documentation)
+- [Development](#development)
+- [Deployment](#deployment)
 - [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
 
 ---
 
-## Prerequisites
+## 🎯 Overview
 
-Before starting, ensure you have:
+**Agentic AI Evaluator** is a production-ready, enterprise-grade system designed to automate the evaluation and analysis of agricultural product demo trials. Built with modern AI/ML technologies, it processes PDF documents, extracts structured data, performs intelligent analysis, and provides actionable insights through a conversational interface.
+
+### Core Capabilities
+
+- **Intelligent Document Processing**: Automated extraction and analysis of agricultural demo trial PDFs
+- **Multi-Agent Evaluation System**: CrewAI-powered quality assessment with 4 specialized agents
+- **Hybrid Vector Search**: Semantic + keyword search for comprehensive data retrieval
+- **Conversational AI Agent**: Natural language interface with 27 specialized tools for data querying
+- **Real-time Quality Scoring**: Confidence-based evaluation with automatic retry logic
+- **Multi-User Support**: Cooperative-based data isolation and user session management
+
+### Use Cases
+
+- **Agricultural Research**: Automated analysis of field trial data
+- **Product Development**: Performance evaluation and comparison
+- **Data Management**: Centralized storage and retrieval of trial reports
+- **Business Intelligence**: Conversational querying of agricultural data
+
+---
+
+## ✨ Key Features
+
+### 🤖 Multi-Agent Evaluation System
+
+**CrewAI-powered quality assessment** with 4 specialized agents:
+
+1. **Document Context Analyst** - Assesses document type, data quality, and extraction completeness
+2. **Output Quality Evaluator** - Evaluates analysis accuracy, completeness, and reliability
+3. **Processing Strategy Advisor** - Determines optimal next steps based on quality assessment
+4. **Evaluation Decision Coordinator** - Synthesizes team input into final decisions
+
+**Benefits:**
+- Collaborative decision-making for higher accuracy
+- Confidence scoring (0.0-1.0) for quality assessment
+- Intelligent retry logic based on quality thresholds
+- Context-aware evaluation for different document types
+
+### 🔍 Hybrid Vector Search
+
+**Combines semantic and keyword search** for optimal retrieval:
+
+- **Dense Retriever**: Semantic similarity using embedding models (default: 70% weight)
+- **Sparse Retriever**: Keyword matching using TF-IDF (default: 30% weight)
+- **Configurable Weights**: Adjustable search balance per query
+- **User Isolation**: Cooperative-based data filtering
+
+**Supported Models:**
+- Embeddings: `BAAI/bge-small-en-v1.5`, `sentence-transformers/all-MiniLM-L6-v2`, `BAAI/bge-base-en-v1.5`
+- Sparse: TF-IDF vectorizer with custom vocabulary
+
+### 💬 Conversational AI Agent
+
+**27 specialized tools** for comprehensive data querying:
+
+- **11 Basic Search Tools**: Product, location, crop, cooperator, season, improvement range, sentiment, etc.
+- **16 Advanced Search Tools**: Form type, date range, metric type, confidence level, data quality, yield status, etc.
+- **3 List Tools**: Report listing, statistics, report retrieval
+- **3 Analysis Tools**: Product comparison, summary generation, trend analysis
+- **3 Memory Tools**: Conversation history management
+
+**Features:**
+- Natural language querying in Taglish/Filipino/English
+- Context-aware responses with follow-up suggestions
+- PostgreSQL-backed conversation memory
+- Multi-provider LLM support (OpenRouter, Gemini)
+
+### 📊 Intelligent Workflow Processing
+
+**8-stage LangGraph workflow** with conditional routing:
+
+```
+Extract → Validate Content → Analyze → Evaluate Analysis 
+→ Suggest Graphs → Evaluate Graphs → Chunk → End
+```
+
+**Quality Gates:**
+- Content validation (LLM checks if document is a product demo)
+- Analysis evaluation (multi-agent quality assessment)
+- Graph evaluation (visualization quality check)
+- Automatic retry with max 2 attempts
+
+### 🔐 Enterprise Features
+
+- **Multi-User Support**: User ID-based data isolation
+- **Cooperative Isolation**: Cooperative-based access control
+- **API Security**: API key authentication
+- **Rate Limiting**: Configurable per-endpoint limits
+- **Observability**: Langfuse integration for LLM tracing
+- **Background Processing**: ARQ workers for async job processing
+- **Caching**: LRU cache for agent instances and query results
+
+---
+
+## 🏗️ Architecture
+
+### System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    FastAPI Application                        │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │   Upload     │  │   Agent      │  │    Chat      │     │
+│  │   Router     │  │   Router     │  │   Router     │     │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘     │
+│         │                 │                  │              │
+│         └────────┬────────┴──────────────────┘             │
+│                  │                                          │
+│         ┌────────▼────────┐                                │
+│         │  LangGraph      │                                │
+│         │  Workflow       │                                │
+│         │  Engine         │                                │
+│         └────────┬────────┘                                │
+│                  │                                          │
+│    ┌─────────────┼─────────────┐                           │
+│    │             │             │                           │
+│ ┌──▼──┐    ┌─────▼─────┐  ┌───▼───┐                       │
+│ │CrewAI│   │   LLM     │  │Embed  │                       │
+│ │Agents│   │ (Gemini)  │  │Model  │                       │
+│ └──────┘   └───────────┘  └───────┘                       │
+└─────────────────────────────────────────────────────────────┘
+         │                    │                    │
+         └──────────┬─────────┴──────────┬─────────┘
+                    │                     │
+    ┌───────────────┼─────────────────────┼───────────────┐
+    │               │                     │               │
+┌───▼───┐    ┌──────▼──────┐      ┌──────▼──────┐  ┌─────▼────┐
+│Qdrant │    │  PostgreSQL │      │   Redis    │  │ Langfuse │
+│Vector │    │   Memory    │      │   ARQ Jobs │  │  Tracing │
+│  DB   │    │              │      │            │  │          │
+└───────┘    └──────────────┘      └────────────┘  └──────────┘
+```
+
+### Workflow Architecture
+
+```
+┌─────────┐
+│ Extract │  Extract PDF content to markdown
+└────┬────┘
+     │
+     ▼
+┌─────────────────┐
+│ Validate Content│  LLM validates if document is product demo
+└────────┬────────┘
+     │
+     ▼
+┌──────────┐
+│ Analyze │  LLM performs structured analysis
+└────┬────┘
+     │
+     ▼
+┌──────────────────┐
+│ Evaluate Analysis│  Multi-agent quality assessment
+└────────┬─────────┘
+     │
+     ▼
+┌──────────────────┐
+│ Suggest Graphs   │  LLM suggests visualizations
+└────┬─────────────┘
+     │
+     ▼
+┌──────────────────┐
+│ Evaluate Graphs  │  Multi-agent quality assessment
+└────┬─────────────┘
+     │
+     ▼
+┌─────────┐
+│  Chunk  │  Split content for vector storage
+└────┬────┘
+     │
+     ▼
+┌───────┐
+│  END  │  Storage handled separately
+└───────┘
+```
+
+### Data Flow
+
+```
+PDF Upload
+    │
+    ▼
+Extraction (Gemini Vision)
+    │
+    ▼
+Content Validation (LLM)
+    │
+    ▼
+Analysis (Gemini Pro)
+    │
+    ▼
+Multi-Agent Evaluation (CrewAI)
+    │
+    ▼
+Graph Suggestions (Gemini)
+    │
+    ▼
+Embedding Generation (HuggingFace)
+    │
+    ▼
+Vector Storage (Qdrant)
+    │
+    ▼
+Search & Retrieval (Hybrid Search)
+```
+
+---
+
+## 🛠️ Technology Stack
+
+### Core Framework
+- **FastAPI 0.116+** - Modern, fast web framework for building APIs
+- **Python 3.12+** - Latest Python features and performance
+- **UV** - Fast Python package manager (10-100x faster than pip)
+
+### AI/ML Stack
+- **LangGraph 0.6+** - Workflow orchestration and state management
+- **CrewAI 0.186+** - Multi-agent collaboration framework
+- **LangChain 0.3+** - LLM application framework
+- **Google Gemini** - Primary LLM (gemini-1.5-flash, gemini-1.5-pro)
+- **OpenRouter** - Alternative LLM provider (Llama 3.3 70B Instruct)
+- **HuggingFace Transformers** - Embedding models
+- **Sentence Transformers** - Text embeddings
+
+### Vector Database & Search
+- **Qdrant 1.15+** - Vector database for semantic search
+- **TF-IDF** - Sparse vector encoding for keyword search
+- **LangChain EnsembleRetriever** - Hybrid search implementation
+
+### Data Storage
+- **PostgreSQL** - Conversation memory and persistent storage
+- **Redis 5.3+** - Background job queue (ARQ workers)
+- **Qdrant** - Vector storage for documents and analysis reports
+
+### Observability
+- **Langfuse 3.8+** - LLM observability and tracing
+- **Custom Logging** - Structured logging with clean formatting
+
+### Additional Tools
+- **Pypdf 6.0+** - PDF extraction
+- **Pandas 2.3+** - Data manipulation
+- **Docker** - Containerization
+- **Gunicorn** - Production WSGI server
+- **Uvicorn** - ASGI server
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
 
 - **Python 3.12+** installed
-- **Docker** installed and running
+- **Docker** installed and running (for Qdrant)
 - **Git** installed
 
----
-
-## Step 1: Install UV
-
-UV is a fast Python package manager that we'll use to manage dependencies and run the application.
-
-### Windows
-
-Open PowerShell and run:
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-**Or** install via pip:
-
-```bash
-pip install uv
-```
-
-After installation, close and reopen your terminal, then verify:
-
-```bash
-uv --version
-```
-
-### macOS / Linux
-
-Run the installation script:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-**Or** install via pip:
-
-```bash
-pip install uv
-```
-
-After installation, reload your shell or restart your terminal, then verify:
-
-```bash
-uv --version
-```
-
-For more installation options, visit: https://github.com/astral-sh/uv
-
----
-
-## Step 2: Clone Repository
-
-Clone the repository to your local machine:
+### 1. Clone Repository
 
 ```bash
 git clone <repository-url>
 cd agentic-ai-evaluator
 ```
 
----
+### 2. Install UV Package Manager
 
-## Step 3: Install Dependencies with UV
+**Windows:**
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
 
-This step will create a virtual environment and install all project dependencies using the locked versions from `uv.lock`.
+**macOS/Linux:**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
-### Install Dependencies
+**Or via pip:**
+```bash
+pip install uv
+```
 
-Run the following command:
+### 3. Install Dependencies
 
 ```bash
 uv sync
 ```
 
-**What this command does:**
-- Creates a virtual environment (`.venv`) if it doesn't exist
-- Installs all dependencies listed in `pyproject.toml`
-- Uses the exact versions specified in `uv.lock` for reproducibility
-- Ensures a consistent environment across different machines
+This creates a virtual environment (`.venv`) and installs all dependencies from `uv.lock`.
 
-**Expected output:**
-```
-Using Python 3.12.x
-Creating virtual environment at: .venv
-Installing dependencies from lock file
-...
-Successfully installed [all packages]
-```
-
-### Understanding UV Lock
-
-The `uv.lock` file ensures that everyone gets the exact same versions of dependencies. When you run `uv sync`, it reads this lock file and installs those specific versions, making your setup reproducible.
-
-### Verify Installation
-
-Check that dependencies are installed:
-
-```bash
-# List installed packages
-uv pip list
-
-# Or activate the virtual environment and check
-# On Windows:
-.venv\Scripts\activate
-# On macOS/Linux:
-source .venv/bin/activate
-
-pip list
-```
-
----
-
-## Step 4: Setup Qdrant with Docker
-
-Qdrant is the vector database that stores embeddings for the application. We'll set it up using Docker.
-
-### Option A: Using Docker Compose (Recommended)
-
-This is the easiest method - it handles everything automatically:
+### 4. Start Qdrant (Vector Database)
 
 ```bash
 docker compose -f docker/docker-compose.qdrant.yml up -d
 ```
 
-**What this does:**
-- Pulls the Qdrant Docker image (if not already present)
-- Creates and starts a Qdrant container
-- Sets up persistent storage volume
-- Configures health checks
-- Exposes ports 6333 (HTTP) and 6334 (gRPC)
-
-### Option B: Build Custom Qdrant Image
-
-If you want to use the custom Dockerfile with additional healthchecks:
-
-**1. Build the custom image:**
-
+Verify Qdrant is running:
 ```bash
-docker build -f docker/Dockerfile.qdrant -t qdrant-custom:latest .
+curl http://localhost:6333/
+# Or open in browser: http://localhost:6333/dashboard
 ```
 
-**2. Run the custom image:**
+### 5. Configure Environment Variables
+
+Copy `env.example` to `.env` and fill in your values:
 
 ```bash
-docker run -d \
-  --name qdrant \
-  -p 6333:6333 \
-  -p 6334:6334 \
-  -v qdrant_storage:/qdrant/storage \
-  qdrant-custom:latest
+cp env.example .env
 ```
 
-### Option C: Use Official Image Directly
+**Minimum required variables:**
+```env
+API_KEY=your-secure-api-key-here
+GEMINI_APIKEY=your-gemini-api-key
+GEMINI_MODEL=gemini-1.5-flash
+Qdrant_Localhost=http://localhost:6333
+Qdrant_Form=form_collection
+Qdrant_Analysis_Report=analysis_collection
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+REDIS_HOST=localhost
+REDIS_PORT=6380
+```
 
-Quick start with the official Qdrant image:
+### 6. Run Application
 
+```bash
+uv run python main.py
+```
+
+The API will be available at `http://localhost:8000`
+
+### 7. Verify Installation
+
+```bash
+# Health check
+curl http://localhost:8000/api/health
+
+# API documentation
+# Open in browser: http://localhost:8000/docs
+```
+
+---
+
+## 📦 Installation
+
+### Detailed Setup Guide
+
+#### Step 1: System Requirements
+
+- **Python**: 3.12 or higher
+- **Docker**: 20.10+ (for Qdrant)
+- **Memory**: 4GB+ RAM recommended
+- **Disk**: 2GB+ free space
+
+#### Step 2: Install UV
+
+UV is a fast Python package manager that we use for dependency management.
+
+**Verify installation:**
+```bash
+uv --version
+```
+
+#### Step 3: Install Dependencies
+
+```bash
+# Install all dependencies (creates .venv automatically)
+uv sync
+
+# Verify installation
+uv pip list
+```
+
+#### Step 4: Setup Qdrant
+
+**Option A: Docker Compose (Recommended)**
+```bash
+docker compose -f docker/docker-compose.qdrant.yml up -d
+```
+
+**Option B: Docker Run**
 ```bash
 docker run -d \
   --name qdrant \
@@ -189,196 +411,301 @@ docker run -d \
   qdrant/qdrant:latest
 ```
 
-### Check Docker Container Status
-
-Verify the container is running:
-
-```bash
-docker ps
-```
-
-You should see a container named `qdrant` with status "Up".
-
-### View Qdrant Logs
-
-If you want to see what's happening:
-
-```bash
-# For docker compose
-docker compose -f docker/docker-compose.qdrant.yml logs -f
-
-# For direct docker run
-docker logs -f qdrant
-```
-
----
-
-## Step 5: Verify Qdrant is Running
-
-### Method 1: Check via Command Line
-
-Test the Qdrant HTTP API:
-
+**Verify Qdrant:**
 ```bash
 curl http://localhost:6333/
+# Should return: {"title":"qdrant - vector search engine","version":"..."}
 ```
 
-**Expected response:**
-```json
-{
-  "title": "qdrant - vector search engine",
-  "version": "..."
-}
-```
+#### Step 5: Setup Redis (Optional, for background jobs)
 
-### Method 2: Check via Web Browser (Recommended)
-
-Open your web browser and navigate to:
-
-```
-http://localhost:6333/dashboard
-```
-
-**What you should see:**
-- Qdrant Dashboard interface
-- Server status and version information
-- Ability to view collections and points
-
-**If you see the dashboard:** ✅ Qdrant is running correctly!
-
-**If you don't see the dashboard:**
-- Check if Docker is running: `docker ps`
-- Check Qdrant logs: `docker logs qdrant`
-- Ensure port 6333 is not being used by another application
-
-### Method 3: Check Container Health
-
+**Local Redis:**
 ```bash
-docker inspect qdrant --format='{{.State.Health.Status}}'
+# Install Redis (varies by OS)
+# macOS: brew install redis
+# Ubuntu: sudo apt-get install redis-server
+
+# Start Redis
+redis-server --port 6380
 ```
 
-Should return: `healthy`
+**Or use Docker:**
+```bash
+docker run -d --name redis -p 6380:6379 redis:latest
+```
+
+#### Step 6: Setup PostgreSQL (Optional, for chat memory)
+
+**Local PostgreSQL:**
+```bash
+# Install PostgreSQL (varies by OS)
+# macOS: brew install postgresql
+# Ubuntu: sudo apt-get install postgresql
+
+# Create database
+createdb agentic_ai_evaluator
+```
+
+**Or use Docker:**
+```bash
+docker run -d \
+  --name postgres \
+  -e POSTGRES_PASSWORD=yourpassword \
+  -e POSTGRES_DB=agentic_ai_evaluator \
+  -p 5433:5432 \
+  postgres:latest
+```
 
 ---
 
-## Step 6: Configure Environment Variables
+## ⚙️ Configuration
 
-Create a `.env` file in the root directory with your configuration:
+### Environment Variables
 
-```bash
-# Create .env file (on Windows use: copy NUL .env)
-touch .env
-```
+Create a `.env` file in the root directory. See `env.example` for a complete template.
 
-Then edit the `.env` file and add your configuration:
+#### Required Configuration
 
 ```env
-# Google Gemini API Configuration
-GEMINI_MODEL=your_gemini_model
-GEMINI_APIKEY=your_gemini_api_key
+# API Security
+API_KEY=your-secure-api-key-here
 
-# Qdrant Vector Database Configuration
+# Google Gemini API
+GEMINI_APIKEY=your-gemini-api-key
+GEMINI_MODEL=gemini-1.5-flash
+GEMINI_LARGE=gemini-1.5-pro
+
+# Qdrant Vector Database
 Qdrant_Localhost=http://localhost:6333
-Qdrant_Form=your_form_collection_name
-Qdrant_Analysis_Report=your_analysis_collection_name
+Qdrant_Form=form_collection
+Qdrant_Analysis_Report=analysis_collection
+QDRANT_API_KEY=  # Optional, for Qdrant Cloud
 
-# Embedding Model Configuration
-EMBEDDING_MODEL=your_embedding_model_name
+# Embedding Model
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 
-# CORS Configuration (optional)
-CONNECTION_WEB=http://localhost:8501
-CONNECTION_MOBILE=your_mobile_connection_url
+# Redis (for background jobs)
+REDIS_HOST=localhost
+REDIS_PORT=6380
+REDIS_DB=0
+REDIS_PASSWORD=
+```
 
-# Optional Configuration (with defaults)
-MAX_FILE_SIZE_MB=50
+#### Optional Configuration
+
+```env
+# OpenRouter (for chat agent)
+OPENROUTER_API_KEY=your-openrouter-key
+OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
+
+# PostgreSQL (for chat memory)
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5433
+POSTGRES_DB=agentic_ai_evaluator
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=
+
+# Langfuse (observability)
+LANGFUSE_PUBLIC_KEY=your-public-key
+LANGFUSE_SECRET_KEY=your-secret-key
+LANGFUSE_HOST=https://cloud.langfuse.com
+
+# Search Settings
 SEARCH_TOP_K=5
 MAX_SEARCH_TOP_K=100
 DENSE_WEIGHT=0.7
 SPARSE_WEIGHT=0.3
-MAX_RETRY_ATTEMPTS=2
-LLM_TIMEOUT_SECONDS=60
-REQUEST_TIMEOUT_SECONDS=300
+
+# Quality Thresholds
 CONFIDENCE_GOOD=0.7
 CONFIDENCE_ACCEPTABLE=0.4
 GRAPH_CONFIDENCE_GOOD=0.7
-LOG_LEVEL=INFO
-DEBUG=false
+
+# Retry & Timeout
+MAX_RETRY_ATTEMPTS=3
+LLM_TIMEOUT_SECONDS=60
+REQUEST_TIMEOUT_SECONDS=300
 ```
 
-**Important:** Replace the placeholder values with your actual:
-- Gemini API key and model name
-- Qdrant collection names
-- Embedding model name
+### Configuration Validation
 
----
-
-## Step 7: Run FastAPI Application with UV
-
-Now that everything is set up, run the FastAPI application using UV.
-
-### Method 1: Run Directly with UV (Recommended)
-
-UV can run Python scripts within the virtual environment automatically:
+The application validates configuration on startup. Check logs for any missing or invalid configuration:
 
 ```bash
 uv run python main.py
-```
-
-**What this does:**
-- Automatically activates the virtual environment
-- Runs `main.py` with all dependencies from `.venv`
-- Starts the FastAPI server with auto-reload enabled
-
-**Expected output:**
-```
-INFO:     Started server process [xxxxx]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-```
-
-
-### Method 2: Run with Uvicorn Directly (Production Mode)
-
-For production or if you need more control:
-
-```bash
-uv run uvicorn main:app --host 0.0.0.0 --port 8000
+# Look for: ✅ Configuration validation passed
 ```
 
 ---
 
-## Step 8: Verify FastAPI is Running
+## 📚 API Documentation
 
-### Method 1: Check Root Endpoint
+### Base URL
 
-Open your browser or use curl:
-
-```bash
-curl http://localhost:8000/
+```
+http://localhost:8000
 ```
 
-**Expected response:**
+### Authentication
+
+All API endpoints (except health checks) require API key authentication:
+
+```bash
+curl -H "X-API-Key: your-api-key" http://localhost:8000/api/...
+```
+
+### Main Endpoints
+
+#### 1. File Upload & Processing
+
+**Upload and process PDF file:**
+```http
+POST /api/agent
+Content-Type: multipart/form-data
+X-API-Key: your-api-key
+X-User-ID: user-123
+X-Cooperative: cooperative-name
+
+file: <PDF file>
+background: false (optional, default: false)
+priority: normal (optional: high, normal, low)
+```
+
+**Response:**
 ```json
 {
-  "message": "Agentic AI Evaluation API is running"
+  "reports": [
+    {
+      "analysis_result": {...},
+      "graph_suggestions": {...},
+      "cache_id": "uuid",
+      "session_id": "uuid"
+    }
+  ]
 }
 ```
 
-### Method 2: Check Health Endpoint
-
-This endpoint verifies that both the API and Qdrant are working:
-
-```bash
-curl http://localhost:8000/api/health
+**Background Processing:**
+```http
+POST /api/agent?background=true&priority=high
 ```
 
-**Or open in browser:**
-```
-http://localhost:8000/api/health
+**Response:**
+```json
+{
+  "status": "queued",
+  "job_id": "uuid",
+  "session_id": "uuid",
+  "progress_url": "/api/progress/{job_id}"
+}
 ```
 
-**Expected response:**
+#### 2. Search
+
+**Hybrid search in analysis reports:**
+```http
+POST /api/analysis-search
+Content-Type: application/json
+X-API-Key: your-api-key
+X-Cooperative: cooperative-name
+
+{
+  "query": "products in Zambales",
+  "top_k": 5
+}
+```
+
+**Response:**
+```json
+{
+  "query": "products in Zambales",
+  "total_results": 3,
+  "results": [
+    {
+      "id": "uuid",
+      "score": 0.85,
+      "content": "...",
+      "form_id": "uuid",
+      "form_title": "Demo Report.pdf",
+      "analysis_data": {...}
+    }
+  ]
+}
+```
+
+#### 3. Chat Agent
+
+**Conversational querying:**
+```http
+POST /chat
+Content-Type: application/json
+X-API-Key: your-api-key
+X-User-ID: user-123
+X-Cooperative: cooperative-name
+
+{
+  "message": "Ano ang products sa Zambales?",
+  "thread_id": "uuid" (optional)
+}
+```
+
+**Response:**
+```json
+{
+  "response": "Ang mga produkto sa Zambales ay...",
+  "thread_id": "uuid",
+  "suggestions": [
+    "Pwede niyo pong itanong 'Ano ang performance ng products?'"
+  ]
+}
+```
+
+#### 4. Storage
+
+**Save processed results:**
+```http
+POST /api/storage
+Content-Type: application/json
+X-API-Key: your-api-key
+X-User-ID: user-123
+
+{
+  "cache_id": "uuid",
+  "form_title": "Demo Report.pdf"
+}
+```
+
+#### 5. Progress Tracking
+
+**Check background job progress:**
+```http
+GET /api/progress/{job_id}
+X-API-Key: your-api-key
+```
+
+**Response:**
+```json
+{
+  "status": "completed",
+  "progress": 100,
+  "result": {...}
+}
+```
+
+### Interactive API Documentation
+
+FastAPI provides interactive API documentation:
+
+- **Swagger UI**: `http://localhost:8000/docs`
+- **ReDoc**: `http://localhost:8000/redoc`
+
+### Health Checks
+
+```http
+GET /api/health
+```
+
+**Response:**
 ```json
 {
   "status": "ok",
@@ -386,7 +713,7 @@ http://localhost:8000/api/health
   "checks": {
     "database": {
       "status": "ok",
-      "collections": 0
+      "collections_count": 2
     },
     "llm": {
       "status": "ok"
@@ -395,131 +722,75 @@ http://localhost:8000/api/health
 }
 ```
 
-### Method 3: Access API Documentation
-
-FastAPI automatically generates interactive API documentation:
-
-**Swagger UI:**
-```
-http://localhost:8000/docs
-```
-
-**ReDoc:**
-```
-http://localhost:8000/redoc
-```
-
 ---
 
-## Troubleshooting
-
-### UV Issues
-
-**Problem:** `uv: command not found`
-- **Solution:** Restart your terminal after installation, or add UV to your PATH
-
-**Problem:** `uv sync` fails
-- **Solution:** Ensure Python 3.12+ is installed: `python --version`
-- **Solution:** Try updating UV: `pip install --upgrade uv`
-
-### Qdrant Issues
-
-**Problem:** Qdrant container won't start
-- **Solution:** Check if port 6333 is already in use: `netstat -ano | findstr 6333` (Windows) or `lsof -i :6333` (macOS/Linux)
-- **Solution:** Check Docker is running: `docker ps`
-- **Solution:** View error logs: `docker logs qdrant`
-
-**Problem:** Cannot access Qdrant dashboard
-- **Solution:** Verify container is running: `docker ps | grep qdrant`
-- **Solution:** Check firewall settings
-- **Solution:** Try `http://127.0.0.1:6333/dashboard` instead of `localhost`
-
-### FastAPI Issues
-
-**Problem:** Import errors when running `uv run python main.py`
-- **Solution:** Ensure `uv sync` completed successfully
-- **Solution:** Verify virtual environment exists: `ls .venv` (macOS/Linux) or `dir .venv` (Windows)
-
-**Problem:** Connection refused when accessing API
-- **Solution:** Check if FastAPI is actually running (look for "Uvicorn running" message)
-- **Solution:** Verify port 8000 is not in use by another application
-- **Solution:** Check `.env` file exists and has correct Qdrant URL
-
-**Problem:** Health check shows database error
-- **Solution:** Ensure Qdrant is running and accessible
-- **Solution:** Verify `Qdrant_Localhost=http://localhost:6333` in `.env` file
-
-### General Issues
-
-**Problem:** Dependencies conflict
-- **Solution:** Delete `.venv` folder and run `uv sync` again
-- **Solution:** Ensure `uv.lock` file is up to date (should be committed to repo)
-
----
-
-## Quick Start Summary
-
-For experienced users, here is the condensed setup:
-
-```bash
-# 1. Install UV (if not installed)
-pip install uv
-
-# 2. Clone and navigate
-git clone <repository-url>
-cd agentic-ai-evaluator
-
-# 3. Install dependencies
-uv sync
-
-# 4. Start Qdrant
-docker compose -f docker-compose.qdrant.yml up -d
-
-# 5. Verify Qdrant (open in browser)
-# http://localhost:6333/dashboard
-
-# 6. Create .env file with your configuration
-
-# 7. Run FastAPI
-uv run python main.py
-
-# 8. Verify API (open in browser)
-# http://localhost:8000/docs
-```
-
----
-
-## Additional Resources
+## 💻 Development
 
 ### Project Structure
 
 ```
 agentic-ai-evaluator/
 ├── src/
-│   ├── Agents/          # AI agent evaluators
-│   ├── database/        # Vector database operations
-│   ├── formatter/       # Data formatting utilities
-│   ├── generator/       # Embedding and model loaders
-│   ├── prompt/          # Prompt templates
-│   ├── router/          # FastAPI route handlers
-│   ├── services/        # Service layer
-│   ├── Upload/          # File upload handlers
-│   ├── utils/           # Utility functions
-│   └── workflow/        # Workflow and graph definitions
-├── data/                # Data files and PDFs
-├── cache/               # Cache directory
-├── main.py              # Application entry point
-├── pyproject.toml       # Project configuration
-├── uv.lock              # Locked dependencies
-├── docker/
-│   ├── Dockerfile.qdrant    # Qdrant Dockerfile
-│   └── docker-compose.qdrant.yml  # Docker Compose for Qdrant
-└── requirements.txt     # Alternative requirements (for compatibility)
+│   ├── Agents/              # Multi-agent evaluation (CrewAI)
+│   ├── chatbot/            # Chat agent system
+│   │   ├── bot/            # Agent implementation
+│   │   ├── chat/           # Chat router
+│   │   ├── tools/          # 27 specialized tools
+│   │   ├── memory/         # Conversation memory
+│   │   └── prompts/        # System prompts
+│   ├── database/           # Qdrant operations, search
+│   ├── formatter/          # Data formatting, chunking
+│   ├── generator/          # Embeddings, model loading
+│   ├── monitoring/         # Langfuse tracing, scoring
+│   ├── prompt/             # LLM prompt templates
+│   ├── router/             # FastAPI route handlers
+│   ├── services/           # Cache, storage services
+│   ├── Upload/             # File upload handlers
+│   ├── utils/              # Utilities, config, helpers
+│   ├── workflow/           # LangGraph workflow
+│   └── workers/            # Background workers (ARQ)
+├── data/                   # Data files and PDFs
+├── cache/                  # Cache directory
+├── test/                   # Test files
+├── docker/                 # Docker configurations
+├── main.py                 # FastAPI application entry
+├── pyproject.toml          # Project dependencies
+├── uv.lock                 # Locked dependencies
+└── README.md               # This file
 ```
 
-### Useful Commands
+### Running in Development Mode
 
-**UV Commands:**
+```bash
+# Run with auto-reload
+uv run python main.py
+
+# Or use uvicorn directly
+uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run with coverage
+uv run pytest --cov=src --cov-report=html
+```
+
+### Code Quality
+
+```bash
+# Format code (if using black)
+uv run black src/
+
+# Lint code (if using ruff)
+uv run ruff check src/
+```
+
+### Adding Dependencies
+
 ```bash
 # Add a new dependency
 uv add package-name
@@ -529,45 +800,240 @@ uv add --dev package-name
 
 # Update all dependencies
 uv sync --upgrade
-
-# Run any Python script
-uv run python script.py
-
-# Run any command in the venv
-uv run <command>
 ```
 
-**Docker Commands:**
+---
+
+## 🚢 Deployment
+
+### Docker Deployment
+
+#### Build Docker Image
+
 ```bash
-# Start Qdrant
-docker compose -f docker/docker-compose.qdrant.yml up -d
+docker build -t agentic-ai-evaluator:latest .
+```
 
-# Stop Qdrant
-docker compose -f docker/docker-compose.qdrant.yml down
+#### Run with Docker Compose
 
-# View logs
-docker compose -f docker/docker-compose.qdrant.yml logs -f
+```bash
+# Production
+docker compose up -d
 
-# Remove container and data
-docker compose -f docker/docker-compose.qdrant.yml down -v
+# Development (with hot reload)
+docker compose -f docker/docker-compose.dev.yml up -d
+```
+
+#### Environment Variables in Docker
+
+Set environment variables in `docker-compose.yml` or use `.env` file:
+
+```yaml
+environment:
+  - API_KEY=${API_KEY}
+  - GEMINI_APIKEY=${GEMINI_APIKEY}
+  # ... other variables
+```
+
+### Production Deployment
+
+#### Using Gunicorn (Linux/macOS)
+
+```bash
+# Start production server
+./start_production.sh
+
+# Or manually
+gunicorn -c gunicorn_config.py main:app
+```
+
+#### Using Uvicorn (Windows)
+
+```bash
+# Start production server
+./start_production.bat
+
+# Or manually
+uv run uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+```
+
+
+#### Docker Hub
+
+```bash
+# Build and push
+docker build -t your-username/agentic-ai-evaluator:latest .
+docker push your-username/agentic-ai-evaluator:latest
+```
+
+### Background Workers (ARQ)
+
+Start ARQ worker for background job processing:
+
+```bash
+uv run arq src.workers.workers.WorkerSettings
+```
+
+Or use Docker Compose (included in `docker-compose.yml`).
+
+---
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+#### 1. UV Command Not Found
+
+**Problem:** `uv: command not found`
+
+**Solution:**
+- Restart your terminal after installation
+- Or add UV to your PATH manually
+- Or use `pip install uv` as fallback
+
+#### 2. Qdrant Connection Failed
+
+**Problem:** Cannot connect to Qdrant
+
+**Solution:**
+```bash
+# Check if Qdrant is running
+docker ps | grep qdrant
+
+# Check Qdrant logs
+docker logs qdrant
+
+# Verify port is not in use
+netstat -ano | findstr 6333  # Windows
+lsof -i :6333                # macOS/Linux
+```
+
+#### 3. Import Errors
+
+**Problem:** Module not found errors
+
+**Solution:**
+```bash
+# Ensure dependencies are installed
+uv sync
+
+# Verify virtual environment
+ls .venv  # Should exist
+
+# Reinstall dependencies
+rm -rf .venv
+uv sync
+```
+
+#### 4. API Key Authentication Failed
+
+**Problem:** 401 Unauthorized errors
+
+**Solution:**
+- Check `.env` file has `API_KEY` set
+- Verify API key in request header: `X-API-Key: your-key`
+- Check API key matches exactly (no extra spaces)
+
+#### 5. LLM API Errors
+
+**Problem:** Gemini API errors
+
+**Solution:**
+- Verify `GEMINI_APIKEY` is set correctly
+- Check API key is valid and has quota
+- Review `LLM_TIMEOUT_SECONDS` setting
+- Check network connectivity
+
+#### 6. Redis Connection Failed
+
+**Problem:** ARQ worker cannot connect to Redis
+
+**Solution:**
+```bash
+# Check Redis is running
+redis-cli -h localhost -p 6380 ping
+
+# Verify Redis configuration in .env
+REDIS_HOST=localhost
+REDIS_PORT=6380
+```
+
+#### 7. Memory Issues
+
+**Problem:** Out of memory errors
+
+**Solution:**
+- Reduce `ARQ_MAX_JOBS` in `.env`
+- Reduce `POSTGRES_POOL_MAX`
+- Use smaller embedding model
+- Increase system RAM
+
+### Getting Help
+
+1. Check logs: `docker logs qdrant` and FastAPI console output
+2. Review configuration: Ensure all required env vars are set
+3. Check health endpoint: `curl http://localhost:8000/api/health`
+4. Review Langfuse traces (if configured) for LLM debugging
+
+---
+
+## 🤝 Contributing
+
+### Development Workflow
+
+1. **Fork the repository**
+2. **Create a feature branch**: `git checkout -b feature/your-feature`
+3. **Make changes** and test thoroughly
+4. **Commit changes**: `git commit -m "Add feature: description"`
+5. **Push to branch**: `git push origin feature/your-feature`
+6. **Create Pull Request**
+
+### Code Style
+
+- Follow PEP 8 Python style guide
+- Use type hints where possible
+- Add docstrings to functions and classes
+- Write tests for new features
+
+### Testing
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run specific test file
+uv run pytest test/test_specific.py
+
+# Run with verbose output
+uv run pytest -v
 ```
 
 ---
 
-## Notes
+## 📄 License
 
-- This project uses **uv** as the primary package manager for faster and more reliable dependency resolution
-- The `requirements.txt` file is maintained for compatibility but `pyproject.toml` with `uv.lock` is the source of truth
-- Ensure Qdrant vector database is running and accessible before starting the application
-- Google Gemini API key is required for LLM functionality
-- The application runs with auto-reload enabled in development mode
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ---
 
-## Support
+## 🙏 Acknowledgments
 
-For issues or questions:
+- **FastAPI** team for the excellent framework
+- **LangChain** and **CrewAI** for AI/ML tooling
+- **Qdrant** for vector database capabilities
+- **Google Gemini** for LLM capabilities
+
+---
+
+## 📞 Support
+
+For issues, questions, or contributions:
+
 1. Check the [Troubleshooting](#troubleshooting) section
-2. Review the logs: `docker logs qdrant` and FastAPI console output
-3. Verify all prerequisites are met
-4. Ensure environment variables are correctly configured
+2. Review existing GitHub issues
+3. Create a new issue with detailed information
+4. Include logs and error messages
+
+---
+
+**Built with ❤️ for agricultural data analysis**
