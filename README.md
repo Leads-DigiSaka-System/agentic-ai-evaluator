@@ -1014,26 +1014,6 @@ uv run pytest -v
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
----
 
-## 🙏 Acknowledgments
-
-- **FastAPI** team for the excellent framework
-- **LangChain** and **CrewAI** for AI/ML tooling
-- **Qdrant** for vector database capabilities
-- **Google Gemini** for LLM capabilities
-
----
-
-## 📞 Support
-
-For issues, questions, or contributions:
-
-1. Check the [Troubleshooting](#troubleshooting) section
-2. Review existing GitHub issues
-3. Create a new issue with detailed information
-4. Include logs and error messages
-
----
 
 **Built with ❤️ for agricultural data analysis**
