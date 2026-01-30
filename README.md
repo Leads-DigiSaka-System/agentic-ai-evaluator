@@ -401,10 +401,10 @@ curl http://localhost:6333/
 
 ### 5. Configure Environment Variables
 
-Copy `env.example` to `.env` and fill in your values:
+Copy `config/env.example` to `.env` in the project root and fill in your values:
 
 ```bash
-cp env.example .env
+cp config/env.example .env
 ```
 
 **Minimum required variables:**
@@ -538,7 +538,7 @@ docker run -d \
 
 ### Environment Variables
 
-Create a `.env` file in the root directory. See `env.example` for a complete template.
+Create a `.env` file in the root directory. See `config/env.example` for a complete template.
 
 #### Required Configuration
 
@@ -807,31 +807,48 @@ GET /api/health
 ```
 agentic-ai-evaluator/
 ├── src/
-│   ├── Agents/              # Multi-agent evaluation (CrewAI)
+│   ├── agents/             # Multi-agent evaluation (CrewAI)
+│   │   ├── evaluation_crew.py
+│   │   └── output_evaluator.py
+│   ├── api/                # FastAPI routes and dependencies
+│   │   ├── deps/           # Security, user/cooperative context
+│   │   └── routes/         # agent, chat_router, search, upload, storage, progress, cache, worker
 │   ├── chatbot/            # Chat agent system
-│   │   ├── bot/            # Agent implementation
-│   │   ├── chat/           # Chat router
-│   │   ├── tools/          # 27 specialized tools
-│   │   ├── memory/         # Conversation memory
-│   │   └── prompts/        # System prompts
-│   ├── database/           # Qdrant operations, search
-│   ├── formatter/          # Data formatting, chunking
-│   ├── generator/          # Embeddings, model loading
-│   ├── monitoring/         # Langfuse tracing, scoring
-│   ├── prompt/             # LLM prompt templates
-│   ├── router/             # FastAPI route handlers
-│   ├── services/           # Cache, storage services
-│   ├── Upload/             # File upload handlers
-│   ├── utils/              # Utilities, config, helpers
-│   ├── workflow/           # LangGraph workflow
-│   └── workers/            # Background workers (ARQ)
+│   │   ├── bot/            # Chat agent (LangChain)
+│   │   ├── formatter/      # Search results formatting
+│   │   ├── memory/         # Conversation store, Postgres/simple memory
+│   │   ├── prompts/        # System prompts
+│   │   └── tools/          # Search, analysis, list, memory tools
+│   ├── core/               # Config, constants, errors
+│   ├── domain/             # Workflow domain models and state
+│   ├── formatter/          # Chunking, JSON, data formatting
+│   ├── infrastructure/     # Embeddings, Postgres, Redis, vector store (Qdrant)
+│   │   ├── embeddings/     # Model loader, encoder, Qdrant load
+│   │   ├── postgres/       # Pool, memory schema
+│   │   ├── redis/          # Redis pool
+│   │   └── vector_store/   # Dense/sparse retriever, hybrid search, insert, list
+│   ├── ingestion/          # File validation, form extraction, multi-file handling
+│   ├── monitoring/         # Langfuse tracing and scoring
+│   │   ├── scores/         # Search, storage, workflow scores
+│   │   ├── session/        # Langfuse session_id propagation
+│   │   └── trace/          # Langfuse client, score APIs
+│   ├── prompts/            # Analysis, graph suggestion, prompt templates
+│   ├── services/           # Cache service, storage service
+│   ├── shared/             # LLM helpers, logging, score_helper, validators, etc.
+│   ├── workflow/           # LangGraph workflow (graph, nodes, state, routers)
+│   └── workers/             # ARQ background workers
+├── config/                 # env.example, deployment config
 ├── data/                   # Data files and PDFs
-├── cache/                  # Cache directory
-├── test/                   # Test files
-├── docker/                 # Docker configurations
+├── docker/                 # Docker Compose, Dockerfile
+├── docs/                   # Documentation (folder structure, workflow, analysis)
+├── scripts/                # Migration, seed demo, Postgres setup, start scripts
+├── tests/                  # Unit and integration tests
+│   ├── unit/               # Unit tests (Langfuse, chatbot, routes, etc.)
+│   └── integration/
 ├── main.py                 # FastAPI application entry
 ├── pyproject.toml          # Project dependencies
 ├── uv.lock                 # Locked dependencies
+├── gunicorn_config.py      # Production Gunicorn config
 └── README.md               # This file
 ```
 
@@ -1078,7 +1095,7 @@ REDIS_PORT=6380
 uv run pytest
 
 # Run specific test file
-uv run pytest test/test_specific.py
+uv run pytest tests/unit/test_specific.py
 
 # Run with verbose output
 uv run pytest -v
