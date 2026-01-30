@@ -101,8 +101,15 @@ def propagate_session_id(session_id: str, **additional_attributes) -> ContextMan
         ...     result = process_chat_message()
         ...     # OpenAI calls, LangChain chains, etc. will all inherit session_id
     """
-    if not LANGFUSE_CONFIGURED or not LANGFUSE_SESSION_AVAILABLE:
+    if not LANGFUSE_CONFIGURED:
         logger.debug("Langfuse not configured, skipping session propagation")
+        yield
+        return
+    if not LANGFUSE_SESSION_AVAILABLE:
+        logger.warning(
+            "Langfuse propagate_attributes not available (upgrade langfuse>=3.x). "
+            "Sessions/Users tabs may be empty; trace-level user_id/session_id still set via update_current_trace."
+        )
         yield
         return
     

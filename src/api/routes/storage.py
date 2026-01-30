@@ -9,31 +9,36 @@ from src.shared.logging.clean_logger import get_clean_logger
 from src.workflow.models import SimpleStorageApprovalRequest
 from src.api.deps.user_context import get_user_id
 from src.api.deps.cooperative_context import get_cooperative
-from src.core.config import LANGFUSE_CONFIGURED
+from src.monitoring.trace.langfuse_helper import (
+    is_langfuse_enabled,
+    update_trace_with_error,
+)
+from src.monitoring.session.langfuse_session_helper import propagate_session_id
 from datetime import datetime
 
 router = APIRouter()
 logger = get_clean_logger(__name__)
 
-# Unified Langfuse utilities - single import point
-from src.shared.langfuse_utils import (
-    LANGFUSE_AVAILABLE,
-    safe_get_client as get_client,
-    safe_observe
-)
+if is_langfuse_enabled():
+    from langfuse import observe, get_client
+else:
+    def observe(**kwargs):
+        def decorator(fn):
+            return fn
+        return decorator
+    def get_client():
+        return None
+
 import functools
 import inspect
 
-# Wrapper to preserve function signature for slowapi compatibility
+
 def observe_with_signature_preservation(*args, **kwargs):
-    """Wrapper for @observe that preserves function signature for slowapi"""
+    """Wrapper for @observe that preserves function signature for slowapi (survey-style)."""
     def decorator(func):
-        # Apply observe decorator
-        observed_func = safe_observe(*args, **kwargs)(func)
-        # Preserve original function signature metadata and attributes
+        observed_func = observe(*args, **kwargs)(func)
         functools.update_wrapper(observed_func, func)
-        # Preserve __signature__ for slowapi inspection
-        if hasattr(func, '__signature__'):
+        if hasattr(func, "__signature__"):
             observed_func.__signature__ = func.__signature__
         else:
             try:
@@ -73,24 +78,23 @@ async def approve_storage_simple(
         logger.cache_retrieve(approval_request.cache_id, "processing")
         logger.info(f"User {user_id} approval: {approval_request.approved}")
         
-        # Update trace with approval metadata and tags
-        if LANGFUSE_AVAILABLE:
+        # Langfuse: set trace attributes (survey-style)
+        langfuse = get_client() if is_langfuse_enabled() else None
+        if langfuse:
             try:
-                client = get_client()
-                if client:
-                    # Add tags to trace
-                    client.update_current_trace(
-                        tags=["storage", "approval", "api"]
-                    )
-                    client.update_current_observation(
-                        metadata={
-                            "cache_id": approval_request.cache_id[:50],
-                            "approved": approval_request.approved,
-                            "storage_type": "simple_approval",
-                            "user_id": user_id,
-                            "cooperative": cooperative
-                        }
-                    )
+                langfuse.update_current_trace(
+                    user_id=user_id,
+                    tags=["storage", "approval", "api"],
+                )
+                langfuse.update_current_observation(
+                    metadata={
+                        "cache_id": approval_request.cache_id[:50],
+                        "approved": approval_request.approved,
+                        "storage_type": "simple_approval",
+                        "user_id": user_id,
+                        "cooperative": cooperative,
+                    },
+                )
             except Exception as e:
                 logger.debug(f"Could not update observation: {e}")
         
@@ -142,25 +146,19 @@ async def approve_storage_simple(
         
         # Link storage approval to original session if session_id is available
         # This will group storage approval trace with the original file upload session
-        if LANGFUSE_AVAILABLE and original_session_id:
+        if is_langfuse_enabled() and original_session_id:
             try:
-                from src.monitoring.session.langfuse_session_helper import propagate_session_id
-                from src.monitoring.trace.langfuse_helper import get_langfuse_client
-                from src.core.config import LANGFUSE_CONFIGURED
-                
-                if LANGFUSE_CONFIGURED:
-                    client = get_langfuse_client()
-                    if client:
-                        # Set session_id on trace to link to original session
-                        client.update_current_trace(
-                            session_id=original_session_id,
-                            metadata={
-                                "linked_to_original_session": True,
-                                "original_session_id": original_session_id,
-                                "cache_id": approval_request.cache_id[:50]
-                            }
-                        )
-                        logger.info(f"Storage approval linked to session: {original_session_id}")
+                client = get_client()
+                if client:
+                    client.update_current_trace(
+                        session_id=original_session_id,
+                        metadata={
+                            "linked_to_original_session": True,
+                            "original_session_id": original_session_id,
+                            "cache_id": approval_request.cache_id[:50],
+                        },
+                    )
+                    logger.info(f"Storage approval linked to session: {original_session_id}")
             except Exception as e:
                 logger.debug(f"Could not link to original session: {e}")
         
@@ -169,7 +167,7 @@ async def approve_storage_simple(
             logger.info(f"Storage rejected by user for cache: {approval_request.cache_id[:8]}...")
             
             # Update trace with rejection - make it clear in the trace
-            if LANGFUSE_AVAILABLE:
+            if is_langfuse_enabled():
                 try:
                     from src.monitoring.scores.storage_score import log_storage_rejection_scores
                     
@@ -212,29 +210,15 @@ async def approve_storage_simple(
         
         # Process storage for single or multiple reports
         # Wrap in propagate_session_id context to ensure all child operations inherit session_id
-        if original_session_id and LANGFUSE_AVAILABLE:
+        if original_session_id and is_langfuse_enabled():
             try:
-                from src.monitoring.session.langfuse_session_helper import propagate_session_id
-                from src.core.config import LANGFUSE_CONFIGURED
-                
-                if LANGFUSE_CONFIGURED:
-                    # Process storage within session context
-                    with propagate_session_id(original_session_id, cache_id=approval_request.cache_id[:50], user_id=user_id):
-                        if len(reports) == 1:
-                            # Single report
-                            result = await _process_single_report_storage(first_report, user_id=user_id, cooperative=cooperative)
-                        else:
-                            # Multiple reports - use batch storage
-                            result = await _process_multiple_reports_storage(reports, user_id=user_id, cooperative=cooperative)
-                else:
-                    # Fallback if Langfuse not configured
+                with propagate_session_id(original_session_id, cache_id=approval_request.cache_id[:50], user_id=user_id):
                     if len(reports) == 1:
                         result = await _process_single_report_storage(first_report, user_id=user_id, cooperative=cooperative)
                     else:
                         result = await _process_multiple_reports_storage(reports, user_id=user_id, cooperative=cooperative)
             except Exception as e:
-                logger.debug(f"Could not propagate session_id in storage: {e}")
-                # Fallback to normal processing
+                logger.debug(f"Session context failed, falling back: {e}")
                 if len(reports) == 1:
                     result = await _process_single_report_storage(first_report, user_id=user_id, cooperative=cooperative)
                 else:
@@ -249,7 +233,7 @@ async def approve_storage_simple(
                 result = await _process_multiple_reports_storage(reports, user_id=user_id, cooperative=cooperative)
         
         # Update trace with storage results, tags, and scores
-        if LANGFUSE_AVAILABLE:
+        if is_langfuse_enabled():
             try:
                 from src.monitoring.scores.storage_score import log_storage_scores
                 
@@ -293,9 +277,8 @@ async def approve_storage_simple(
         logger.error(f"Unexpected error during simple storage approval: {str(e)[:100]}")
         
         # Update trace with error
-        if LANGFUSE_AVAILABLE:
+        if is_langfuse_enabled():
             try:
-                from src.monitoring.trace.langfuse_helper import update_trace_with_error
                 update_trace_with_error(e, {
                     "step": "simple_storage_approval",
                     "cache_id": approval_request.cache_id[:50]

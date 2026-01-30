@@ -6,7 +6,7 @@ This module handles all score tracking for workflow processing operations.
 
 from typing import Dict, Any
 from src.core.config import LANGFUSE_CONFIGURED
-from src.monitoring.trace.langfuse_helper import score_current_trace
+from src.shared.score_helper import score_current_trace
 from src.shared.logging.clean_logger import get_clean_logger
 
 logger = get_clean_logger(__name__)
