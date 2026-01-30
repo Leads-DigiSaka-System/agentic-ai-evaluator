@@ -13,7 +13,7 @@ from src.workflow.routers import (
     route_after_graph_evaluation,
     route_after_chunk
 )
-from src.utils.clean_logger import CleanLogger
+from src.shared.logging.clean_logger import CleanLogger
 
 
 def create_advanced_processing_workflow():

@@ -1,7 +1,7 @@
 from typing import Optional, List, Dict, Any
 from langchain_core.tools import tool
-from src.database.analysis_search import analysis_searcher
-from src.utils.clean_logger import get_clean_logger
+from src.infrastructure.vector_store.analysis_search import analysis_searcher
+from src.shared.logging.clean_logger import get_clean_logger
 from src.chatbot.formatter.search_results_formatter import (
     format_search_results_to_markdown,
     extract_most_relevant_parts

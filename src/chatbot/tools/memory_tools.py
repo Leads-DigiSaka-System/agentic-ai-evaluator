@@ -5,7 +5,7 @@ Compatible with LangChain 0.3.27
 from langchain.tools import tool
 from typing import Optional
 from src.chatbot.memory.memory_manager import get_memory_manager_for_tool
-from src.utils.clean_logger import get_clean_logger
+from src.shared.logging.clean_logger import get_clean_logger
 
 logger = get_clean_logger(__name__)
 

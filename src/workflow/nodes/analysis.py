@@ -1,13 +1,13 @@
-from src.prompt.analysis_template import analysis_prompt_template_structured
-from src.utils.llm_helper import ainvoke_llm
-from src.utils.clean_logger import CleanLogger
+from src.prompts.analysis_template import analysis_prompt_template_structured
+from src.shared.llm_helper import ainvoke_llm
+from src.shared.logging.clean_logger import CleanLogger
 # LANGFUSE_CONFIGURED is now handled in langfuse_utils
-from src.utils import config
+from src.core import config
 from typing import List
 import traceback
 
 # Unified Langfuse utilities - single import point
-from src.utils.langfuse_utils import (
+from src.shared.langfuse_utils import (
     LANGFUSE_AVAILABLE,
     safe_observe as observe,
     safe_get_client as get_client
@@ -38,7 +38,7 @@ async def analyze_demo_trial(markdown_data: str, user_id: str = None):
         logger.analysis_start("universal_adaptive_analysis")
         
         # Truncate if too long
-        from src.utils.constants import MAX_CONTENT_LENGTH
+        from src.core.constants import MAX_CONTENT_LENGTH
         original_length = len(markdown_data)
         if original_length > MAX_CONTENT_LENGTH:
             markdown_data = markdown_data[:MAX_CONTENT_LENGTH] + "\n... (truncated)"

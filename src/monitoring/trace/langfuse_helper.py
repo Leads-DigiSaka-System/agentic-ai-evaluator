@@ -1,11 +1,11 @@
 from typing import Optional, Dict, Any
-from src.utils.config import (
+from src.core.config import (
     LANGFUSE_CONFIGURED, 
     LANGFUSE_PUBLIC_KEY, 
     LANGFUSE_SECRET_KEY,
     LANGFUSE_HOST
 )
-from src.utils.clean_logger import get_clean_logger
+from src.shared.logging.clean_logger import get_clean_logger
 from functools import wraps
 from typing import Callable, Any, TypeVar, ParamSpec
 import inspect
@@ -314,14 +314,14 @@ def update_current_span(metadata: Dict[str, Any] = None, **kwargs):
 # NOTE: safe_update_observation and safe_update_trace have been moved to
 # src/utils/langfuse_utils.py for unified access. These functions are kept
 # here for backward compatibility but will be deprecated.
-# Please use: from src.utils.langfuse_utils import safe_update_observation, safe_update_trace
+# Please use: from src.shared.langfuse_utils import safe_update_observation, safe_update_trace
 
 def safe_update_observation(metadata: Dict[str, Any] = None) -> bool:
     """
     DEPRECATED: Use src.utils.langfuse_utils.safe_update_observation instead.
     Kept for backward compatibility.
     """
-    from src.utils.langfuse_utils import safe_update_observation as _safe_update
+    from src.shared.langfuse_utils import safe_update_observation as _safe_update
     return _safe_update(metadata)
 
 
@@ -330,7 +330,7 @@ def safe_update_trace(metadata: Dict[str, Any] = None, **kwargs) -> bool:
     DEPRECATED: Use src.utils.langfuse_utils.safe_update_trace instead.
     Kept for backward compatibility.
     """
-    from src.utils.langfuse_utils import safe_update_trace as _safe_update
+    from src.shared.langfuse_utils import safe_update_trace as _safe_update
     return _safe_update(metadata, **kwargs)
 
 P = ParamSpec('P')

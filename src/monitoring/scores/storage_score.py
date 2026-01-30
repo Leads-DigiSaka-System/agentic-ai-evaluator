@@ -5,9 +5,9 @@ This module handles all score tracking for storage approval operations.
 """
 
 from typing import List, Dict, Any
-from src.utils.config import LANGFUSE_CONFIGURED
+from src.core.config import LANGFUSE_CONFIGURED
 from src.monitoring.trace.langfuse_helper import score_current_trace
-from src.utils.clean_logger import get_clean_logger
+from src.shared.logging.clean_logger import get_clean_logger
 
 logger = get_clean_logger(__name__)
 

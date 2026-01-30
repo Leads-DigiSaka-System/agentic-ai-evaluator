@@ -5,8 +5,8 @@ Compatible with LangChain 0.3.x ConversationBufferMemory and AgentExecutor
 """
 from typing import Dict, Optional
 from langchain.memory import ConversationBufferMemory
-from src.utils.clean_logger import get_clean_logger
-from src.utils.config import POSTGRES_URL
+from src.shared.logging.clean_logger import get_clean_logger
+from src.core.config import POSTGRES_URL
 import os
 
 logger = get_clean_logger(__name__)

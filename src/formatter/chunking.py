@@ -1,8 +1,8 @@
 # file: src/formatter/chunking.py
 import re
 from langchain.text_splitter import SentenceTransformersTokenTextSplitter
-from src.utils.config import EMBEDDING_MODEL
-from src.utils.clean_logger import get_clean_logger
+from src.core.config import EMBEDDING_MODEL
+from src.shared.logging.clean_logger import get_clean_logger
 
 def chunk_markdown_safe(markdown_text: str, model=EMBEDDING_MODEL):
     """

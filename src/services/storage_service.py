@@ -1,6 +1,6 @@
 from typing import Dict, Any, List, Optional, Tuple
-from src.database.insert import qdrant_client
-from src.database.insert_analysis import analysis_storage
+from src.infrastructure.vector_store.insert import qdrant_client
+from src.infrastructure.vector_store.insert_analysis import analysis_storage
 from src.workflow.state import ProcessingState
 import uuid
 from datetime import datetime

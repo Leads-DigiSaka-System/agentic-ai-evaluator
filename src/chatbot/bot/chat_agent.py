@@ -19,16 +19,16 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import StructuredTool
 
-from src.utils.config import OPENROUTER_MODEL, GEMINI_MODEL, MAX_CONTEXT_MESSAGES
-from src.utils.openrouter_helper import create_openrouter_llm, is_openrouter_configured
-from src.utils.clean_logger import get_clean_logger
+from src.core.config import OPENROUTER_MODEL, GEMINI_MODEL, MAX_CONTEXT_MESSAGES
+from src.shared.openrouter_helper import create_openrouter_llm, is_openrouter_configured
+from src.shared.logging.clean_logger import get_clean_logger
 from src.chatbot.prompts.system_prompt import get_chat_agent_system_prompt
-from src.utils.llm_helper import get_langfuse_handler
+from src.shared.llm_helper import get_langfuse_handler
 from src.chatbot.memory.conversation_store import generate_thread_id
 from src.chatbot.memory.postgres_memory import PostgresConversationMemory
-from src.utils.llm_factory import create_llm_for_agent, get_available_providers
-from src.utils.gemini_helper import create_gemini_llm, is_gemini_configured
-from src.utils.retry_helper import retry_llm_call
+from src.shared.llm_factory import create_llm_for_agent, get_available_providers
+from src.shared.gemini_helper import create_gemini_llm, is_gemini_configured
+from src.shared.retry_helper import retry_llm_call
 
 # Import all available tools
 from src.chatbot.tools import (
@@ -496,7 +496,7 @@ def create_chat_agent(
     
     provider_lower = model_provider.lower()
     if provider_lower == "gemini":
-        from src.utils.gemini_helper import is_gemini_configured
+        from src.shared.gemini_helper import is_gemini_configured
         if not is_gemini_configured():
             raise ValueError(
                 "GEMINI_APIKEY is not configured. "
@@ -668,8 +668,8 @@ def invoke_agent(
                     # We'll detect this by checking if chat_history is empty after initialization
                     if not hasattr(memory, 'chat_memory') or not memory.chat_memory.messages:
                         # Check if session expired by querying directly
-                        from src.utils.postgres_pool import get_postgres_connection, return_connection
-                        from src.utils.config import SESSION_TIMEOUT_MINUTES
+                        from src.infrastructure.postgres.postgres_pool import get_postgres_connection, return_connection
+                        from src.core.config import SESSION_TIMEOUT_MINUTES
                         conn = get_postgres_connection()
                         if conn:
                             try:

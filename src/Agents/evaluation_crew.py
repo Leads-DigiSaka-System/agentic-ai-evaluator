@@ -1,6 +1,6 @@
 from crewai import Agent, Task, Crew, Process, LLM
-from src.utils.clean_logger import get_clean_logger
-from src.utils.config import GEMINI_MODEL, GOOGLE_API_KEY, LANGFUSE_CONFIGURED
+from src.shared.logging.clean_logger import get_clean_logger
+from src.core.config import GEMINI_MODEL, GOOGLE_API_KEY, LANGFUSE_CONFIGURED
 import json
 import os
 

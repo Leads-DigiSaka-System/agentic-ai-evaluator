@@ -1,11 +1,11 @@
 from typing import List, Optional, Dict, Any
 from deepagents import create_deep_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from src.utils.config import OPENROUTER_MODEL, OPENROUTER_API_KEY
-from src.utils.openrouter_helper import create_openrouter_llm, is_openrouter_configured
-from src.utils.clean_logger import get_clean_logger
+from src.core.config import OPENROUTER_MODEL, OPENROUTER_API_KEY
+from src.shared.openrouter_helper import create_openrouter_llm, is_openrouter_configured
+from src.shared.logging.clean_logger import get_clean_logger
 from src.chatbot.prompts.system_prompt import get_chat_agent_system_prompt
-from src.utils.llm_helper import get_langfuse_handler
+from src.shared.llm_helper import get_langfuse_handler
 import re
 from src.chatbot.tools import (
     # Search tools

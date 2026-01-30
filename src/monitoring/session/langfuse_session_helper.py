@@ -1,8 +1,8 @@
 import uuid
 from typing import Optional, Dict, Any, ContextManager
 from contextlib import contextmanager
-from src.utils.config import LANGFUSE_CONFIGURED
-from src.utils.clean_logger import get_clean_logger
+from src.core.config import LANGFUSE_CONFIGURED
+from src.shared.logging.clean_logger import get_clean_logger
 
 logger = get_clean_logger(__name__)
 
@@ -241,7 +241,7 @@ def get_session_url(session_id: str) -> Optional[str]:
         return None
     
     try:
-        from src.utils.config import LANGFUSE_HOST
+        from src.core.config import LANGFUSE_HOST
         # Langfuse session URLs follow this pattern
         return f"{LANGFUSE_HOST}/sessions/{session_id}"
     except Exception as e:

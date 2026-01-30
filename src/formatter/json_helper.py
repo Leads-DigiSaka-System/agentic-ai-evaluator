@@ -1,7 +1,7 @@
 import re
 import json
 from typing import Optional, Any, Dict, List, Union
-from src.utils.clean_logger import get_clean_logger
+from src.shared.logging.clean_logger import get_clean_logger
 
 logger = get_clean_logger(__name__)
 
@@ -297,7 +297,7 @@ def normalize_analysis_response(response_data: Dict[str, Any]) -> Dict[str, Any]
         # ✅ Auto-detect season if missing (post-processing)
         basic_info = normalized.get("basic_info", {})
         if not basic_info.get("season"):
-            from src.utils.season_detector import detect_season_from_dates
+            from src.shared.season_detector import detect_season_from_dates
             detected_season = detect_season_from_dates(
                 application_date=basic_info.get("application_date", ""),
                 planting_date=basic_info.get("planting_date", "")

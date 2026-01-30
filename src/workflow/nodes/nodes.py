@@ -1,17 +1,17 @@
 from src.workflow.state import ProcessingState
-from src.Upload.form_extractor import extract_with_gemini, extract_pdf_metadata
+from src.ingestion.form_extractor import extract_with_gemini, extract_pdf_metadata
 from src.formatter.chunking import chunk_markdown_safe
 from src.formatter.formatter import extract_form_type_from_content
 from src.workflow.nodes.analysis import analyze_demo_trial
-from src.database.insert import qdrant_client
-from src.utils.clean_logger import CleanLogger
+from src.infrastructure.vector_store.insert import qdrant_client
+from src.shared.logging.clean_logger import CleanLogger
 # LANGFUSE_CONFIGURED is now handled in langfuse_utils
 import uuid
 from datetime import datetime
 import asyncio
 
 # Unified Langfuse utilities - single import point
-from src.utils.langfuse_utils import (
+from src.shared.langfuse_utils import (
     LANGFUSE_AVAILABLE,
     safe_observe as observe,
     safe_update_observation,

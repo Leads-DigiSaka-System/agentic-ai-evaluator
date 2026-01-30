@@ -5,7 +5,7 @@ This module contains all the routing logic that determines the next node
 in the processing workflow based on the current state.
 """
 from src.workflow.state import ProcessingState
-from src.utils.clean_logger import CleanLogger
+from src.shared.logging.clean_logger import CleanLogger
 from langgraph.graph import END
 
 logger = CleanLogger("workflow.routers")

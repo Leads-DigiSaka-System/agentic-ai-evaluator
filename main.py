@@ -3,26 +3,26 @@ import signal
 import atexit
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from src.router.upload import router as upload_router 
-from src.router.search import router as search_router
-from src.router.delete_extract import router as delete_router
-from src.router.agent import router as agent_router
-from src.router.storage import router as storage_router
-from src.router.progress import router as progress_router
-from src.router.cache import router as cache_router
-from src.router.worker import router as worker_router
-from src.router.list import router as list_router
-from src.chatbot.chat.chat_router import router as chat_router
-from src.deps.security import require_api_key
+from src.api.routes.upload import router as upload_router
+from src.api.routes.search import router as search_router
+from src.api.routes.delete_extract import router as delete_router
+from src.api.routes.agent import router as agent_router
+from src.api.routes.storage import router as storage_router
+from src.api.routes.progress import router as progress_router
+from src.api.routes.cache import router as cache_router
+from src.api.routes.worker import router as worker_router
+from src.api.routes.list import router as list_router
+from src.api.routes.chat_router import router as chat_router
+from src.api.deps.security import require_api_key
 from dotenv import load_dotenv
 from datetime import datetime
-from src.utils.config import CONNECTION_WEB
-from slowapi.errors import RateLimitExceeded              
-from slowapi import _rate_limit_exceeded_handler          
-from src.utils.safe_logger import SafeLogger
-from src.utils.simple_clean_logging import setup_clean_logging, get_clean_logger
+from src.core.config import CONNECTION_WEB
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
+from src.shared.logging.safe_logger import SafeLogger
+from src.shared.logging.simple_clean_logging import setup_clean_logging, get_clean_logger
 from slowapi.middleware import SlowAPIMiddleware
-from src.utils.limiter_config import limiter    
+from src.shared.limiter_config import limiter    
 
 # Load .env
 load_dotenv()
@@ -45,7 +45,7 @@ except Exception as e:
 
 # Setup PostgreSQL conversation memory (if configured)
 try:
-    from src.database.postgres_memory_schema import setup_postgres_memory
+    from src.infrastructure.postgres.postgres_memory_schema import setup_postgres_memory
     if setup_postgres_memory():
         logger.info("✅ PostgreSQL conversation memory ready (production mode)")
     else:
@@ -63,7 +63,7 @@ def shutdown_handler():
     # Close shared Redis pool (sync version for atexit)
     try:
         import asyncio
-        from src.generator.redis_pool import close_shared_redis_pool
+        from src.infrastructure.redis.redis_pool import close_shared_redis_pool
         # Try to close if event loop exists
         try:
             loop = asyncio.get_event_loop()
@@ -116,7 +116,7 @@ async def startup_event():
     
     # Validate configuration first (fail fast if critical configs are missing)
     try:
-        from src.utils.config import validate_and_log_config
+        from src.core.config import validate_and_log_config
         validate_and_log_config()
     except ValueError as e:
         logger.error(f"❌ Configuration validation failed: {e}")
@@ -125,7 +125,7 @@ async def startup_event():
     
     # Initialize PostgreSQL connection pool (if PostgreSQL is configured)
     try:
-        from src.utils.postgres_pool import get_postgres_pool
+        from src.infrastructure.postgres.postgres_pool import get_postgres_pool
         pool = get_postgres_pool()
         if pool:
             logger.info("✅ PostgreSQL connection pool ready")
@@ -153,7 +153,7 @@ async def shutdown_event():
     
     # Close PostgreSQL connection pool
     try:
-        from src.utils.postgres_pool import close_pool
+        from src.infrastructure.postgres.postgres_pool import close_pool
         close_pool()
     except Exception as e:
         logger.debug(f"PostgreSQL pool cleanup failed (non-critical): {e}")
@@ -169,7 +169,7 @@ async def shutdown_event():
     
     # Close shared Redis pool
     try:
-        from src.generator.redis_pool import close_shared_redis_pool
+        from src.infrastructure.redis.redis_pool import close_shared_redis_pool
         await close_shared_redis_pool()
         logger.info("Shared Redis pool closed on FastAPI shutdown")
     except Exception as e:
@@ -232,7 +232,7 @@ def health_check():
     
     # Check Database (Qdrant)
     try:
-        from src.utils.config import QDRANT_LOCAL_URI, QDRANT_API_KEY
+        from src.core.config import QDRANT_LOCAL_URI, QDRANT_API_KEY
         from qdrant_client import QdrantClient
         
         if QDRANT_API_KEY:
@@ -255,7 +255,7 @@ def health_check():
     
     # Check LLM (Gemini)
     try:
-        from src.utils.llm_helper import llm
+        from src.shared.llm_helper import llm
         health_status["checks"]["llm"] = {"status": "ok"}
     except Exception as e:
         health_status["status"] = "degraded"
@@ -271,7 +271,7 @@ def check_qdrant_connection():
     """
     Check Qdrant connection status with detailed information
     """
-    from src.utils.config import QDRANT_LOCAL_URI, QDRANT_API_KEY, QDRANT_COLECTION_DEMO, QDRANT_COLLECTION_ANALYSIS
+    from src.core.config import QDRANT_LOCAL_URI, QDRANT_API_KEY, QDRANT_COLECTION_DEMO, QDRANT_COLLECTION_ANALYSIS
     from qdrant_client import QdrantClient
     import time
     
@@ -391,7 +391,7 @@ def validate_database():
     - Connection status
     """
     try:
-        from src.database.insert import qdrant_client
+        from src.infrastructure.vector_store.insert import qdrant_client
         
         # Get all collections
         collections_info = []

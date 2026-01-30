@@ -1,13 +1,13 @@
-from src.utils.llm_helper import ainvoke_llm
-from src.utils.clean_logger import get_clean_logger
-from src.utils.config import LANGFUSE_CONFIGURED
+from src.shared.llm_helper import ainvoke_llm
+from src.shared.logging.clean_logger import get_clean_logger
+from src.core.config import LANGFUSE_CONFIGURED
 
 # CrewAI Integration with Feature Flag
 USE_CREWAI = True  # Multi-agent evaluation enabled! 🚀
 
 if USE_CREWAI:
     try:
-        from src.Agents.evaluation_crew import validate_output_with_crew
+        from src.agents.evaluation_crew import validate_output_with_crew
         CREWAI_AVAILABLE = True
     except ImportError as e:
         CREWAI_AVAILABLE = False

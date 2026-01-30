@@ -1,10 +1,10 @@
-from src.prompt.graph_suggestion_template import graph_suggestion_prompt
-from src.utils.llm_helper import ainvoke_llm
+from src.prompts.graph_suggestion_template import graph_suggestion_prompt
+from src.shared.llm_helper import ainvoke_llm
 from src.workflow.state import ProcessingState
 from src.formatter.json_helper import clean_json_from_llm_response
-from src.utils.clean_logger import CleanLogger
-from src.utils.config import LANGFUSE_CONFIGURED
-from src.utils import config
+from src.shared.logging.clean_logger import CleanLogger
+from src.core.config import LANGFUSE_CONFIGURED
+from src.core import config
 import asyncio
 import json
 

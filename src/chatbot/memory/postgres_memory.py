@@ -6,9 +6,9 @@ Compatible with LangChain 0.3.27 AgentExecutor
 from typing import Dict, Optional, List, Any
 from langchain.memory import ConversationBufferMemory
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-from src.utils.clean_logger import get_clean_logger
-from src.utils.config import POSTGRES_URL, MAX_MESSAGES_TO_LOAD, SESSION_TIMEOUT_MINUTES
-from src.utils.postgres_pool import get_postgres_connection, return_connection
+from src.shared.logging.clean_logger import get_clean_logger
+from src.core.config import POSTGRES_URL, MAX_MESSAGES_TO_LOAD, SESSION_TIMEOUT_MINUTES
+from src.infrastructure.postgres.postgres_pool import get_postgres_connection, return_connection
 import psycopg2
 from psycopg2.extras import Json
 import json
@@ -500,7 +500,7 @@ def cleanup_expired_sessions(cleanup_days: int = 7) -> int:
         Number of sessions cleaned up
     """
     try:
-        from src.utils.config import SESSION_CLEANUP_DAYS
+        from src.core.config import SESSION_CLEANUP_DAYS
         cleanup_days = cleanup_days or SESSION_CLEANUP_DAYS
         
         conn = get_postgres_connection()

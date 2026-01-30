@@ -6,7 +6,7 @@ Compatible with LangChain 0.3.27 ConversationBufferMemory
 from typing import Dict, Optional, List, Any, Tuple
 from langchain.memory import ConversationBufferMemory
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-from src.utils.clean_logger import get_clean_logger
+from src.shared.logging.clean_logger import get_clean_logger
 import re
 
 logger = get_clean_logger(__name__)

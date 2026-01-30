@@ -3,8 +3,8 @@ List tools for chat agent - wraps existing list reports functionality
 """
 from typing import Optional, List, Dict, Any
 from langchain_core.tools import tool
-from src.database.list_reports import report_lister
-from src.utils.clean_logger import get_clean_logger
+from src.infrastructure.vector_store.list_reports import report_lister
+from src.shared.logging.clean_logger import get_clean_logger
 from src.chatbot.formatter.search_results_formatter import format_search_results_to_markdown
 import json
 

@@ -1,9 +1,9 @@
 from arq.connections import RedisSettings
-from src.utils.config import REDIS_URL
-from src.Upload.multiple_handler import MultiReportHandler
-from src.utils.clean_logger import get_clean_logger
+from src.core.config import REDIS_URL
+from src.ingestion.multiple_handler import MultiReportHandler
+from src.shared.logging.clean_logger import get_clean_logger
 from src.services.cache_service import agent_cache
-from src.generator.redis_pool import get_shared_redis_pool
+from src.infrastructure.redis.redis_pool import get_shared_redis_pool
 import json
 import asyncio
 import time
@@ -35,7 +35,7 @@ async def update_progress(ctx, job_id: str, progress: int, message: str):
                 "progress": progress,
                 "message": message
             }
-            from src.utils.constants import REDIS_PROGRESS_TTL_SECONDS
+            from src.core.constants import REDIS_PROGRESS_TTL_SECONDS
             progress_key = f"arq:progress:{job_id}"
             await redis.setex(
                 progress_key,
@@ -76,7 +76,7 @@ async def process_file_background(ctx, tracking_id: str, file_content: bytes, fi
         # ✅ CRITICAL: Wrap processing in propagate_session_id with user_id
         # This ensures all Langfuse observations inherit user_id, preventing confusion when multiple users process simultaneously
         from src.monitoring.session.langfuse_session_helper import propagate_session_id
-        from src.utils.config import LANGFUSE_CONFIGURED
+        from src.core.config import LANGFUSE_CONFIGURED
         
         # Generate session_id for this background job
         workflow_session_id = f"background_{tracking_id}"
@@ -142,7 +142,7 @@ async def process_file_background(ctx, tracking_id: str, file_content: bytes, fi
         logger.error(f"Traceback: {traceback.format_exc()}")
         
         # Import user-friendly error utility
-        from src.utils.user_friendly_errors import get_user_friendly_error
+        from src.shared.user_friendly_errors import get_user_friendly_error
         
         # Create a user-friendly error message
         # ARQ will store the exception in the "e" field, which our progress endpoint will extract
@@ -161,7 +161,7 @@ class WorkerSettings:
     """
     functions = [process_file_background]  # List of functions to register (standalone functions)
     redis_settings = RedisSettings.from_dsn(REDIS_URL)  # Redis connection
-    from src.utils.constants import (
+    from src.core.constants import (
         ARQ_MAX_JOBS, 
         ARQ_JOB_TIMEOUT_SECONDS, 
         ARQ_KEEP_RESULT_SECONDS,

@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 import logging
-from src.generator.redis_pool import get_shared_redis_pool
+from src.infrastructure.redis.redis_pool import get_shared_redis_pool
 logger = logging.getLogger(__name__)
 
 class AgentOutputCache:
@@ -12,7 +12,7 @@ class AgentOutputCache:
     """
     
     def __init__(self, redis_url: str = None):
-        from src.utils.constants import CACHE_EXPIRY_HOURS, CACHE_EXPIRY_SECONDS
+        from src.core.constants import CACHE_EXPIRY_HOURS, CACHE_EXPIRY_SECONDS
         self.cache_expiry_hours = CACHE_EXPIRY_HOURS
         self.cache_expiry_seconds = CACHE_EXPIRY_SECONDS
         logger.info(f"AgentOutputCache initialized (using shared Redis pool)")
@@ -37,7 +37,7 @@ class AgentOutputCache:
         try:
             created_at = datetime.fromisoformat(cache_data.get("created_at", ""))
             # Use minutes for expiry calculation
-            from src.utils.constants import CACHE_EXPIRY_MINUTES
+            from src.core.constants import CACHE_EXPIRY_MINUTES
             expiry_time = created_at + timedelta(minutes=CACHE_EXPIRY_MINUTES)
             return datetime.now() > expiry_time
         except:
@@ -315,7 +315,7 @@ class AgentOutputCache:
             
             # Calculate expiry time
             created_at = datetime.fromisoformat(cache_data.get("created_at", ""))
-            from src.utils.constants import CACHE_EXPIRY_MINUTES
+            from src.core.constants import CACHE_EXPIRY_MINUTES
             expires_at = created_at + timedelta(minutes=CACHE_EXPIRY_MINUTES)
             
             # Return metadata only

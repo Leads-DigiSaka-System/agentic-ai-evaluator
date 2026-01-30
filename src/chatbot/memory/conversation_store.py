@@ -5,8 +5,8 @@ Automatically uses PostgreSQL for persistent storage if configured
 from typing import Dict, Any, Optional, List
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from src.utils.clean_logger import get_clean_logger
-from src.utils.config import POSTGRES_URL
+from src.shared.logging.clean_logger import get_clean_logger
+from src.core.config import POSTGRES_URL
 import os
 
 logger = get_clean_logger(__name__)
