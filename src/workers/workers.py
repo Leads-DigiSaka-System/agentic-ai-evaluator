@@ -73,17 +73,13 @@ async def process_file_background(ctx, tracking_id: str, file_content: bytes, fi
     logger.info(f"Starting background processing for user {user_id}: {filename} (tracking_id: {tracking_id})")
     
     try:
-        # ✅ CRITICAL: Wrap processing in propagate_session_id with user_id
-        # This ensures all Langfuse observations inherit user_id, preventing confusion when multiple users process simultaneously
+        # ✅ CRITICAL: Use same session_id as API upload so Langfuse groups upload + worker in one session
         from src.monitoring.session.langfuse_session_helper import propagate_session_id
         from src.core.config import LANGFUSE_CONFIGURED
         
-        # Generate session_id for this background job
-        workflow_session_id = f"background_{tracking_id}"
-        
-        # Wrap processing in propagate_session_id context
-        if LANGFUSE_CONFIGURED and user_id:
-            with propagate_session_id(workflow_session_id, user_id=user_id, tracking_id=tracking_id):
+        # Wrap processing in propagate_session_id so all observations have session_id + user_id (Langfuse Users/Sessions)
+        if LANGFUSE_CONFIGURED and session_id:
+            with propagate_session_id(session_id, user_id=user_id or ""):
                 # Start processing task (pass user_id for workflow state)
                 processing_task = asyncio.create_task(
                     MultiReportHandler.process_multi_report_pdf(

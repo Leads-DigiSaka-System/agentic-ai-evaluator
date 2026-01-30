@@ -3,12 +3,37 @@ from src.infrastructure.redis.redis_pool import get_shared_redis_pool
 from src.shared.logging.clean_logger import get_clean_logger
 from src.api.deps.security import require_api_key
 from src.api.deps.user_context import get_user_id
+from src.monitoring.trace.langfuse_helper import is_langfuse_enabled
+from src.monitoring.session.langfuse_session_helper import propagate_session_id
 from typing import Optional, Dict, Any, Tuple
 import json
 import pickle
 
+if is_langfuse_enabled():
+    from langfuse import observe, get_client
+else:
+    def observe(**kwargs):
+        def decorator(fn):
+            return fn
+        return decorator
+    def get_client():
+        return None
+
 router = APIRouter()
 logger = get_clean_logger(__name__)
+
+
+async def _get_session_id(redis_pool, job_id: str) -> Optional[str]:
+    """Get session_id from Redis for Langfuse (stored when job was enqueued)."""
+    try:
+        data = await redis_pool.get(f"arq:session:{job_id}")
+        if data:
+            sid = data.decode("utf-8") if isinstance(data, bytes) else data
+            return sid[:200] if sid else None
+        return None
+    except Exception as e:
+        logger.debug(f"Could not get session_id for job {job_id}: {e}")
+        return None
 
 
 async def _get_tracking_id(redis_pool, job_id: str) -> Optional[str]:
@@ -295,6 +320,7 @@ def _normalize_progress_and_message(progress: int, message: str, job_status: str
 
 
 @router.get("/progress/{job_id}")
+@observe(name="get_progress")
 async def get_progress(
     job_id: str, 
     user_id: str = Depends(get_user_id),  # ✅ Extract user_id from header
@@ -318,20 +344,35 @@ async def get_progress(
     try:
         redis_pool = await get_shared_redis_pool()
         
-        # ✅ Verify job belongs to user and get stored_user_id for response
-        stored_user_id = await redis_pool.get(f"arq:user:{job_id}")
-        if stored_user_id:
-            stored_user_id = stored_user_id.decode('utf-8') if isinstance(stored_user_id, bytes) else stored_user_id
-            if stored_user_id != user_id:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Job does not belong to this user"
-                )
-        else:
-            stored_user_id = None
-        
-        # Get tracking_id from mapping
-        tracking_id = await _get_tracking_id(redis_pool, job_id)
+        # Langfuse: propagate user_id + session_id to ALL observations (required for Users/Sessions dashboard)
+        session_id = await _get_session_id(redis_pool, job_id)
+        sid = (session_id or f"progress_{job_id}")[:200]
+        with propagate_session_id(sid, user_id=user_id):
+            langfuse = get_client() if is_langfuse_enabled() else None
+            if langfuse:
+                try:
+                    langfuse.update_current_trace(
+                        user_id=user_id,
+                        session_id=sid,
+                        tags=["progress", "api"],
+                        metadata={"job_id": job_id},
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not set Langfuse trace attributes: {e}")
+
+            # ✅ Verify job belongs to user and get stored_user_id for response
+            stored_user_id = await redis_pool.get(f"arq:user:{job_id}")
+            if stored_user_id:
+                stored_user_id = stored_user_id.decode('utf-8') if isinstance(stored_user_id, bytes) else stored_user_id
+                if stored_user_id != user_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Job does not belong to this user"
+                    )
+            else:
+                stored_user_id = None
+
+            tracking_id = await _get_tracking_id(redis_pool, job_id)
         
         # Check job existence and failure status
         job_exists, result_exists, is_failed = await _check_job_existence(redis_pool, job_id)

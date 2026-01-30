@@ -82,14 +82,16 @@ class TestPostgresConversationMemory:
         mock_conn.cursor.return_value = mock_cursor
         mock_get_conn.return_value = mock_conn
         
+        # fetchone() for first query (last_message_at): return None so we skip expiry and run second query
+        mock_cursor.fetchone.return_value = None
+
         # Create memory instance
         memory = PostgresConversationMemory(thread_id="test_thread")
-        
-        # Verify query used LIMIT
+
+        # Verify execute was called and at least one query used LIMIT
         assert mock_cursor.execute.called
-        # Check that LIMIT was used in query
-        execute_call = mock_cursor.execute.call_args[0][0] if mock_cursor.execute.call_args else ""
-        assert "LIMIT" in str(execute_call).upper()
+        queries = [str(c[0][0]).upper() for c in mock_cursor.execute.call_args_list]
+        assert any("LIMIT" in q for q in queries)
     
     def test_thread_id_set_correctly(self):
         """Test that thread_id is set correctly"""

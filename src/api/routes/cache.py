@@ -6,14 +6,39 @@ from src.api.deps.security import require_api_key
 from src.services.cache_service import agent_cache
 from src.infrastructure.redis.redis_pool import get_shared_redis_pool
 from src.shared.logging.clean_logger import get_clean_logger
+from src.monitoring.trace.langfuse_helper import is_langfuse_enabled
 from typing import Dict, Any
 import asyncio
+
+if is_langfuse_enabled():
+    from langfuse import observe, get_client
+else:
+    def observe(**kwargs):
+        def decorator(fn):
+            return fn
+        return decorator
+    def get_client():
+        return None
 
 router = APIRouter()
 logger = get_clean_logger(__name__)
 
 
+def _cache_trace_attrs(action: str, **extra):
+    """Set Langfuse trace attributes for admin cache endpoints."""
+    langfuse = get_client() if is_langfuse_enabled() else None
+    if langfuse:
+        try:
+            langfuse.update_current_trace(
+                tags=["admin", "cache", "api"],
+                metadata={"action": action, **extra},
+            )
+        except Exception:
+            pass
+
+
 @router.post("/cache/cleanup")
+@observe(name="cache_cleanup")
 async def cleanup_expired_cache(api_key: str = Depends(require_api_key)) -> Dict[str, Any]:
     """
     Manually clean up expired cache entries from Redis
@@ -30,6 +55,7 @@ async def cleanup_expired_cache(api_key: str = Depends(require_api_key)) -> Dict
         }
     """
     try:
+        _cache_trace_attrs("cleanup")
         logger.info("Starting manual cache cleanup...")
         cleaned_count = await agent_cache.cleanup_expired_caches()
         
@@ -47,6 +73,7 @@ async def cleanup_expired_cache(api_key: str = Depends(require_api_key)) -> Dict
 
 
 @router.delete("/cache/clear-all")
+@observe(name="cache_clear_all")
 async def clear_all_cache(api_key: str = Depends(require_api_key)) -> Dict[str, Any]:
     """
     ⚠️ DANGER: Clear ALL cache entries from Redis
@@ -62,6 +89,7 @@ async def clear_all_cache(api_key: str = Depends(require_api_key)) -> Dict[str, 
         }
     """
     try:
+        _cache_trace_attrs("clear_all")
         logger.warning("⚠️ Clearing ALL cache entries from Redis")
         redis_pool = await get_shared_redis_pool()
         
@@ -160,6 +188,7 @@ async def get_cache_stats(api_key: str = Depends(require_api_key)) -> Dict[str, 
 
 
 @router.get("/cache/memory")
+@observe(name="cache_memory")
 async def get_redis_memory(api_key: str = Depends(require_api_key)) -> Dict[str, Any]:
     """
     Get actual Redis memory usage (not just cache)
@@ -183,6 +212,7 @@ async def get_redis_memory(api_key: str = Depends(require_api_key)) -> Dict[str,
         }
     """
     try:
+        _cache_trace_attrs("memory")
         redis_pool = await get_shared_redis_pool()
         
         # Get Redis memory info
@@ -228,6 +258,7 @@ async def get_redis_memory(api_key: str = Depends(require_api_key)) -> Dict[str,
 
 
 @router.get("/cache/{cache_id}")
+@observe(name="cache_get_status")
 async def get_cache_status(
     cache_id: str,
     api_key: str = Depends(require_api_key)
@@ -254,6 +285,7 @@ async def get_cache_status(
         }
     """
     try:
+        _cache_trace_attrs("get_status", cache_id=cache_id[:100])
         cache_info = await agent_cache.get_cache_info(cache_id)
         
         if cache_info is None:
@@ -287,6 +319,7 @@ async def get_cache_status(
 
 
 @router.delete("/cache/{cache_id}")
+@observe(name="cache_delete")
 async def delete_specific_cache(
     cache_id: str, 
     api_key: str = Depends(require_api_key)
@@ -307,6 +340,7 @@ async def delete_specific_cache(
         }
     """
     try:
+        _cache_trace_attrs("delete", cache_id=cache_id[:100])
         # Admin-only operation - no user_id filtering needed
         deleted = await agent_cache.delete_cache(cache_id)
         

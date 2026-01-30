@@ -1,15 +1,22 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from src.core.config import (
-    LANGFUSE_CONFIGURED, 
-    LANGFUSE_PUBLIC_KEY, 
+    LANGFUSE_CONFIGURED,
+    LANGFUSE_PUBLIC_KEY,
     LANGFUSE_SECRET_KEY,
-    LANGFUSE_HOST
+    LANGFUSE_HOST,
 )
 from src.shared.logging.clean_logger import get_clean_logger
 from functools import wraps
 from typing import Callable, Any, TypeVar, ParamSpec
 import inspect
+
 logger = get_clean_logger(__name__)
+
+# Survey-style: single check for "is Langfuse enabled"
+def is_langfuse_enabled() -> bool:
+    """Check if Langfuse is properly configured (survey-style alias)."""
+    return bool(LANGFUSE_CONFIGURED)
+
 
 # Initialize Langfuse client (v3 uses singleton pattern)
 _langfuse_initialized = False
@@ -57,6 +64,35 @@ def get_langfuse_client():
         return get_client()
     except Exception as e:
         logger.warning(f"Failed to get Langfuse client: {e}")
+        return None
+
+
+def create_callback_handler(
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+) -> Optional[Any]:
+    """
+    Create LangChain CallbackHandler for tracing (survey-style).
+
+    In Langfuse v3, user_id/session_id/tags are set via metadata in chain.invoke(),
+    not in the constructor. This returns CallbackHandler() only.
+
+    Args:
+        user_id, session_id, tags: For documentation; set via config["metadata"]
+            e.g. langfuse_user_id, langfuse_session_id, langfuse_tags.
+
+    Returns:
+        CallbackHandler if Langfuse enabled, None otherwise.
+    """
+    if not LANGFUSE_CONFIGURED:
+        return None
+    try:
+        from langfuse.langchain import CallbackHandler
+        initialize_langfuse()
+        return CallbackHandler()
+    except Exception as e:
+        logger.warning(f"Failed to create Langfuse callback handler: {e}")
         return None
 
 
@@ -257,35 +293,32 @@ def score_current_trace(
         logger.warning(f"Failed to score current trace: {e}")
 
 
-def get_trace_url() -> Optional[str]:
-    """Get the URL of the current trace (v3 API)"""
+def get_current_trace_id() -> Optional[str]:
+    """Get the current trace ID from Langfuse context (survey-style, v3)."""
     if not LANGFUSE_CONFIGURED:
         return None
-    
     try:
         client = get_langfuse_client()
         if not client:
             return None
-        
-        # v3: Get trace ID from current context
-        trace_id = None
-        try:
-            # Try to get trace ID from current observation context
-            if hasattr(client, 'get_current_observation'):
-                obs = client.get_current_observation()
-                if obs and hasattr(obs, 'trace_id'):
-                    trace_id = obs.trace_id
-            # Fallback: try get_trace_id if it exists (some versions might have it)
-            elif hasattr(client, 'get_trace_id'):
-                trace_id = client.get_trace_id()
-        except Exception:
-            pass
-        
-        if trace_id:
-            return f"{LANGFUSE_HOST}/trace/{trace_id}"
-    except Exception as e:
-        logger.warning(f"Failed to get trace URL: {e}")
-    
+        if hasattr(client, "get_current_trace_id"):
+            return client.get_current_trace_id()
+        if hasattr(client, "get_current_observation"):
+            obs = client.get_current_observation()
+            if obs and hasattr(obs, "trace_id"):
+                return obs.trace_id
+        if hasattr(client, "get_trace_id"):
+            return client.get_trace_id()
+    except Exception:
+        pass
+    return None
+
+
+def get_trace_url() -> Optional[str]:
+    """Get the URL of the current trace (v3 API)."""
+    trace_id = get_current_trace_id()
+    if trace_id:
+        return f"{LANGFUSE_HOST}/trace/{trace_id}"
     return None
 
 

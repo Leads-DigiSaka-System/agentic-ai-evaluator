@@ -13,19 +13,31 @@ from src.chatbot.memory.conversation_store import generate_thread_id, get_conver
 from src.shared.logging.clean_logger import get_clean_logger
 from src.shared.limiter_config import limiter
 from src.core.config import (
-    LANGFUSE_CONFIGURED, 
-    OPENROUTER_API_KEY, 
+    OPENROUTER_API_KEY,
     OPENROUTER_MODEL,
     MAX_CACHE_SIZE,
-    CACHE_TTL_HOURS
+    CACHE_TTL_HOURS,
 )
 from src.shared.openrouter_helper import is_openrouter_configured
 from src.monitoring.trace.langfuse_helper import (
-    observe_operation,
+    is_langfuse_enabled,
     update_trace_with_metrics,
     update_trace_with_error,
-    get_langfuse_client
 )
+from src.monitoring.session.langfuse_session_helper import (
+    generate_session_id,
+    propagate_session_id,
+)
+
+if is_langfuse_enabled():
+    from langfuse import observe, get_client
+else:
+    def observe(**kwargs):
+        def decorator(fn):
+            return fn
+        return decorator
+    def get_client():
+        return None
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 logger = get_clean_logger(__name__)
@@ -72,7 +84,7 @@ class ChatResponse(BaseModel):
 
 @router.post("")
 @limiter.limit("30/minute")
-@observe_operation(name="chat_agent")
+@observe(name="chat_agent")
 async def chat(
     request: Request,  # Required for rate limiter
     body: ChatRequest,
@@ -101,159 +113,147 @@ async def chat(
     """
     try:
         # Input validation is handled by Pydantic
-        # Additional sanitization if needed
         sanitized_message = body.message.strip()
-        
-        # Add tags to trace
-        if LANGFUSE_CONFIGURED:
+        # Session ID early so we can propagate to all observations (required for Langfuse Sessions/Users dashboard)
+        session_id = body.session_id or generate_session_id(prefix=f"chat_{cooperative}_{user_id}")
+
+        # Langfuse: set trace-level user_id/session_id IMMEDIATELY (so trace shows in Sessions/Users even before propagate_attributes)
+        langfuse = get_client() if is_langfuse_enabled() else None
+        if langfuse:
             try:
-                client = get_langfuse_client()
-                if client:
-                    client.update_current_trace(
-                        tags=["chat", "chat_agent", "api", f"cooperative:{cooperative}"],
-                        user_id=user_id,
-                        session_id=body.session_id or f"chat_{user_id}_{cooperative}"
+                langfuse.update_current_trace(
+                    user_id=user_id,
+                    session_id=session_id,
+                    tags=["chat", "chat_agent", "api", f"cooperative:{cooperative}"],
+                )
+            except Exception as e:
+                logger.debug(f"Could not set trace attributes: {e}")
+
+        # Langfuse: propagate user_id + session_id to ALL observations (required for Users/Sessions tabs in dashboard)
+        with propagate_session_id(session_id, user_id=user_id):
+            logger.info(f"Chat request from user {user_id}, cooperative {cooperative}: {sanitized_message[:100]}")
+
+            # Get or create agent for this cooperative with cache management
+            cache_key = f"{cooperative}"
+            agent = None
+
+            # Check cache with TTL
+            if cache_key in _agent_cache:
+                cache_entry = _agent_cache[cache_key]
+                cache_time = cache_entry.get("created_at", datetime.now())
+
+                # Check if cache is still valid
+                if datetime.now() - cache_time < timedelta(hours=CACHE_TTL_HOURS):
+                    agent = cache_entry.get("agent")
+                    _agent_cache.move_to_end(cache_key)
+                    logger.debug(f"Using cached agent for cooperative: {cooperative}")
+                else:
+                    del _agent_cache[cache_key]
+                    logger.debug(f"Cache expired for cooperative: {cooperative}")
+
+            # Create new agent if not in cache
+            if agent is None:
+                logger.info(f"Creating new chat agent for cooperative: {cooperative}")
+                try:
+                    agent = create_chat_agent(cooperative=cooperative)
+                    
+                    # Manage cache size (LRU eviction)
+                    if len(_agent_cache) >= MAX_CACHE_SIZE:
+                        # Remove oldest entry
+                        oldest_key = next(iter(_agent_cache))
+                        del _agent_cache[oldest_key]
+                        logger.debug(f"Cache full, evicted oldest entry: {oldest_key}")
+                    
+                    # Add to cache
+                    _agent_cache[cache_key] = {
+                        "agent": agent,
+                        "created_at": datetime.now()
+                    }
+                    logger.info(f"✅ Chat agent cached for cooperative: {cooperative}")
+                except Exception as e:
+                    import traceback
+                    logger.error(f"Failed to create chat agent: {str(e)}\n{traceback.format_exc()}")
+                    # User-friendly error message
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Unable to initialize chat service. Please try again later."
                     )
-            except Exception as e:
-                logger.debug(f"Could not add tags to trace: {e}")
-        
-        logger.info(f"Chat request from user {user_id}, cooperative {cooperative}: {sanitized_message[:100]}")
-        
-        # Get or create agent for this cooperative with cache management
-        cache_key = f"{cooperative}"
-        agent = None
-        
-        # Check cache with TTL
-        if cache_key in _agent_cache:
-            cache_entry = _agent_cache[cache_key]
-            cache_time = cache_entry.get("created_at", datetime.now())
-            
-            # Check if cache is still valid
-            if datetime.now() - cache_time < timedelta(hours=CACHE_TTL_HOURS):
-                agent = cache_entry.get("agent")
-                # Move to end (LRU)
-                _agent_cache.move_to_end(cache_key)
-                logger.debug(f"Using cached agent for cooperative: {cooperative}")
-            else:
-                # Cache expired, remove it
-                del _agent_cache[cache_key]
-                logger.debug(f"Cache expired for cooperative: {cooperative}")
-        
-        # Create new agent if not in cache
-        if agent is None:
-            logger.info(f"Creating new chat agent for cooperative: {cooperative}")
+
+            # Generate thread_id for conversation memory (cooperative-aware)
+            thread_id = generate_thread_id(
+                cooperative=cooperative,
+                user_id=user_id,
+                session_id=session_id,
+            )
+
+            if body.reset_conversation:
+                from src.chatbot.memory.simple_memory import clear_thread_memory
+                clear_thread_memory(thread_id)
+                logger.info(f"Conversation memory cleared for thread: {thread_id}")
+
+            # Invoke agent
             try:
-                agent = create_chat_agent(cooperative=cooperative)
-                
-                # Manage cache size (LRU eviction)
-                if len(_agent_cache) >= MAX_CACHE_SIZE:
-                    # Remove oldest entry
-                    oldest_key = next(iter(_agent_cache))
-                    del _agent_cache[oldest_key]
-                    logger.debug(f"Cache full, evicted oldest entry: {oldest_key}")
-                
-                # Add to cache
-                _agent_cache[cache_key] = {
-                    "agent": agent,
-                    "created_at": datetime.now()
-                }
-                logger.info(f"✅ Chat agent cached for cooperative: {cooperative}")
-            except Exception as e:
+                result = invoke_agent(
+                    agent=agent,
+                    message=sanitized_message,
+                    session_id=session_id,
+                    thread_id=thread_id,
+                    cooperative=cooperative,
+                    user_id=user_id
+                )
+
+                response_text = result.get("response", "I'm sorry, I couldn't process your request.")
+                tools_used = result.get("tools_used", [])
+                metadata = result.get("metadata", {})
+                clarification_questions = result.get("clarification_questions", [])
+                follow_up_questions = result.get("follow_up_questions", [])
+                session_expired = result.get("session_expired", False)
+                session_active = result.get("session_active", True)
+
+                sources = result.get("sources", [])
+                if not sources and metadata:
+                    if "search_results" in metadata:
+                        sources = metadata["search_results"][:5]
+                    elif "results" in metadata:
+                        sources = metadata["results"][:5]
+
+                update_trace_with_metrics({
+                    "message_length": len(body.message),
+                    "response_length": len(response_text),
+                    "tools_used_count": len(tools_used),
+                    "clarification_asked": len(clarification_questions) > 0,
+                    "follow_up_suggested": len(follow_up_questions) > 0,
+                    "session_id": session_id,
+                    "cooperative": cooperative,
+                    "user_id": user_id
+                })
+
+                logger.info(f"Chat response generated (tools used: {len(tools_used)}, clarifications: {len(clarification_questions)}, follow-ups: {len(follow_up_questions)})")
+
+                return ChatResponse(
+                    response=response_text,
+                    session_id=session_id,
+                    tools_used=tools_used,
+                    sources=sources,
+                    clarification_questions=clarification_questions,
+                    follow_up_questions=follow_up_questions,
+                    session_expired=session_expired,
+                    session_active=session_active
+                )
+
+            except Exception as agent_error:
                 import traceback
-                logger.error(f"Failed to create chat agent: {str(e)}\n{traceback.format_exc()}")
-                # User-friendly error message
+                logger.error(f"Agent execution failed: {str(agent_error)}\n{traceback.format_exc()}")
+                update_trace_with_error(agent_error, {
+                    "endpoint": "chat",
+                    "cooperative": cooperative,
+                    "user_id": user_id
+                })
                 raise HTTPException(
                     status_code=500,
-                    detail="Unable to initialize chat service. Please try again later."
+                    detail="I encountered an issue processing your request. Please try rephrasing your question or try again later."
                 )
-        
-        # Generate session ID if not provided
-        session_id = body.session_id
-        if not session_id:
-            from src.monitoring.session.langfuse_session_helper import generate_session_id
-            session_id = generate_session_id(prefix=f"chat_{cooperative}_{user_id}")
-        
-        # Generate thread_id for conversation memory (cooperative-aware)
-        thread_id = generate_thread_id(
-            cooperative=cooperative,
-            user_id=user_id,
-            session_id=session_id
-        )
-        
-        # Clear conversation if requested
-        if body.reset_conversation:
-            from src.chatbot.memory.simple_memory import clear_thread_memory
-            clear_thread_memory(thread_id)
-            logger.info(f"Conversation memory cleared for thread: {thread_id}")
-        
-        # Invoke agent
-        try:
-            result = invoke_agent(
-                agent=agent,
-                message=sanitized_message,
-                session_id=session_id,
-                thread_id=thread_id,
-                cooperative=cooperative,
-                user_id=user_id
-            )
-            
-            # Extract response
-            response_text = result.get("response", "I'm sorry, I couldn't process your request.")
-            tools_used = result.get("tools_used", [])
-            metadata = result.get("metadata", {})
-            clarification_questions = result.get("clarification_questions", [])
-            follow_up_questions = result.get("follow_up_questions", [])  # Extract follow-up questions
-            session_expired = result.get("session_expired", False)
-            session_active = result.get("session_active", True)
-            
-            # Extract sources - use sources from result if available
-            sources = result.get("sources", [])
-            if not sources and metadata:
-                # Fallback: Try to extract data sources from agent execution
-                if "search_results" in metadata:
-                    sources = metadata["search_results"][:5]  # Limit to 5 sources
-                elif "results" in metadata:
-                    sources = metadata["results"][:5]
-            
-            # Log metrics
-            update_trace_with_metrics({
-                "message_length": len(body.message),
-                "response_length": len(response_text),
-                "tools_used_count": len(tools_used),
-                "clarification_asked": len(clarification_questions) > 0,
-                "follow_up_suggested": len(follow_up_questions) > 0,
-                "session_id": session_id,
-                "cooperative": cooperative,
-                "user_id": user_id
-            })
-            
-            logger.info(f"Chat response generated (tools used: {len(tools_used)}, clarifications: {len(clarification_questions)}, follow-ups: {len(follow_up_questions)})")
-            
-            return ChatResponse(
-                response=response_text,
-                session_id=session_id,
-                tools_used=tools_used,
-                sources=sources,
-                clarification_questions=clarification_questions,
-                follow_up_questions=follow_up_questions,  # Include follow-up questions in response
-                session_expired=session_expired,
-                session_active=session_active
-            )
-            
-        except Exception as agent_error:
-            import traceback
-            logger.error(f"Agent execution failed: {str(agent_error)}\n{traceback.format_exc()}")
-            update_trace_with_error(agent_error, {
-                "endpoint": "chat",
-                "cooperative": cooperative,
-                "user_id": user_id
-            })
-            # User-friendly error message
-            raise HTTPException(
-                status_code=500,
-                detail="I encountered an issue processing your request. Please try rephrasing your question or try again later."
-            )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -273,7 +273,7 @@ async def chat(
 
 @router.get("/history")
 @limiter.limit("60/minute")
-@observe_operation(name="chat_history")
+@observe(name="chat_history")
 async def get_conversation_history(
     request: Request,
     session_id: str = Query(..., description="Session ID to get history for"),
@@ -323,7 +323,7 @@ async def get_conversation_history(
 
 @router.get("/stats")
 @limiter.limit("60/minute")
-@observe_operation(name="chat_stats")
+@observe(name="chat_stats")
 async def get_conversation_stats(
     request: Request,
     session_id: Optional[str] = Query(None, description="Session ID to get stats for"),
@@ -447,7 +447,7 @@ async def chat_health_check(
 
 @router.post("/reset")
 @limiter.limit("10/minute")
-@observe_operation(name="reset_conversation")
+@observe(name="reset_conversation")
 async def reset_conversation(
     request: Request,
     session_id: str = Query(..., description="Session ID to reset"),

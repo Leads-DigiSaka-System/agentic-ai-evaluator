@@ -3,6 +3,7 @@ Unit tests for chat_agent.py critical functions
 """
 import pytest
 import sys
+import types
 from unittest.mock import Mock, MagicMock, patch
 
 # Mock ALL dependencies BEFORE any imports
@@ -23,8 +24,31 @@ mock_postgres_pool.get_postgres_connection = Mock(return_value=None)
 mock_postgres_pool.return_connection = Mock()
 sys.modules['src.utils.postgres_pool'] = mock_postgres_pool
 
-# Mock langchain memory
-sys.modules['langchain.memory'] = Mock()
+# chat_agent -> tools -> search_tools -> analysis_search (loads HuggingFace). Mock it so tests run offline.
+_mock_analysis_module = types.ModuleType('analysis_search')
+_mock_analysis_module.analysis_searcher = Mock()
+sys.modules['src.infrastructure.vector_store.analysis_search'] = _mock_analysis_module
+
+# LangChain 0.3: langchain.agents pulls in deprecated paths (chat_memory, token_buffer).
+# Fake langchain.memory as a package so those internal imports succeed.
+# Also provide ConversationBufferMemory for modules that import it from langchain.memory.
+_langchain_memory = types.ModuleType('langchain.memory')
+_langchain_memory_chat = types.ModuleType('langchain.memory.chat_memory')
+_langchain_memory_chat.BaseChatMemory = type('BaseChatMemory', (), {})
+_langchain_memory.chat_memory = _langchain_memory_chat
+_langchain_memory_token = types.ModuleType('langchain.memory.token_buffer')
+_langchain_memory_token.ConversationTokenBufferMemory = type('ConversationTokenBufferMemory', (), {})
+_langchain_memory.token_buffer = _langchain_memory_token
+# Stub for ConversationBufferMemory (used by postgres_memory, simple_memory, memory_manager)
+# Must have chat_memory so PostgresConversationMemory and tests that check .chat_memory pass.
+def _buffer_init(self, *args, **kwargs):
+    self.chat_memory = Mock()
+    self.chat_memory.messages = []
+_langchain_memory.ConversationBufferMemory = type('ConversationBufferMemory', (), {'__init__': _buffer_init})
+sys.modules['langchain.memory'] = _langchain_memory
+sys.modules['langchain.memory.chat_memory'] = _langchain_memory_chat
+sys.modules['langchain.memory.token_buffer'] = _langchain_memory_token
+
 from langchain_core.tools import StructuredTool
 
 # Now import the functions we want to test
