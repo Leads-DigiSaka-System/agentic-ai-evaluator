@@ -1,6 +1,7 @@
 # file: src/router/upload.py
-from fastapi import APIRouter, UploadFile, File, HTTPException, Header
+from fastapi import APIRouter, UploadFile, File, HTTPException, Header, Request
 from fastapi.responses import PlainTextResponse
+from src.shared.limiter_config import limiter
 from src.ingestion.form_extractor import extract_pdf_with_gemini
 from src.formatter.chunking import chunk_markdown_safe
 from src.formatter.formatter import extract_form_type_from_content
@@ -29,8 +30,10 @@ logger = get_clean_logger(__name__)
 
 
 @router.post("/upload-file-product-demo", response_class=PlainTextResponse)
+@limiter.limit("20/hour")
 @observe(name="upload_file_product_demo")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...),
     x_user_id: Optional[str] = Header(None, alias="X-User-ID"),
 ) -> str:

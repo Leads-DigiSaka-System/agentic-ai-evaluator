@@ -1,8 +1,9 @@
 """
 Worker health check and metrics endpoints for ARQ background jobs.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from src.api.deps.security import require_api_key
+from src.shared.limiter_config import limiter
 from src.infrastructure.redis.redis_pool import get_shared_redis_pool
 from src.shared.logging.clean_logger import get_clean_logger
 from typing import Dict, Any, List, Optional
@@ -14,7 +15,11 @@ logger = get_clean_logger(__name__)
 
 
 @router.get("/worker/health")
-async def worker_health(api_key: str = Depends(require_api_key)) -> Dict[str, Any]:
+@limiter.limit("30/minute")
+async def worker_health(
+    request: Request,
+    api_key: str = Depends(require_api_key),
+) -> Dict[str, Any]:
     """
     Check worker health and status
     
@@ -112,7 +117,11 @@ async def worker_health(api_key: str = Depends(require_api_key)) -> Dict[str, An
 
 
 @router.get("/worker/metrics")
-async def worker_metrics(api_key: str = Depends(require_api_key)) -> Dict[str, Any]:
+@limiter.limit("30/minute")
+async def worker_metrics(
+    request: Request,
+    api_key: str = Depends(require_api_key),
+) -> Dict[str, Any]:
     """
     Get detailed worker metrics
     
@@ -187,10 +196,12 @@ async def worker_metrics(api_key: str = Depends(require_api_key)) -> Dict[str, A
 
 
 @router.get("/worker/jobs")
+@limiter.limit("30/minute")
 async def list_jobs(
+    request: Request,
     status: Optional[str] = None,
     limit: int = 20,
-    api_key: str = Depends(require_api_key)
+    api_key: str = Depends(require_api_key),
 ) -> Dict[str, Any]:
     """
     List recent jobs with optional status filter

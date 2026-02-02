@@ -1,8 +1,9 @@
 """
 Cache management endpoints for Redis cleanup and monitoring.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from src.api.deps.security import require_api_key
+from src.shared.limiter_config import limiter
 from src.services.cache_service import agent_cache
 from src.infrastructure.redis.redis_pool import get_shared_redis_pool
 from src.shared.logging.clean_logger import get_clean_logger
@@ -38,8 +39,12 @@ def _cache_trace_attrs(action: str, **extra):
 
 
 @router.post("/cache/cleanup")
+@limiter.limit("10/minute")
 @observe(name="cache_cleanup")
-async def cleanup_expired_cache(api_key: str = Depends(require_api_key)) -> Dict[str, Any]:
+async def cleanup_expired_cache(
+    request: Request,
+    api_key: str = Depends(require_api_key),
+) -> Dict[str, Any]:
     """
     Manually clean up expired cache entries from Redis
     
@@ -73,8 +78,12 @@ async def cleanup_expired_cache(api_key: str = Depends(require_api_key)) -> Dict
 
 
 @router.delete("/cache/clear-all")
+@limiter.limit("5/minute")
 @observe(name="cache_clear_all")
-async def clear_all_cache(api_key: str = Depends(require_api_key)) -> Dict[str, Any]:
+async def clear_all_cache(
+    request: Request,
+    api_key: str = Depends(require_api_key),
+) -> Dict[str, Any]:
     """
     ⚠️ DANGER: Clear ALL cache entries from Redis
     
@@ -122,7 +131,11 @@ async def clear_all_cache(api_key: str = Depends(require_api_key)) -> Dict[str, 
 
 
 @router.get("/cache/stats")
-async def get_cache_stats(api_key: str = Depends(require_api_key)) -> Dict[str, Any]:
+@limiter.limit("60/minute")
+async def get_cache_stats(
+    request: Request,
+    api_key: str = Depends(require_api_key),
+) -> Dict[str, Any]:
     """
     Get cache statistics from Redis
     
@@ -188,8 +201,12 @@ async def get_cache_stats(api_key: str = Depends(require_api_key)) -> Dict[str, 
 
 
 @router.get("/cache/memory")
+@limiter.limit("30/minute")
 @observe(name="cache_memory")
-async def get_redis_memory(api_key: str = Depends(require_api_key)) -> Dict[str, Any]:
+async def get_redis_memory(
+    request: Request,
+    api_key: str = Depends(require_api_key),
+) -> Dict[str, Any]:
     """
     Get actual Redis memory usage (not just cache)
     
@@ -258,10 +275,12 @@ async def get_redis_memory(api_key: str = Depends(require_api_key)) -> Dict[str,
 
 
 @router.get("/cache/{cache_id}")
+@limiter.limit("60/minute")
 @observe(name="cache_get_status")
 async def get_cache_status(
+    request: Request,
     cache_id: str,
-    api_key: str = Depends(require_api_key)
+    api_key: str = Depends(require_api_key),
 ) -> Dict[str, Any]:
     """
     Check if cache exists and get its status
@@ -319,10 +338,12 @@ async def get_cache_status(
 
 
 @router.delete("/cache/{cache_id}")
+@limiter.limit("10/minute")
 @observe(name="cache_delete")
 async def delete_specific_cache(
-    cache_id: str, 
-    api_key: str = Depends(require_api_key)
+    request: Request,
+    cache_id: str,
+    api_key: str = Depends(require_api_key),
 ) -> Dict[str, Any]:
     """
     Delete a specific cache entry by cache_id

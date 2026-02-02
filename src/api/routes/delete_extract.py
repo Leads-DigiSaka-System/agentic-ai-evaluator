@@ -1,12 +1,14 @@
 # delete_endpoint.py
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from src.infrastructure.vector_store.delete import delete_from_qdrant, delete_all_from_collection
+from src.shared.limiter_config import limiter
 
 router = APIRouter()
 
 
 @router.delete("/delete/{form_id}")
-async def delete_form(form_id: str):
+@limiter.limit("10/minute")
+async def delete_form(request: Request, form_id: str):
     """
     Delete a single demo trial record from Qdrant using its form_id.
     
@@ -30,9 +32,11 @@ async def delete_form(form_id: str):
 
 
 @router.delete("/delete-all/{collection_name}")
+@limiter.limit("5/minute")
 async def delete_all_forms(
+    request: Request,
     collection_name: str,
-    confirm: bool = Query(False, description="Must be set to true to confirm deletion")
+    confirm: bool = Query(False, description="Must be set to true to confirm deletion"),
 ):
     """
     ⚠️ DANGER: Delete ALL records from a Qdrant collection.

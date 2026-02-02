@@ -397,9 +397,10 @@ async def get_conversation_stats(
 
 
 @router.get("/health")
+@limiter.limit("60/minute")
 async def chat_health_check(
     request: Request,
-    cooperative: str = Depends(get_cooperative)
+    cooperative: str = Depends(get_cooperative),
 ):
     """
     Health check endpoint for chat agent service.

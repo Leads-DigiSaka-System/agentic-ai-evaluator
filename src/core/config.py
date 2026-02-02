@@ -61,6 +61,31 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 CONNECTION_WEB = os.getenv("CONNECTION_WEB","http://localhost:8501").split(",")
 CONNECTION_MOBILE = os.getenv("CONNECTION_MOBILE")
 
+# Environment (development | staging | production) — used for CORS, health masking, API key bypass
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").strip().lower()
+if ENVIRONMENT not in ("development", "staging", "production"):
+    ENVIRONMENT = "development"
+
+# CORS allowed origins (comma-separated). Production will restrict to this list; dev can allow all.
+CORS_ORIGINS_STR = os.getenv("CORS_ORIGINS") or os.getenv("CONNECTION_WEB", "http://localhost:3000,http://localhost:8501")
+CORS_ORIGINS = [o.strip() for o in CORS_ORIGINS_STR.split(",") if o.strip()]
+if not CORS_ORIGINS:
+    CORS_ORIGINS = ["http://localhost:3000", "http://localhost:8501"]
+
+# API Key: single key (backward compatible)
+API_KEY = os.getenv("API_KEY", "")
+
+# Multiple API keys (comma-separated) for production; fallback to API_KEY if API_KEYS not set
+_api_keys_raw = os.getenv("API_KEYS", API_KEY or "")
+API_KEYS = (
+    [k.strip() for k in _api_keys_raw.split(",") if k.strip()]
+    if _api_keys_raw.strip()
+    else ([API_KEY] if API_KEY else [])
+)
+
+# Rate limiting: set to false to disable (e.g. local dev or tests)
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").strip().lower() == "true"
+
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
 LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
@@ -266,7 +291,9 @@ def validate_and_log_config():
     
     # Log key configuration status
     logger.info("📋 Configuration summary:")
-    logger.info(f"   - API Key: {'✅ Set' if os.getenv('API_KEY') else '❌ Missing'}")
+    logger.info(
+        f"   - API Key: {'✅ Set' if API_KEYS else '❌ Missing (dev bypass if ENVIRONMENT=development)'}"
+    )
     logger.info(f"   - Qdrant: {'✅ Configured' if QDRANT_LOCAL_URI else '❌ Missing'}")
     logger.info(f"   - Embedding Model: {'✅ ' + EMBEDDING_MODEL if EMBEDDING_MODEL else '❌ Missing'}")
     logger.info(f"   - Redis: {'✅ Configured' if REDIS_URL else '❌ Missing'}")

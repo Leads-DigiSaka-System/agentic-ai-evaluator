@@ -16,7 +16,7 @@ from src.api.routes.chat_router import router as chat_router
 from src.api.deps.security import require_api_key
 from dotenv import load_dotenv
 from datetime import datetime
-from src.core.config import CONNECTION_WEB
+from src.core.config import CORS_ORIGINS, ENVIRONMENT, RATE_LIMIT_ENABLED
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 from src.shared.logging.safe_logger import SafeLogger
@@ -188,12 +188,14 @@ async def shutdown_event():
 
 
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(SlowAPIMiddleware)
+if RATE_LIMIT_ENABLED:
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 # Initialize FastAPI app
+# CORS: production = restrict to CORS_ORIGINS; development/staging = allow all
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[CONNECTION_WEB], # ← Fixed: Use list
+    allow_origins=CORS_ORIGINS if ENVIRONMENT == "production" else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

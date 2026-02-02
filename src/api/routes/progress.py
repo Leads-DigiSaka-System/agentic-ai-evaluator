@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from src.infrastructure.redis.redis_pool import get_shared_redis_pool
+from src.shared.limiter_config import limiter
 from src.shared.logging.clean_logger import get_clean_logger
 from src.api.deps.security import require_api_key
 from src.api.deps.user_context import get_user_id
@@ -320,11 +321,13 @@ def _normalize_progress_and_message(progress: int, message: str, job_status: str
 
 
 @router.get("/progress/{job_id}")
+@limiter.limit("60/minute")
 @observe(name="get_progress")
 async def get_progress(
-    job_id: str, 
+    request: Request,
+    job_id: str,
     user_id: str = Depends(get_user_id),  # ✅ Extract user_id from header
-    api_key: str = Depends(require_api_key)
+    api_key: str = Depends(require_api_key),
 ):
     """
     Get progress of background job
