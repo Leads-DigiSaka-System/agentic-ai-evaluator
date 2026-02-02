@@ -12,6 +12,7 @@ from src.chatbot.bot.chat_agent import create_chat_agent, invoke_agent
 from src.chatbot.memory.conversation_store import generate_thread_id, get_conversation_store
 from src.shared.logging.clean_logger import get_clean_logger
 from src.shared.limiter_config import limiter
+from src.shared.validation import validate_message, validate_session_id, validate_id
 from src.core.config import (
     OPENROUTER_API_KEY,
     OPENROUTER_MODEL,
@@ -50,7 +51,7 @@ _agent_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 class ChatRequest(BaseModel):
     """Request model for chat endpoint"""
     message: str = Field(..., description="User's message/query", min_length=1, max_length=5000)
-    session_id: Optional[str] = Field(None, description="Session ID for conversation continuity")
+    session_id: Optional[str] = Field(None, max_length=200, description="Session ID for conversation continuity")
     reset_conversation: bool = Field(False, description="Clear conversation memory if True")
     
     @field_validator('message')
@@ -112,8 +113,8 @@ async def chat(
         Chat response with agent's answer and metadata
     """
     try:
-        # Input validation is handled by Pydantic
-        sanitized_message = body.message.strip()
+        # Shared validation: message (max 5000, min 1) — raises ValidationError on failure
+        message = validate_message(body.message, max_length=5000, min_length=1)
         # Session ID early so we can propagate to all observations (required for Langfuse Sessions/Users dashboard)
         session_id = body.session_id or generate_session_id(prefix=f"chat_{cooperative}_{user_id}")
 
@@ -131,7 +132,7 @@ async def chat(
 
         # Langfuse: propagate user_id + session_id to ALL observations (required for Users/Sessions tabs in dashboard)
         with propagate_session_id(session_id, user_id=user_id):
-            logger.info(f"Chat request from user {user_id}, cooperative {cooperative}: {sanitized_message[:100]}")
+            logger.info(f"Chat request from user {user_id}, cooperative {cooperative}: {message[:100]}")
 
             # Get or create agent for this cooperative with cache management
             cache_key = f"{cooperative}"
@@ -195,7 +196,7 @@ async def chat(
             try:
                 result = invoke_agent(
                     agent=agent,
-                    message=sanitized_message,
+                    message=message,
                     session_id=session_id,
                     thread_id=thread_id,
                     cooperative=cooperative,
@@ -218,7 +219,7 @@ async def chat(
                         sources = metadata["results"][:5]
 
                 update_trace_with_metrics({
-                    "message_length": len(body.message),
+                    "message_length": len(message),
                     "response_length": len(response_text),
                     "tools_used_count": len(tools_used),
                     "clarification_asked": len(clarification_questions) > 0,
@@ -294,6 +295,7 @@ async def get_conversation_history(
         Conversation history with messages
     """
     try:
+        session_id = validate_id(session_id, name="session_id")
         from src.chatbot.memory.conversation_store import get_conversation_history
         
         # Generate thread_id
@@ -342,6 +344,7 @@ async def get_conversation_stats(
         Conversation statistics
     """
     try:
+        session_id = validate_session_id(session_id) if session_id else None
         from src.chatbot.memory.conversation_store import get_conversation_history
         
         stats = {
@@ -528,6 +531,7 @@ async def clear_agent_cache(
     try:
         cleared_count = 0
         
+        cooperative = validate_session_id(cooperative) if cooperative else None
         if cooperative:
             # Clear specific cooperative
             if cooperative in _agent_cache:

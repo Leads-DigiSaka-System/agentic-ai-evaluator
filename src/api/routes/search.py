@@ -27,6 +27,7 @@ else:
     def get_client():
         return None
 from src.api.deps.cooperative_context import get_cooperative
+from src.shared.validation import validate_search_query
 from typing import Optional
 
 router = APIRouter()
@@ -58,6 +59,9 @@ async def analysis_search(
     session_id: Optional[str] = Query(None, description="Optional session ID for Langfuse grouping"),
 ):
     try:
+        # Validate and sanitize query (max 500, min 1) — raises ValidationError on failure
+        query = validate_search_query(body.query, max_length=500, min_length=1)
+
         # Session ID for Langfuse Sessions/Users: use query param or generate (propagate to all observations)
         sid = (session_id and session_id.strip())[:200] if session_id and session_id.strip() else generate_session_id(prefix=f"search_{cooperative}")
         uid = (x_user_id and x_user_id.strip())[:200] if x_user_id and x_user_id.strip() else ""
@@ -77,7 +81,7 @@ async def analysis_search(
 
             # ✅ Search with cooperative filtering only - same cooperative can see all data
             results = await analysis_searcher.search(
-                query=body.query,
+                query=query,
                 top_k=body.top_k,
                 cooperative=cooperative,
             )
@@ -98,7 +102,7 @@ async def analysis_search(
                 search_efficiency = 0.0
 
             update_trace_with_metrics({
-                "query_length": len(body.query),
+                "query_length": len(query),
                 "top_k_requested": body.top_k,
                 "results_returned": results_count,
                 "has_results": has_results,
@@ -113,13 +117,13 @@ async def analysis_search(
             if not results:
                 return {
                     "message": "No relevant analysis results found. Try using more specific keywords related to products, crops, or locations.",
-                    "query": body.query,
+                    "query": query,
                     "results": [],
                     "filtered": True,
                 }
 
             return {
-                "query": body.query,
+                "query": query,
                 "total_results": results_count,
                 "results": results,
             }
@@ -131,7 +135,7 @@ async def analysis_search(
         logger.error(f"Analysis search failed: {error_msg}\n{traceback.format_exc()}")
         update_trace_with_error(e, {
             "endpoint": "analysis_search",
-            "query": body.query[:100] if body.query else "N/A"  #  Changed
+            "query": body.query[:100] if body.query else "N/A"
         })
         raise HTTPException(
             status_code=500, 

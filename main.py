@@ -17,8 +17,17 @@ from src.api.deps.security import require_api_key
 from dotenv import load_dotenv
 from datetime import datetime
 from src.core.config import CORS_ORIGINS, ENVIRONMENT, RATE_LIMIT_ENABLED
+
+
+def _health_error_message(e: Exception) -> str:
+    """In production, return generic message; otherwise full error (for debugging)."""
+    if ENVIRONMENT == "production":
+        return "Connection failed"
+    return str(e)
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
+from src.core.errors import ValidationError
+from fastapi.responses import JSONResponse
 from src.shared.logging.safe_logger import SafeLogger
 from src.shared.logging.simple_clean_logging import setup_clean_logging, get_clean_logger
 from slowapi.middleware import SlowAPIMiddleware
@@ -191,6 +200,12 @@ app.state.limiter = limiter
 if RATE_LIMIT_ENABLED:
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.add_middleware(SlowAPIMiddleware)
+
+
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(request, exc: ValidationError):
+    """Return 400 with structured detail for validation errors."""
+    return JSONResponse(status_code=exc.status_code, content=exc.detail)
 # Initialize FastAPI app
 # CORS: production = restrict to CORS_ORIGINS; development/staging = allow all
 app.add_middleware(
@@ -234,10 +249,10 @@ def health_check():
     
     # Check Database (Qdrant)
     try:
-        from src.core.config import QDRANT_LOCAL_URI, QDRANT_API_KEY
+        from src.core.config import QDRANT_LOCAL_URI, QDRANT_USE_API_KEY, QDRANT_API_KEY
         from qdrant_client import QdrantClient
         
-        if QDRANT_API_KEY:
+        if QDRANT_USE_API_KEY:
             client = QdrantClient(url=QDRANT_LOCAL_URI, api_key=QDRANT_API_KEY, timeout=10)
         else:
             client = QdrantClient(url=QDRANT_LOCAL_URI, timeout=10)
@@ -252,7 +267,7 @@ def health_check():
         health_status["status"] = "degraded"
         health_status["checks"]["database"] = {
             "status": "error",
-            "error": str(e)
+            "error": _health_error_message(e)
         }
     
     # Check LLM (Gemini)
@@ -263,7 +278,7 @@ def health_check():
         health_status["status"] = "degraded"
         health_status["checks"]["llm"] = {
             "status": "error",
-            "error": str(e)
+            "error": _health_error_message(e)
         }
     
     return health_status
@@ -273,7 +288,7 @@ def check_qdrant_connection():
     """
     Check Qdrant connection status with detailed information
     """
-    from src.core.config import QDRANT_LOCAL_URI, QDRANT_API_KEY, QDRANT_COLECTION_DEMO, QDRANT_COLLECTION_ANALYSIS
+    from src.core.config import QDRANT_LOCAL_URI, QDRANT_USE_API_KEY, QDRANT_API_KEY, QDRANT_COLECTION_DEMO, QDRANT_COLLECTION_ANALYSIS
     from qdrant_client import QdrantClient
     import time
     
@@ -289,7 +304,7 @@ def check_qdrant_connection():
         # Test connection
         start_time = time.time()
         
-        if QDRANT_API_KEY:
+        if QDRANT_USE_API_KEY:
             client = QdrantClient(url=QDRANT_LOCAL_URI, api_key=QDRANT_API_KEY, timeout=60)
             auth_method = "API Key"
         else:
@@ -325,7 +340,7 @@ def check_qdrant_connection():
                     all_collections.append({
                         "name": col.name,
                         "status": "error",
-                        "error": str(e)
+                        "error": _health_error_message(e)
                     })
             
             result["collections"] = {
@@ -355,28 +370,28 @@ def check_qdrant_connection():
                         "name": collection_name,
                         "exists": False,
                         "status": "not_found",
-                        "error": str(e)
+                        "error": _health_error_message(e)
                     }
             
             result["collections"]["expected"] = collection_status
             
         except Exception as e:
             result["status"] = "error"
-            result["error"] = str(e)
+            result["error"] = _health_error_message(e)
             result["connection"] = {
                 "url": QDRANT_LOCAL_URI,
                 "auth_method": auth_method,
                 "status": "failed",
-                "error": str(e)
+                "error": _health_error_message(e)
             }
             
     except Exception as e:
         result["status"] = "error"
-        result["error"] = str(e)
+        result["error"] = _health_error_message(e)
         result["connection"] = {
             "url": QDRANT_LOCAL_URI if QDRANT_LOCAL_URI else "not_configured",
             "status": "failed",
-            "error": str(e)
+            "error": _health_error_message(e)
         }
     
     return result

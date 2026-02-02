@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Query, Request
 from src.infrastructure.vector_store.delete import delete_from_qdrant, delete_all_from_collection
 from src.shared.limiter_config import limiter
+from src.shared.validation import validate_id
 
 router = APIRouter()
 
@@ -22,6 +23,7 @@ async def delete_form(request: Request, form_id: str):
     Returns:
         dict: Status and details of the deletion operation
     """
+    form_id = validate_id(form_id, name="form_id")
     # Admin-only operation - no user_id filtering needed
     result = delete_from_qdrant(form_id)
     
@@ -62,7 +64,8 @@ async def delete_all_forms(
             detail="Deletion not confirmed. Add '?confirm=true' to the URL to proceed. "
                    "WARNING: This will delete ALL records in the collection!"
         )
-    
+
+    collection_name = validate_id(collection_name, name="collection_name")
     # Perform deletion
     result = delete_all_from_collection(collection_name)
     

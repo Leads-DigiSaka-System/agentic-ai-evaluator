@@ -7,6 +7,7 @@ from src.shared.limiter_config import limiter
 from src.services.cache_service import agent_cache
 from src.infrastructure.redis.redis_pool import get_shared_redis_pool
 from src.shared.logging.clean_logger import get_clean_logger
+from src.shared.validation import validate_id
 from src.monitoring.trace.langfuse_helper import is_langfuse_enabled
 from typing import Dict, Any
 import asyncio
@@ -303,6 +304,7 @@ async def get_cache_status(
             "message": str
         }
     """
+    cache_id = validate_id(cache_id, name="cache_id")
     try:
         _cache_trace_attrs("get_status", cache_id=cache_id[:100])
         cache_info = await agent_cache.get_cache_info(cache_id)
@@ -360,6 +362,7 @@ async def delete_specific_cache(
             "message": str
         }
     """
+    cache_id = validate_id(cache_id, name="cache_id")
     try:
         _cache_trace_attrs("delete", cache_id=cache_id[:100])
         # Admin-only operation - no user_id filtering needed

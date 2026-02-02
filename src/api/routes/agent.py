@@ -91,7 +91,10 @@ async def upload_file(
                     redis_pool = await get_shared_redis_pool()
                     tracking_id = str(uuid.uuid4())
 
-                    priority = request.query_params.get("priority", "normal")
+                    priority_raw = request.query_params.get("priority", "normal")
+                    priority = (priority_raw or "normal").strip().lower()
+                    if priority not in ("high", "normal", "low"):
+                        raise ValidationError("priority must be one of: high, normal, low")
                     from src.core.constants import (
                         ARQ_JOB_PRIORITY_HIGH,
                         ARQ_JOB_PRIORITY_NORMAL,
@@ -103,7 +106,7 @@ async def upload_file(
                         "normal": ARQ_JOB_PRIORITY_NORMAL,
                         "low": ARQ_JOB_PRIORITY_LOW
                     }
-                    job_priority = priority_map.get(priority.lower(), ARQ_JOB_PRIORITY_NORMAL)
+                    job_priority = priority_map[priority]
                     job = await redis_pool.enqueue_job(
                         "process_file_background",
                         tracking_id,
