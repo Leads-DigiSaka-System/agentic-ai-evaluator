@@ -1,7 +1,7 @@
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from typing import List, Dict, Any, Optional
-from src.core.config import QDRANT_LOCAL_URI, QDRANT_COLLECTION_ANALYSIS, QDRANT_API_KEY
+from src.core.config import QDRANT_LOCAL_URI, QDRANT_COLLECTION_ANALYSIS, QDRANT_USE_API_KEY, QDRANT_API_KEY
 from src.shared.logging.clean_logger import get_clean_logger
 from src.shared.season_detector import detect_season_from_dates, get_season_name
 import json
@@ -11,9 +11,9 @@ class ReportLister:
     
     def __init__(self):
         self.logger = get_clean_logger(__name__)
-        # Initialize QdrantClient with optional API key for Qdrant Cloud
+        # Initialize QdrantClient with optional API key (only when URL is HTTPS)
         # Increased timeout for remote Qdrant servers (60 seconds)
-        if QDRANT_API_KEY:
+        if QDRANT_USE_API_KEY:
             self.client = QdrantClient(url=QDRANT_LOCAL_URI, api_key=QDRANT_API_KEY, timeout=60)
             self.logger.info("ReportLister: Initialized with API key (Qdrant Cloud)")
         else:

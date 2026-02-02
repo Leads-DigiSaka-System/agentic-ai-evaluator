@@ -49,6 +49,13 @@ def _normalize_qdrant_url(url: str) -> str:
 # Normalize the Qdrant URL
 QDRANT_LOCAL_URI = _normalize_qdrant_url(QDRANT_LOCAL_URI_RAW) if QDRANT_LOCAL_URI_RAW else None
 
+# Only use API key when URL is HTTPS (avoids "Api key is used with an insecure connection" warning)
+QDRANT_USE_API_KEY = bool(
+    QDRANT_API_KEY
+    and QDRANT_LOCAL_URI
+    and str(QDRANT_LOCAL_URI).strip().lower().startswith("https://")
+)
+
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 
 CONNECTION_WEB = os.getenv("CONNECTION_WEB","http://localhost:8501").split(",")

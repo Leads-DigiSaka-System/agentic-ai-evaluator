@@ -6,7 +6,7 @@ from src.shared.logging.clean_logger import get_clean_logger
 import os
 import numpy as np
 import threading
-from src.core.config import QDRANT_LOCAL_URI, QDRANT_COLECTION_DEMO, QDRANT_API_KEY
+from src.core.config import QDRANT_LOCAL_URI, QDRANT_COLECTION_DEMO, QDRANT_USE_API_KEY, QDRANT_API_KEY
 
 # Encoders
 from src.infrastructure.embeddings.encoder import (
@@ -18,9 +18,9 @@ logger = get_clean_logger(__name__)
 
 class QdrantOperations:
     def __init__(self, dense_encoder=None, sparse_encoder=None):
-        # Initialize QdrantClient with optional API key for Qdrant Cloud
+        # Initialize QdrantClient with optional API key (only when URL is HTTPS)
         # Increased timeout for remote Qdrant servers (60 seconds)
-        if QDRANT_API_KEY:
+        if QDRANT_USE_API_KEY:
             self.client = QdrantClient(
                 url=QDRANT_LOCAL_URI, 
                 api_key=QDRANT_API_KEY,
