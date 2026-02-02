@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 class SimpleStorageApprovalRequest(BaseModel):
     """Model for simple storage approval requests"""
-    cache_id: str
+    cache_id: str = Field(..., min_length=1, max_length=200)
     approved: bool
 
 
