@@ -22,7 +22,7 @@ from langchain_core.tools import StructuredTool
 from src.core.config import OPENROUTER_MODEL, GEMINI_MODEL, MAX_CONTEXT_MESSAGES
 from src.shared.openrouter_helper import create_openrouter_llm, is_openrouter_configured
 from src.shared.logging.clean_logger import get_clean_logger
-from src.chatbot.prompts.system_prompt import get_chat_agent_system_prompt
+from src.prompts.prompt_management import get_system_prompt_for_chat_agent
 from src.shared.llm_helper import get_langfuse_handler
 from src.chatbot.memory.conversation_store import generate_thread_id
 from src.chatbot.memory.postgres_memory import PostgresConversationMemory
@@ -516,8 +516,8 @@ def create_chat_agent(
     
     logger.info(f"Creating chat agent for cooperative: {cooperative}")
     
-    # Get system prompt
-    system_prompt = get_chat_agent_system_prompt()
+    # Get system prompt (Langfuse prompt management with local fallback)
+    system_prompt = get_system_prompt_for_chat_agent()
     
     # Get all tools and bind cooperative
     all_tools = _get_all_tools()

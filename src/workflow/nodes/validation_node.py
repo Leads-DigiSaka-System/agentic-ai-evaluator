@@ -1,5 +1,6 @@
 from src.workflow.state import ProcessingState
 from src.prompts.prompt_template import content_validation_template
+from src.prompts.prompt_management import get_prompt_text
 from src.shared.llm_helper import ainvoke_llm
 from src.shared.logging.clean_logger import CleanLogger
 from src.core.config import LANGFUSE_CONFIGURED
@@ -94,9 +95,13 @@ async def content_validation_node(state: ProcessingState) -> ProcessingState:
                 except Exception:
                     pass  # Silently fail if not in observation context
         
-        # Get validation prompt
+        # Get validation prompt (Langfuse prompt management with local fallback)
         prompt_template = content_validation_template()
-        validation_prompt = prompt_template.format(extracted_content=text_preview)
+        validation_prompt = get_prompt_text(
+            "content-validation",
+            fallback_template=prompt_template.template,
+            variables={"extracted_content": text_preview},
+        )
         
         # Use async ainvoke_llm helper for non-blocking concurrent requests
         logger.llm_request("gemini", "content_validation")

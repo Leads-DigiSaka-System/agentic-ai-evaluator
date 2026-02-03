@@ -1,4 +1,5 @@
 from src.prompts.graph_suggestion_template import graph_suggestion_prompt
+from src.prompts.prompt_management import get_prompt_text
 from src.shared.llm_helper import ainvoke_llm
 from src.workflow.state import ProcessingState
 from src.formatter.json_helper import clean_json_from_llm_response
@@ -66,17 +67,18 @@ async def graph_suggestion_node(state: ProcessingState) -> ProcessingState:
         
         logger.graph_generation(0, ["LLM-driven suggestions"])
         
-        # Get complete chart suggestions from LLM (including chart data)
+        # Get complete chart suggestions from LLM (Langfuse prompt management with local fallback)
         prompt_template = graph_suggestion_prompt()
-        
-        # Safely format the prompt with error handling
         try:
             analysis_json = json.dumps(analysis_data, indent=2)
-            # Limit analysis data size to prevent prompt overflow
             if len(analysis_json) > 30000:
                 logger.debug(f"Analysis data too large ({len(analysis_json)} chars), truncating...")
                 analysis_json = analysis_json[:30000] + "\n... (truncated for prompt size)"
-            prompt = prompt_template.format(analysis_data=analysis_json)
+            prompt = get_prompt_text(
+                "graph-suggestion",
+                fallback_template=prompt_template.template,
+                variables={"analysis_data": analysis_json},
+            )
         except Exception as e:
             logger.graph_error(f"Failed to format prompt: {str(e)}")
             state["errors"].append(f"Prompt formatting error: {str(e)}")

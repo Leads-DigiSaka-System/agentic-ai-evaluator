@@ -1,4 +1,5 @@
 from src.prompts.analysis_template import analysis_prompt_template_structured
+from src.prompts.prompt_management import get_prompt_text
 from src.shared.llm_helper import ainvoke_llm
 from src.shared.logging.clean_logger import CleanLogger
 # LANGFUSE_CONFIGURED is now handled in langfuse_utils
@@ -62,9 +63,13 @@ async def analyze_demo_trial(markdown_data: str, user_id: str = None):
             except Exception as e:
                 logger.debug(f"Could not update observation: {e}")
         
-        # Use single universal template
+        # Use Langfuse prompt management with local fallback
         template = analysis_prompt_template_structured()
-        prompt = template.format(markdown_data=markdown_data)
+        prompt = get_prompt_text(
+            "agricultural-demo-analysis",
+            fallback_template=template.template,
+            variables={"markdown_data": markdown_data},
+        )
         
         logger.llm_request("gemini", "universal_agricultural_demo_analysis")
         result = await ainvoke_llm(prompt, as_json=True, trace_name="agricultural_demo_analysis",model=config.GEMINI_LARGE)
