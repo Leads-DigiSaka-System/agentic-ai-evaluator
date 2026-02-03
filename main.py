@@ -16,6 +16,19 @@ from src.api.routes.chat_router import router as chat_router
 from src.api.deps.security import require_api_key
 from dotenv import load_dotenv
 from datetime import datetime
+
+# Load .env first (env wins)
+load_dotenv()
+
+# If USE_AWS_SECRETS=true, fill missing env vars from AWS Secrets Manager
+if os.getenv("USE_AWS_SECRETS", "").strip().lower() == "true":
+    try:
+        from src.core.secrets_loader import load_secrets_from_aws
+        load_secrets_from_aws(only_if_missing=True)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("AWS Secrets Manager load skipped: %s", e)
+
 from src.core.config import CORS_ORIGINS, ENVIRONMENT, RATE_LIMIT_ENABLED
 
 
@@ -32,9 +45,6 @@ from src.shared.logging.safe_logger import SafeLogger
 from src.shared.logging.simple_clean_logging import setup_clean_logging, get_clean_logger
 from slowapi.middleware import SlowAPIMiddleware
 from src.shared.limiter_config import limiter    
-
-# Load .env
-load_dotenv()
 
 # Setup clean logging with colors
 setup_clean_logging("INFO")
