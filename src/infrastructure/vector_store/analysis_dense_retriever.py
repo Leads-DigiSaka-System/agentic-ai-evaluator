@@ -85,13 +85,23 @@ class QdrantDenseRetriever(BaseRetriever):
         return self._logger
     
     def _validate_collection(self) -> None:
-        """Validate that the collection exists in Qdrant"""
+        """Ensure the collection exists in Qdrant; create if missing."""
+        dense_vector_size = 768  # MiniLM / AnalysisStorage default
         try:
             self.client.get_collection(self.collection_name)
             self.logger.debug(f"Collection '{self.collection_name}' validated")
         except UnexpectedResponse:
-            self.logger.error(f"Collection '{self.collection_name}' does not exist")
-            raise ValueError(f"Collection '{self.collection_name}' not found in Qdrant")
+            self.logger.storage_start("collection creation", f"name: {self.collection_name}")
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config={
+                    self.vector_name: models.VectorParams(
+                        size=dense_vector_size,
+                        distance=models.Distance.COSINE,
+                    )
+                },
+            )
+            self.logger.storage_success("collection creation", 1, f"name: {self.collection_name}")
         except Exception as e:
             # Handle connection errors (SSL, timeout, etc.) gracefully
             # Don't fail on startup - validation will happen on first use

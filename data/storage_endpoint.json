@@ -1,0 +1,53 @@
+{
+  "status": "completed",
+  "total_items": 2,
+  "successful_items": 1,
+  "failed_items": 1,
+  "results": [
+    {
+      "index": 0,
+      "file_name": "fortesting.pdf",
+      "status": "failed",
+      "form_id": "433340a7-78af-481f-8b40-45c2fd57b006",
+      "storage_result": {
+        "success": false,
+        "form_id": "433340a7-78af-481f-8b40-45c2fd57b006",
+        "storage_results": {
+          "chunks": {
+            "success": true,
+            "message": "Successfully stored 4 chunks in vector database",
+            "count": 4
+          },
+          "analysis": {
+            "success": false,
+            "message": "Failed to store analysis results in structured database"
+          }
+        },
+        "timestamp": "2025-10-29T11:15:32.327480"
+      }
+    },
+    {
+      "index": 1,
+      "file_name": "fortesting.pdf",
+      "status": "success",
+      "form_id": "256ff5de-b77a-4a26-aeea-d21f4795c9d6",
+      "storage_result": {
+        "success": true,
+        "form_id": "256ff5de-b77a-4a26-aeea-d21f4795c9d6",
+        "storage_results": {
+          "chunks": {
+            "success": true,
+            "message": "Successfully stored 4 chunks in vector database",
+            "count": 4
+          },
+          "analysis": {
+            "success": true,
+            "message": "Successfully stored analysis results in structured database"
+          }
+        },
+        "timestamp": "2025-10-29T11:15:34.419210"
+      }
+    }
+  ],
+  "message": "Batch storage completed: 1/2 successful"
+}
